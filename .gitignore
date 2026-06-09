@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data cache (local only)
+data/cache/
+
+# Env
+.env
+
+# OS
+.DS_Store
