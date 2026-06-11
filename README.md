@@ -9,11 +9,16 @@ By running `run.py` you get an interactive prompt that asks you for the name and
 - First, `prober.py` queries each dataset URL directly using DuckDB's httpfs extension — no file is downloaded. It returns row counts, column names, data types, and sample rows.
 - Second, `agent.py` feeds those results to Claude, which generates a plain-language analysis of each dataset.
 
-## Components
 
+## Components
 - `src/prober.py` — queries each URL via DuckDB httpfs, returns row counts, column names, data types and sample rows
 - `src/agent.py` — sends probe results to Claude for plain-language analysis and readiness assessment
 - `src/run.py` — entry point, handles interactive and batch input modes
+- `src/crawler.py` — crawls a webpage looking for embedded dataset links (.csv, .xlsx, .json)
+
+
+## Known limitations
+- JavaScript-rendered websites (e.g. CBS Aruba, Socrata-based portals) are not supported. A Playwright-based solution is planned for a future stage.
 
 
 ## Usage
@@ -44,3 +49,7 @@ ANTHROPIC_API_KEY=your-key-here
 ## Example output
 
 See [`output/analysis_summary.txt`](output/analysis_summary.txt) for a sample Claude analysis.
+
+
+## Acknowledgements
+Inspired by [Jurjen van Genugten](https://www.linkedin.com/in/jurjenvangenugten/)'s LinkedIn post demonstrating DuckDB httpfs for probing Dutch open datasets.
