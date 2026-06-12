@@ -15,6 +15,14 @@ By running `run.py` you get an interactive prompt that asks you for the name and
 - `src/agent.py` — sends probe results to Claude for plain-language analysis and readiness assessment
 - `src/run.py` — entry point, handles interactive and batch input modes
 - `src/crawler.py` — crawls a webpage looking for embedded dataset links (.csv, .xlsx, .json)
+- `src/prober.py` — now includes `download_to_duckdb()` for loading datasets into a local DuckDB database
+
+
+## Stages
+- **Stage 1** — DuckDB prober: checks availability, row counts, schema
+- **Stage 2** — Claude API analysis: plain-language readiness assessment  
+- **Stage 3** — Web crawler: finds embedded dataset links on webpages
+- **Stage 4** — Download to DuckDB: loads selected datasets for local SQL querying
 
 
 ## Known limitations
