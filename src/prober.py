@@ -77,3 +77,32 @@ def save_results(results: list[ProbeResult], path: str):
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
     print(f"  Results saved to {path}")
+
+
+def download_to_duckdb(results: list[ProbeResult], db_path: str):
+    """Download selected datasets into a shared DuckDB database file."""
+    con = duckdb.connect(db_path)
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+
+    for result in results:
+        if result.status != "ok":
+            console_print(f"  Skipping {result.name} — status: {result.status}")
+            continue
+
+        # Create a safe table name from the dataset name
+        table_name = result.name.lower()
+        table_name = "".join(c if c.isalnum() else "_" for c in table_name)
+        table_name = table_name.strip("_")
+
+        print(f"  Downloading: {result.name} → table '{table_name}'...")
+        try:
+            con.execute(f"""
+                CREATE OR REPLACE TABLE {table_name} AS
+                SELECT * FROM read_csv_auto('{result.url}')
+            """)
+            print(f"  Done — {result.row_count} rows loaded.")
+        except Exception as e:
+            print(f"  Failed: {e}")
+
+    con.close()
+    print(f"\n  Database saved to {db_path}")

@@ -91,6 +91,34 @@ if __name__ == "__main__":
     # Display results
     display_results(results)
 
+
+# Ask user which datasets to download
+    ok_results = [r for r in results if r.status == "ok"]
+    if ok_results:
+        console.print("\n[bold]Available for download:[/bold]")
+        for i, r in enumerate(ok_results, 1):
+            console.print(f"  {i}. {r.name} ({r.row_count} rows)")
+
+        selection = console.input(
+            "\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] "
+        ).strip().lower()
+
+        if selection != "none" and selection != "":
+            if selection == "all":
+                to_download = ok_results
+            else:
+                indices = [int(x.strip()) - 1 for x in selection.split(",") if x.strip().isdigit()]
+                to_download = [ok_results[i] for i in indices if i < len(ok_results)]
+
+            if to_download:
+                from pathlib import Path
+                from prober import download_to_duckdb
+                db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
+                console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
+                download_to_duckdb(to_download, db_path)
+
+    
+
     # Save results
     output_path = Path(__file__).parent.parent / "output" / "probe_results.json"
     save_results(results, str(output_path))
