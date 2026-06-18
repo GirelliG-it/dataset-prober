@@ -86,7 +86,7 @@ def download_to_duckdb(results: list[ProbeResult], db_path: str):
 
     for result in results:
         if result.status != "ok":
-            console_print(f"  Skipping {result.name} — status: {result.status}")
+            print(f"  Skipping {result.name} — status: {result.status}")
             continue
 
         # Create a safe table name from the dataset name

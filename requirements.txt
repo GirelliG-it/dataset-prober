@@ -1,0 +1,6 @@
+anthropic
+beautifulsoup4
+duckdb
+python-dotenv
+requests
+rich

@@ -92,7 +92,7 @@ if __name__ == "__main__":
     display_results(results)
 
 
-# Ask user which datasets to download
+    # Ask user which datasets to download
     ok_results = [r for r in results if r.status == "ok"]
     if ok_results:
         console.print("\n[bold]Available for download:[/bold]")
