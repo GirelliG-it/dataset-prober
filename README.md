@@ -13,7 +13,7 @@ By running `run.py` you get an interactive prompt that asks you for the name and
 
 ## Components
 - `src/prober.py` — queries each URL via DuckDB httpfs, returns row counts, column names, data types, sample rows, and includes `download_to_duckdb()` for loading datasets into a local DuckDB database
-- `src/agent.py` — sends probe results to Claude for plain-language analysis and readiness assessment
+- `src/agent.py` — sends probe results to Claude or a local Ollama model for plain-language analysis and readiness assessment
 - `src/run.py` — entry point, handles interactive and batch input modes
 - `src/crawler.py` — crawls a webpage looking for embedded dataset links (.csv, .xlsx, .json)
 
@@ -44,6 +44,16 @@ python src/run.py --file sources.json
 **With Claude analysis:**
 ```bash
 python src/run.py --analyze
+```
+
+**With local Ollama model (free, offline):**
+```bash
+python src/run.py --analyze --local
+```
+
+**With a specific local model:**
+```bash
+python src/run.py --analyze --local --model gemma3:12b
 ```
 
 ## Setup
