@@ -216,39 +216,75 @@ def tool_check_freshness(url: str, last_updated: str, rule: str) -> dict:
 
 
 def tool_search_cbs_catalog(keyword: str, max_results: int = 10) -> dict:
-    """Search the CBS catalog for tables matching a keyword."""
+    """
+    Search the CBS catalog for tables matching a keyword.
+    Scores results by relevance — title matches rank higher than description matches.
+    Also filters to active/recent tables only.
+    """
     console.print(f"  📚 [cyan]Searching CBS catalog:[/cyan] {keyword}")
     try:
         import cbsodata
-        all_tables = cbsodata.get_table_list()
+        import requests
+        from datetime import datetime, timedelta
+
+        # Use CBS OData catalog API directly with timeout
+        catalog_url = "https://opendata.cbs.nl/ODataCatalog/Tables?$format=json"
+        resp = requests.get(catalog_url, timeout=30)
+        resp.raise_for_status()
+        all_tables = resp.json().get("value", [])
 
         keyword_lower = keyword.lower()
-        matches = []
+        scored = []
+
         for table in all_tables:
             title = table.get("Title", "").lower()
             desc = table.get("ShortDescription", "").lower()
-            if keyword_lower in title or keyword_lower in desc:
-                matches.append({
-                    "identifier": table.get("Identifier"),
-                    "title": table.get("Title"),
-                    "description": table.get("ShortDescription", "")[:200],
-                    "modified": table.get("Modified", "unknown"),
-                    "frequency": table.get("Frequency", "unknown"),
-                    "period": table.get("Period", "unknown"),
-                    "language": table.get("Language", "nl")
-                })
+            status = table.get("OutputStatus", "").lower()
 
-        matches = matches[:max_results]
+            # Skip archived/discontinued tables
+            if "archief" in status or "gestopt" in status or "discontinued" in status:
+                continue
+
+            score = 0
+            if keyword_lower in title:
+                score += 2  # Title match scores higher
+            if keyword_lower in desc:
+                score += 1
+
+            if score == 0:
+                continue
+
+            # Parse modified date
+            modified = table.get("Modified", "")
+            modified_display = modified[:10] if modified else "unknown"
+
+            scored.append({
+                "score": score,
+                "identifier": table.get("Identifier"),
+                "title": table.get("Title"),
+                "description": table.get("ShortDescription", "")[:200],
+                "modified": modified_display,
+                "frequency": table.get("Frequency", "unknown"),
+                "period": table.get("Period", "unknown"),
+                "language": table.get("Language", "nl"),
+                "status": table.get("OutputStatus", "unknown")
+            })
+
+        # Sort by score then by modified date (most recent first)
+        scored.sort(key=lambda x: (x["score"], x["modified"]), reverse=True)
+        matches = [{k: v for k, v in m.items() if k != "score"} for m in scored[:max_results]]
+
         console.print(f"    → Found {len(matches)} matching CBS tables")
-        return {"matches": matches, "total_found": len(matches)}
+        return {"matches": matches, "total_found": len(scored)}
     except Exception as e:
         return {"error": str(e)}
 
 
 def tool_fetch_cbs_table(table_id: str, budget: Budget, sample_only: bool = True) -> dict:
     """
-    Fetch data from a CBS table using cbsodata.
-    Bypasses JavaScript walls and ZIP archives entirely.
+    Fetch metadata and sample from a CBS table via direct OData API.
+    Uses $top=10 with a 30-second timeout — never blocks on large tables.
+    Full download is handled separately by tool_download.
     """
     if not budget.can_probe():
         return {"error": "Probe budget exhausted or timed out"}
@@ -256,46 +292,52 @@ def tool_fetch_cbs_table(table_id: str, budget: Budget, sample_only: bool = True
     console.print(f"  🏛️  [cyan]Fetching CBS table:[/cyan] {table_id}")
     budget.probes_used += 1
 
+    import requests
+
     try:
-        import cbsodata
+        # Step 1: Get table metadata with timeout
+        meta_url = f"https://opendata.cbs.nl/ODataApi/odata/{table_id}/TableInfos?$format=json"
+        meta_resp = requests.get(meta_url, timeout=30)
+        meta_resp.raise_for_status()
+        meta_values = meta_resp.json().get("value", [{}])
+        meta = meta_values[0] if meta_values else {}
+        title = meta.get("Title", table_id)
+        modified = meta.get("Modified", "unknown")
+        summary = meta.get("Summary", "")
 
-        # Get sample data first to infer structure
-        data = cbsodata.get_data(table_id)
-        sample = data[:10] if data else []
+        # Step 2: Get sample rows with timeout
+        sample_url = (
+            f"https://opendata.cbs.nl/ODataApi/odata/{table_id}"
+            f"/TypedDataSet?$top=10&$format=json"
+        )
+        sample_resp = requests.get(sample_url, timeout=30)
+        sample_resp.raise_for_status()
+        sample_data = sample_resp.json().get("value", [])
 
-        if not sample:
-            return {"error": "No data returned"}
+        if not sample_data:
+            return {"error": f"No sample data returned for {table_id}"}
 
-        columns = [{"name": k, "type": "string"} for k in sample[0].keys()]
-
-        # Try to get metadata — API varies by cbsodata version
-        modified = "unknown"
-        title = table_id
-        try:
-            # Try catalog lookup for metadata
-            catalog = cbsodata.get_table_list()
-            for entry in catalog:
-                if entry.get("Identifier", "").lower() == table_id.lower():
-                    modified = entry.get("Modified", "unknown")
-                    title = entry.get("Title", table_id)
-                    break
-        except Exception:
-            pass  # metadata is optional — proceed without it
+        columns = [{"name": k, "type": "string"} for k in sample_data[0].keys()]
 
         console.print(f"    → ✅ {title}")
-        console.print(f"    → {len(columns)} columns | {len(data)} rows | Last modified: {modified}")
+        console.print(f"    → {len(columns)} columns | Last modified: {modified}")
 
         return {
             "table_id": table_id,
             "title": title,
             "modified": modified,
+            "summary": summary[:300],
             "columns": columns,
-            "row_count": len(data),
-            "sample": sample[:3],
+            "row_count": None,  # Unknown until full download
+            "sample": sample_data[:3],
             "status": "ok",
             "source": "cbs",
             "url": f"https://opendata.cbs.nl/ODataApi/odata/{table_id}"
         }
+
+    except requests.Timeout:
+        console.print(f"    → ❌ Timed out after 30s")
+        return {"error": f"CBS table {table_id} timed out — may be too large or unavailable"}
     except Exception as e:
         console.print(f"    → ❌ {str(e)[:80]}")
         return {"error": str(e)}
@@ -312,12 +354,37 @@ def tool_download(name: str, url: str, row_count: int, columns: list,
     db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
 
     try:
-        # CBS tables — use cbsodata, not httpfs
+        # CBS tables — use cbsodata in a thread with timeout
         if table_id:
             import cbsodata
             import duckdb
-            console.print(f"  📥 Fetching CBS table {table_id} via cbsodata...")
-            data = cbsodata.get_data(table_id)
+            import pandas as pd
+            import threading
+            import queue as queue_module
+
+            console.print(f"  📥 Fetching CBS table {table_id} via cbsodata (may take a few minutes)...")
+
+            result_queue = queue_module.Queue()
+
+            def _fetch():
+                try:
+                    data = cbsodata.get_data(table_id)
+                    result_queue.put(("ok", data))
+                except Exception as e:
+                    result_queue.put(("error", str(e)))
+
+            thread = threading.Thread(target=_fetch, daemon=True)
+            thread.start()
+            thread.join(timeout=300)  # 5 minute max per table
+
+            if thread.is_alive():
+                return {"success": False, "error": f"CBS download timed out after 5 minutes for {table_id}"}
+
+            status, payload = result_queue.get()
+            if status == "error":
+                return {"success": False, "error": payload}
+
+            data = payload
             if not data:
                 return {"success": False, "error": "No data returned from CBS"}
 
@@ -327,7 +394,6 @@ def tool_download(name: str, url: str, row_count: int, columns: list,
             table_name = table_name.strip("_")[:50]
 
             # Save to DuckDB via pandas
-            import pandas as pd
             df = pd.DataFrame(data)
             con = duckdb.connect(db_path)
             con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
