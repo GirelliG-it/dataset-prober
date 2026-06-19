@@ -1,11 +1,103 @@
 [
   {
-    "url": "https://opendata.cbs.nl/ODataApi/OData/37789ksz",
-    "name": "OD Sociale Zekerheid",
-    "status": "error",
-    "row_count": null,
-    "columns": [],
-    "sample": [],
-    "error": "HTTP Error: HTTP GET error on 'https://opendata.cbs.nl/ODataApi/OData/37789ksz' (HTTP 0 Internal Server Error)\n\nLINE 1: SELECT COUNT(*) FROM read_csv_auto('https://opendata.cbs.nl/ODataApi/OData/37789ksz...\n                             ^"
+    "url": "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv",
+    "name": "titanic",
+    "status": "ok",
+    "row_count": 891,
+    "columns": [
+      {
+        "name": "PassengerId",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Survived",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Pclass",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Sex",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Age",
+        "type": "DOUBLE"
+      },
+      {
+        "name": "SibSp",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Parch",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Ticket",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Fare",
+        "type": "DOUBLE"
+      },
+      {
+        "name": "Cabin",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Embarked",
+        "type": "VARCHAR"
+      }
+    ],
+    "sample": [
+      [
+        1,
+        0,
+        3,
+        "Braund, Mr. Owen Harris",
+        "male",
+        22.0,
+        1,
+        0,
+        "A/5 21171",
+        7.25,
+        null,
+        "S"
+      ],
+      [
+        2,
+        1,
+        1,
+        "Cumings, Mrs. John Bradley (Florence Briggs Thayer)",
+        "female",
+        38.0,
+        1,
+        0,
+        "PC 17599",
+        71.2833,
+        "C85",
+        "C"
+      ],
+      [
+        3,
+        1,
+        3,
+        "Heikkinen, Miss. Laina",
+        "female",
+        26.0,
+        0,
+        0,
+        "STON/O2. 3101282",
+        7.925,
+        null,
+        "S"
+      ]
+    ],
+    "error": null
   }
 ]

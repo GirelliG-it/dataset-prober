@@ -1,0 +1,2370 @@
+[
+  {
+    "table_id": "85384ENG",
+    "title": "Population; sex, age, country of origin, country of birth, 1 January",
+    "modified": "2026-06-03T02:00:00",
+    "summary": "Population\ncountry of origin, country of birth",
+    "columns": [
+      {
+        "name": "ID",
+        "type": "string"
+      },
+      {
+        "name": "Sex",
+        "type": "string"
+      },
+      {
+        "name": "Age",
+        "type": "string"
+      },
+      {
+        "name": "MaritalStatus",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOrigin",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfBirth",
+        "type": "string"
+      },
+      {
+        "name": "ParentsCountryOfBirth",
+        "type": "string"
+      },
+      {
+        "name": "Periods",
+        "type": "string"
+      },
+      {
+        "name": "Population_1",
+        "type": "string"
+      }
+    ],
+    "row_count": null,
+    "sample": [
+      {
+        "ID": 0,
+        "Sex": "T001038",
+        "Age": "10000",
+        "MaritalStatus": "T001019",
+        "CountryOfOrigin": "T001040",
+        "CountryOfBirth": "T001638",
+        "ParentsCountryOfBirth": "T001638",
+        "Periods": "2022JJ00",
+        "Population_1": 17590672
+      },
+      {
+        "ID": 1,
+        "Sex": "T001038",
+        "Age": "10000",
+        "MaritalStatus": "T001019",
+        "CountryOfOrigin": "T001040",
+        "CountryOfBirth": "T001638",
+        "ParentsCountryOfBirth": "T001638",
+        "Periods": "2023JJ00",
+        "Population_1": 17811291
+      },
+      {
+        "ID": 2,
+        "Sex": "T001038",
+        "Age": "10000",
+        "MaritalStatus": "T001019",
+        "CountryOfOrigin": "T001040",
+        "CountryOfBirth": "T001638",
+        "ParentsCountryOfBirth": "T001638",
+        "Periods": "2024JJ00",
+        "Population_1": 17942942
+      }
+    ],
+    "status": "ok",
+    "source": "cbs",
+    "url": "https://opendata.cbs.nl/ODataApi/odata/85384ENG"
+  },
+  {
+    "table_id": "83474NED",
+    "title": "Bevolkingsontwikkeling; maand en jaar",
+    "modified": "2026-05-29T02:00:00",
+    "summary": "Levend geboren kinderen, overledenen, immigratie, emigratie (inclusief\nadministratieve correcties) , overige correcties, bevolkingsgroei",
+    "columns": [
+      {
+        "name": "ID",
+        "type": "string"
+      },
+      {
+        "name": "Perioden",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingAanHetBeginVanDePeriode_1",
+        "type": "string"
+      },
+      {
+        "name": "LevendGeborenKinderen_2",
+        "type": "string"
+      },
+      {
+        "name": "Overledenen_3",
+        "type": "string"
+      },
+      {
+        "name": "Immigratie_4",
+        "type": "string"
+      },
+      {
+        "name": "EmigratieInclusiefAdministratieveC_5",
+        "type": "string"
+      },
+      {
+        "name": "OverigeCorrecties_6",
+        "type": "string"
+      },
+      {
+        "name": "TotaleBevolkingsgroei_7",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingAanHetEindVanDePeriode_8",
+        "type": "string"
+      }
+    ],
+    "row_count": null,
+    "sample": [
+      {
+        "ID": 0,
+        "Perioden": "1995MM01",
+        "BevolkingAanHetBeginVanDePeriode_1": 15424122,
+        "LevendGeborenKinderen_2": 16436,
+        "Overledenen_3": 11974,
+        "Immigratie_4": 8362,
+        "EmigratieInclusiefAdministratieveC_5": 6768,
+        "OverigeCorrecties_6": null,
+        "TotaleBevolkingsgroei_7": 6056,
+        "BevolkingAanHetEindVanDePeriode_8": 15430178
+      },
+      {
+        "ID": 1,
+        "Perioden": "1995MM02",
+        "BevolkingAanHetBeginVanDePeriode_1": 15430178,
+        "LevendGeborenKinderen_2": 14824,
+        "Overledenen_3": 10106,
+        "Immigratie_4": 6621,
+        "EmigratieInclusiefAdministratieveC_5": 5341,
+        "OverigeCorrecties_6": null,
+        "TotaleBevolkingsgroei_7": 5998,
+        "BevolkingAanHetEindVanDePeriode_8": 15436176
+      },
+      {
+        "ID": 2,
+        "Perioden": "1995MM03",
+        "BevolkingAanHetBeginVanDePeriode_1": 15436176,
+        "LevendGeborenKinderen_2": 16205,
+        "Overledenen_3": 12069,
+        "Immigratie_4": 7596,
+        "EmigratieInclusiefAdministratieveC_5": 5988,
+        "OverigeCorrecties_6": null,
+        "TotaleBevolkingsgroei_7": 5744,
+        "BevolkingAanHetEindVanDePeriode_8": 15441920
+      }
+    ],
+    "status": "ok",
+    "source": "cbs",
+    "url": "https://opendata.cbs.nl/ODataApi/odata/83474NED"
+  },
+  {
+    "table_id": "37230ned",
+    "title": "Bevolkingsontwikkeling; regio per maand",
+    "modified": "2026-05-29T02:00:00",
+    "summary": " Bevolkingsontwikkeling: geboorte, sterfte, \nmigratie per regio",
+    "columns": [
+      {
+        "name": "ID",
+        "type": "string"
+      },
+      {
+        "name": "RegioS",
+        "type": "string"
+      },
+      {
+        "name": "Perioden",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingAanHetBeginVanDePeriode_1",
+        "type": "string"
+      },
+      {
+        "name": "LevendGeborenKinderen_2",
+        "type": "string"
+      },
+      {
+        "name": "Overledenen_3",
+        "type": "string"
+      },
+      {
+        "name": "TotaleVestiging_4",
+        "type": "string"
+      },
+      {
+        "name": "VestigingVanuitEenAndereGemeente_5",
+        "type": "string"
+      },
+      {
+        "name": "Immigratie_6",
+        "type": "string"
+      },
+      {
+        "name": "TotaalVertrekInclAdmCorrecties_7",
+        "type": "string"
+      },
+      {
+        "name": "VertrekNaarAndereGemeente_8",
+        "type": "string"
+      },
+      {
+        "name": "EmigratieInclusiefAdmCorrecties_9",
+        "type": "string"
+      },
+      {
+        "name": "OverigeCorrecties_10",
+        "type": "string"
+      },
+      {
+        "name": "Bevolkingsgroei_11",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingsgroeiRelatief_12",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingsgroeiSinds1Januari_13",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingsgroeiSinds1JanuariRela_14",
+        "type": "string"
+      },
+      {
+        "name": "BevolkingAanHetEindeVanDePeriode_15",
+        "type": "string"
+      }
+    ],
+    "row_count": null,
+    "sample": [
+      {
+        "ID": 0,
+        "RegioS": "NL01  ",
+        "Perioden": "2002MM01",
+        "BevolkingAanHetBeginVanDePeriode_1": 16105285,
+        "LevendGeborenKinderen_2": 17019,
+        "Overledenen_3": 13469,
+        "TotaleVestiging_4": 66547,
+        "VestigingVanuitEenAndereGemeente_5": 55181,
+        "Immigratie_6": 11366,
+        "TotaalVertrekInclAdmCorrecties_7": 62482,
+        "VertrekNaarAndereGemeente_8": 55181,
+        "EmigratieInclusiefAdmCorrecties_9": 7301,
+        "OverigeCorrecties_10": null,
+        "Bevolkingsgroei_11": 7615,
+        "BevolkingsgroeiRelatief_12": 0.05,
+        "BevolkingsgroeiSinds1Januari_13": 7615,
+        "BevolkingsgroeiSinds1JanuariRela_14": 0.05,
+        "BevolkingAanHetEindeVanDePeriode_15": 16112900
+      },
+      {
+        "ID": 1,
+        "RegioS": "NL01  ",
+        "Perioden": "2002MM02",
+        "BevolkingAanHetBeginVanDePeriode_1": 16112900,
+        "LevendGeborenKinderen_2": 15448,
+        "Overledenen_3": 11735,
+        "TotaleVestiging_4": 55999,
+        "VestigingVanuitEenAndereGemeente_5": 47049,
+        "Immigratie_6": 8950,
+        "TotaalVertrekInclAdmCorrecties_7": 53659,
+        "VertrekNaarAndereGemeente_8": 47049,
+        "EmigratieInclusiefAdmCorrecties_9": 6610,
+        "OverigeCorrecties_10": null,
+        "Bevolkingsgroei_11": 6053,
+        "BevolkingsgroeiRelatief_12": 0.04,
+        "BevolkingsgroeiSinds1Januari_13": 13668,
+        "BevolkingsgroeiSinds1JanuariRela_14": 0.08,
+        "BevolkingAanHetEindeVanDePeriode_15": 16118953
+      },
+      {
+        "ID": 2,
+        "RegioS": "NL01  ",
+        "Perioden": "2002MM03",
+        "BevolkingAanHetBeginVanDePeriode_1": 16118953,
+        "LevendGeborenKinderen_2": 16792,
+        "Overledenen_3": 13281,
+        "TotaleVestiging_4": 58798,
+        "VestigingVanuitEenAndereGemeente_5": 49290,
+        "Immigratie_6": 9508,
+        "TotaalVertrekInclAdmCorrecties_7": 57137,
+        "VertrekNaarAndereGemeente_8": 49290,
+        "EmigratieInclusiefAdmCorrecties_9": 7847,
+        "OverigeCorrecties_10": null,
+        "Bevolkingsgroei_11": 5172,
+        "BevolkingsgroeiRelatief_12": 0.03,
+        "BevolkingsgroeiSinds1Januari_13": 18840,
+        "BevolkingsgroeiSinds1JanuariRela_14": 0.12,
+        "BevolkingAanHetEindeVanDePeriode_15": 16124125
+      }
+    ],
+    "status": "ok",
+    "source": "cbs",
+    "url": "https://opendata.cbs.nl/ODataApi/odata/37230ned"
+  },
+  {
+    "table_id": "85496ENG",
+    "title": "Population; key figures",
+    "modified": "2025-09-08T02:00:00",
+    "summary": "Population: key figures by sex, marital status, age, country of origin,\nhouseholds and population growth",
+    "columns": [
+      {
+        "name": "ID",
+        "type": "string"
+      },
+      {
+        "name": "Periods",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_1",
+        "type": "string"
+      },
+      {
+        "name": "Males_2",
+        "type": "string"
+      },
+      {
+        "name": "Females_3",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_4",
+        "type": "string"
+      },
+      {
+        "name": "NeverMarried_5",
+        "type": "string"
+      },
+      {
+        "name": "Married_6",
+        "type": "string"
+      },
+      {
+        "name": "Widowed_7",
+        "type": "string"
+      },
+      {
+        "name": "Divorced_8",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_9",
+        "type": "string"
+      },
+      {
+        "name": "YoungerThan20Years_10",
+        "type": "string"
+      },
+      {
+        "name": "k_20To40Years_11",
+        "type": "string"
+      },
+      {
+        "name": "k_40To65Years_12",
+        "type": "string"
+      },
+      {
+        "name": "k_65To80Years_13",
+        "type": "string"
+      },
+      {
+        "name": "k_80YearsOrOlder_14",
+        "type": "string"
+      },
+      {
+        "name": "YoungerThan20Years_15",
+        "type": "string"
+      },
+      {
+        "name": "k_20To40Years_16",
+        "type": "string"
+      },
+      {
+        "name": "k_40To65Years_17",
+        "type": "string"
+      },
+      {
+        "name": "k_65To80Years_18",
+        "type": "string"
+      },
+      {
+        "name": "k_80YearsOrOlder_19",
+        "type": "string"
+      },
+      {
+        "name": "TotalDemographicPressure_20",
+        "type": "string"
+      },
+      {
+        "name": "GreenPressure_21",
+        "type": "string"
+      },
+      {
+        "name": "GreyPressure_22",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_23",
+        "type": "string"
+      },
+      {
+        "name": "Males_24",
+        "type": "string"
+      },
+      {
+        "name": "Females_25",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_26",
+        "type": "string"
+      },
+      {
+        "name": "TheNetherlands_27",
+        "type": "string"
+      },
+      {
+        "name": "EuropeExcludingTheNetherlands_28",
+        "type": "string"
+      },
+      {
+        "name": "TotalOutsideEurope_29",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_30",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_31",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_32",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_33",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_34",
+        "type": "string"
+      },
+      {
+        "name": "OtherAfrica_35",
+        "type": "string"
+      },
+      {
+        "name": "OtherAsia_36",
+        "type": "string"
+      },
+      {
+        "name": "OtherAmericaAndOceania_37",
+        "type": "string"
+      },
+      {
+        "name": "TheNetherlands_38",
+        "type": "string"
+      },
+      {
+        "name": "EuropeExcludingTheNetherlands_39",
+        "type": "string"
+      },
+      {
+        "name": "TotalOutsideEurope_40",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_41",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_42",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_43",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_44",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_45",
+        "type": "string"
+      },
+      {
+        "name": "OtherAfrica_46",
+        "type": "string"
+      },
+      {
+        "name": "OtherAsia_47",
+        "type": "string"
+      },
+      {
+        "name": "OtherAmericaAndOceania_48",
+        "type": "string"
+      },
+      {
+        "name": "TheNetherlands_49",
+        "type": "string"
+      },
+      {
+        "name": "EuropeExcludingTheNetherlands_50",
+        "type": "string"
+      },
+      {
+        "name": "TotalOutsideEurope_51",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_52",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_53",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_54",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_55",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_56",
+        "type": "string"
+      },
+      {
+        "name": "OtherAfrica_57",
+        "type": "string"
+      },
+      {
+        "name": "OtherAsia_58",
+        "type": "string"
+      },
+      {
+        "name": "OtherAmericaAndOceania_59",
+        "type": "string"
+      },
+      {
+        "name": "TotalPrivateHouseholds_60",
+        "type": "string"
+      },
+      {
+        "name": "OnePersonHouseholds_61",
+        "type": "string"
+      },
+      {
+        "name": "MultiPersonHouseholds_62",
+        "type": "string"
+      },
+      {
+        "name": "AverageHouseholdSize_63",
+        "type": "string"
+      },
+      {
+        "name": "PopulationInInstitutionalHouseholds_64",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulationGrowth_65",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulationGrowthRate_66",
+        "type": "string"
+      },
+      {
+        "name": "LiveBornChildren_67",
+        "type": "string"
+      },
+      {
+        "name": "Deaths_68",
+        "type": "string"
+      },
+      {
+        "name": "NaturalIncrease_69",
+        "type": "string"
+      },
+      {
+        "name": "NaturalIncreaseRate_70",
+        "type": "string"
+      },
+      {
+        "name": "Immigration_71",
+        "type": "string"
+      },
+      {
+        "name": "EmigrationIncludingAdministrativeC_72",
+        "type": "string"
+      },
+      {
+        "name": "NetMigrationIncludingAdministrativ_73",
+        "type": "string"
+      },
+      {
+        "name": "NetMigrationIncludingAdminRate_74",
+        "type": "string"
+      },
+      {
+        "name": "OtherCorrections_75",
+        "type": "string"
+      },
+      {
+        "name": "PopulationDensity_76",
+        "type": "string"
+      }
+    ],
+    "row_count": null,
+    "sample": [
+      {
+        "ID": 0,
+        "Periods": "1950JJ00",
+        "TotalPopulation_1": 10026773,
+        "Males_2": 4998251,
+        "Females_3": 5028522,
+        "TotalPopulation_4": 10026773,
+        "NeverMarried_5": 5284496,
+        "Married_6": 4232241,
+        "Widowed_7": 435532,
+        "Divorced_8": 74504,
+        "TotalPopulation_9": 10026773,
+        "YoungerThan20Years_10": 3742499,
+        "k_20To40Years_11": 2951369,
+        "k_40To65Years_12": 2562311,
+        "k_65To80Years_13": 670995,
+        "k_80YearsOrOlder_14": 99599,
+        "YoungerThan20Years_15": 37.3,
+        "k_20To40Years_16": 29.4,
+        "k_40To65Years_17": 25.6,
+        "k_65To80Years_18": 6.7,
+        "k_80YearsOrOlder_19": 1.0,
+        "TotalDemographicPressure_20": 81.9,
+        "GreenPressure_21": 67.9,
+        "GreyPressure_22": 14.0,
+        "TotalPopulation_23": 30.8,
+        "Males_24": 30.3,
+        "Females_25": 31.3,
+        "TotalPopulation_26": 10026773,
+        "TheNetherlands_27": null,
+        "EuropeExcludingTheNetherlands_28": null,
+        "TotalOutsideEurope_29": null,
+        "Turkey_30": null,
+        "Morocco_31": null,
+        "Suriname_32": null,
+        "DutchCaribbean_33": null,
+        "Indonesia_34": null,
+        "OtherAfrica_35": null,
+        "OtherAsia_36": null,
+        "OtherAmericaAndOceania_37": null,
+        "TheNetherlands_38": null,
+        "EuropeExcludingTheNetherlands_39": null,
+        "TotalOutsideEurope_40": null,
+        "Turkey_41": null,
+        "Morocco_42": null,
+        "Suriname_43": null,
+        "DutchCaribbean_44": null,
+        "Indonesia_45": null,
+        "OtherAfrica_46": null,
+        "OtherAsia_47": null,
+        "OtherAmericaAndOceania_48": null,
+        "TheNetherlands_49": null,
+        "EuropeExcludingTheNetherlands_50": null,
+        "TotalOutsideEurope_51": null,
+        "Turkey_52": null,
+        "Morocco_53": null,
+        "Suriname_54": null,
+        "DutchCaribbean_55": null,
+        "Indonesia_56": null,
+        "OtherAfrica_57": null,
+        "OtherAsia_58": null,
+        "OtherAmericaAndOceania_59": null,
+        "TotalPrivateHouseholds_60": 2535,
+        "OnePersonHouseholds_61": 245,
+        "MultiPersonHouseholds_62": 2290,
+        "AverageHouseholdSize_63": 3.93,
+        "PopulationInInstitutionalHouseholds_64": null,
+        "TotalPopulationGrowth_65": 173507,
+        "TotalPopulationGrowthRate_66": 17.3,
+        "LiveBornChildren_67": 229718,
+        "Deaths_68": 75929,
+        "NaturalIncrease_69": 153789,
+        "NaturalIncreaseRate_70": 15.2,
+        "Immigration_71": 70602,
+        "EmigrationIncludingAdministrativeC_72": 50697,
+        "NetMigrationIncludingAdministrativ_73": 19905,
+        "NetMigrationIncludingAdminRate_74": 2.0,
+        "OtherCorrections_75": -187,
+        "PopulationDensity_76": 309
+      },
+      {
+        "ID": 1,
+        "Periods": "1951JJ00",
+        "TotalPopulation_1": 10200280,
+        "Males_2": 5083759,
+        "Females_3": 5116521,
+        "TotalPopulation_4": 10200280,
+        "NeverMarried_5": 5354293,
+        "Married_6": 4329761,
+        "Widowed_7": 439933,
+        "Divorced_8": 76293,
+        "TotalPopulation_9": 10200280,
+        "YoungerThan20Years_10": 3805617,
+        "k_20To40Years_11": 2985744,
+        "k_40To65Years_12": 2614428,
+        "k_65To80Years_13": 690449,
+        "k_80YearsOrOlder_14": 104042,
+        "YoungerThan20Years_15": 37.3,
+        "k_20To40Years_16": 29.3,
+        "k_40To65Years_17": 25.6,
+        "k_65To80Years_18": 6.8,
+        "k_80YearsOrOlder_19": 1.0,
+        "TotalDemographicPressure_20": 82.1,
+        "GreenPressure_21": 68.0,
+        "GreyPressure_22": 14.2,
+        "TotalPopulation_23": 30.8,
+        "Males_24": 30.3,
+        "Females_25": 31.4,
+        "TotalPopulation_26": 10200280,
+        "TheNetherlands_27": null,
+        "EuropeExcludingTheNetherlands_28": null,
+        "TotalOutsideEurope_29": null,
+        "Turkey_30": null,
+        "Morocco_31": null,
+        "Suriname_32": null,
+        "DutchCaribbean_33": null,
+        "Indonesia_34": null,
+        "OtherAfrica_35": null,
+        "OtherAsia_36": null,
+        "OtherAmericaAndOceania_37": null,
+        "TheNetherlands_38": null,
+        "EuropeExcludingTheNetherlands_39": null,
+        "TotalOutsideEurope_40": null,
+        "Turkey_41": null,
+        "Morocco_42": null,
+        "Suriname_43": null,
+        "DutchCaribbean_44": null,
+        "Indonesia_45": null,
+        "OtherAfrica_46": null,
+        "OtherAsia_47": null,
+        "OtherAmericaAndOceania_48": null,
+        "TheNetherlands_49": null,
+        "EuropeExcludingTheNetherlands_50": null,
+        "TotalOutsideEurope_51": null,
+        "Turkey_52": null,
+        "Morocco_53": null,
+        "Suriname_54": null,
+        "DutchCaribbean_55": null,
+        "Indonesia_56": null,
+        "OtherAfrica_57": null,
+        "OtherAsia_58": null,
+        "OtherAmericaAndOceania_59": null,
+        "TotalPrivateHouseholds_60": 2600,
+        "OnePersonHouseholds_61": 258,
+        "MultiPersonHouseholds_62": 2342,
+        "AverageHouseholdSize_63": 3.88,
+        "PopulationInInstitutionalHouseholds_64": null,
+        "TotalPopulationGrowth_65": 128063,
+        "TotalPopulationGrowthRate_66": 12.6,
+        "LiveBornChildren_67": 228407,
+        "Deaths_68": 77560,
+        "NaturalIncrease_69": 150847,
+        "NaturalIncreaseRate_70": 14.7,
+        "Immigration_71": 45016,
+        "EmigrationIncludingAdministrativeC_72": 67449,
+        "NetMigrationIncludingAdministrativ_73": -22433,
+        "NetMigrationIncludingAdminRate_74": -2.2,
+        "OtherCorrections_75": -351,
+        "PopulationDensity_76": 315
+      },
+      {
+        "ID": 2,
+        "Periods": "1952JJ00",
+        "TotalPopulation_1": 10328343,
+        "Males_2": 5145772,
+        "Females_3": 5182571,
+        "TotalPopulation_4": 10328343,
+        "NeverMarried_5": 5384853,
+        "Married_6": 4421572,
+        "Widowed_7": 444343,
+        "Divorced_8": 77575,
+        "TotalPopulation_9": 10328343,
+        "YoungerThan20Years_10": 3853988,
+        "k_20To40Years_11": 2999353,
+        "k_40To65Years_12": 2656483,
+        "k_65To80Years_13": 710729,
+        "k_80YearsOrOlder_14": 107790,
+        "YoungerThan20Years_15": 37.3,
+        "k_20To40Years_16": 29.0,
+        "k_40To65Years_17": 25.7,
+        "k_65To80Years_18": 6.9,
+        "k_80YearsOrOlder_19": 1.0,
+        "TotalDemographicPressure_20": 82.6,
+        "GreenPressure_21": 68.1,
+        "GreyPressure_22": 14.5,
+        "TotalPopulation_23": 31.0,
+        "Males_24": 30.4,
+        "Females_25": 31.5,
+        "TotalPopulation_26": 10328343,
+        "TheNetherlands_27": null,
+        "EuropeExcludingTheNetherlands_28": null,
+        "TotalOutsideEurope_29": null,
+        "Turkey_30": null,
+        "Morocco_31": null,
+        "Suriname_32": null,
+        "DutchCaribbean_33": null,
+        "Indonesia_34": null,
+        "OtherAfrica_35": null,
+        "OtherAsia_36": null,
+        "OtherAmericaAndOceania_37": null,
+        "TheNetherlands_38": null,
+        "EuropeExcludingTheNetherlands_39": null,
+        "TotalOutsideEurope_40": null,
+        "Turkey_41": null,
+        "Morocco_42": null,
+        "Suriname_43": null,
+        "DutchCaribbean_44": null,
+        "Indonesia_45": null,
+        "OtherAfrica_46": null,
+        "OtherAsia_47": null,
+        "OtherAmericaAndOceania_48": null,
+        "TheNetherlands_49": null,
+        "EuropeExcludingTheNetherlands_50": null,
+        "TotalOutsideEurope_51": null,
+        "Turkey_52": null,
+        "Morocco_53": null,
+        "Suriname_54": null,
+        "DutchCaribbean_55": null,
+        "Indonesia_56": null,
+        "OtherAfrica_57": null,
+        "OtherAsia_58": null,
+        "OtherAmericaAndOceania_59": null,
+        "TotalPrivateHouseholds_60": 2658,
+        "OnePersonHouseholds_61": 270,
+        "MultiPersonHouseholds_62": 2388,
+        "AverageHouseholdSize_63": 3.84,
+        "PopulationInInstitutionalHouseholds_64": null,
+        "TotalPopulationGrowth_65": 107288,
+        "TotalPopulationGrowthRate_66": 10.4,
+        "LiveBornChildren_67": 231888,
+        "Deaths_68": 76346,
+        "NaturalIncrease_69": 155542,
+        "NaturalIncreaseRate_70": 15.0,
+        "Immigration_71": 33666,
+        "EmigrationIncludingAdministrativeC_72": 81347,
+        "NetMigrationIncludingAdministrativ_73": -47681,
+        "NetMigrationIncludingAdminRate_74": -4.6,
+        "OtherCorrections_75": -573,
+        "PopulationDensity_76": 319
+      }
+    ],
+    "status": "ok",
+    "source": "cbs",
+    "url": "https://opendata.cbs.nl/ODataApi/odata/85496ENG"
+  },
+  {
+    "table_id": "85524ENG",
+    "title": "Population; households and population dynamics; from 1899",
+    "modified": "2025-10-17T02:00:00",
+    "summary": "Population, households, population growth, births, mortality, marriages, \nmarriage dissolutions, change of nationality and migration",
+    "columns": [
+      {
+        "name": "ID",
+        "type": "string"
+      },
+      {
+        "name": "Periods",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_1",
+        "type": "string"
+      },
+      {
+        "name": "Males_2",
+        "type": "string"
+      },
+      {
+        "name": "Females_3",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_4",
+        "type": "string"
+      },
+      {
+        "name": "YoungerThan20Years_5",
+        "type": "string"
+      },
+      {
+        "name": "k_20To44Years_6",
+        "type": "string"
+      },
+      {
+        "name": "k_45To64Years_7",
+        "type": "string"
+      },
+      {
+        "name": "k_65To79Years_8",
+        "type": "string"
+      },
+      {
+        "name": "k_80YearsOrOlder_9",
+        "type": "string"
+      },
+      {
+        "name": "GreenPressure_10",
+        "type": "string"
+      },
+      {
+        "name": "GreyPressure_11",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_12",
+        "type": "string"
+      },
+      {
+        "name": "NeverMarried_13",
+        "type": "string"
+      },
+      {
+        "name": "Married_14",
+        "type": "string"
+      },
+      {
+        "name": "Widowed_15",
+        "type": "string"
+      },
+      {
+        "name": "Divorced_16",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_17",
+        "type": "string"
+      },
+      {
+        "name": "NorthNetherlands_18",
+        "type": "string"
+      },
+      {
+        "name": "EastNetherlands_19",
+        "type": "string"
+      },
+      {
+        "name": "WestNetherlands_20",
+        "type": "string"
+      },
+      {
+        "name": "SouthNetherlands_21",
+        "type": "string"
+      },
+      {
+        "name": "TotalPopulation_22",
+        "type": "string"
+      },
+      {
+        "name": "LessThan5000Inhabitants_23",
+        "type": "string"
+      },
+      {
+        "name": "k_5000To19999Inhabitants_24",
+        "type": "string"
+      },
+      {
+        "name": "k_20000To49999Inhabitants_25",
+        "type": "string"
+      },
+      {
+        "name": "k_50000To99999Inhabitants_26",
+        "type": "string"
+      },
+      {
+        "name": "k_100000InhabitantsOrMore_27",
+        "type": "string"
+      },
+      {
+        "name": "TotalNumberOfMunicipalities_28",
+        "type": "string"
+      },
+      {
+        "name": "LessThan5000Inhabitants_29",
+        "type": "string"
+      },
+      {
+        "name": "k_5000To19999Inhabitants_30",
+        "type": "string"
+      },
+      {
+        "name": "k_20000To49999Inhabitants_31",
+        "type": "string"
+      },
+      {
+        "name": "k_50000To99999Inhabitants_32",
+        "type": "string"
+      },
+      {
+        "name": "k_100000InhabitantsOrMore_33",
+        "type": "string"
+      },
+      {
+        "name": "TotalForeignNationalities_34",
+        "type": "string"
+      },
+      {
+        "name": "American_35",
+        "type": "string"
+      },
+      {
+        "name": "Belgian_36",
+        "type": "string"
+      },
+      {
+        "name": "British_37",
+        "type": "string"
+      },
+      {
+        "name": "German_38",
+        "type": "string"
+      },
+      {
+        "name": "Italian_39",
+        "type": "string"
+      },
+      {
+        "name": "FormerYugoslavian_40",
+        "type": "string"
+      },
+      {
+        "name": "Moroccan_41",
+        "type": "string"
+      },
+      {
+        "name": "Spanish_42",
+        "type": "string"
+      },
+      {
+        "name": "Turkish_43",
+        "type": "string"
+      },
+      {
+        "name": "TotalBornInTheNetherlands_44",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginTheNetherlands_45",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginEuropeExclTheNe_46",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginDutchCaribbean_47",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginIndonesia_48",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginMorocco_49",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginSuriname_50",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginTurkey_51",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginOtherAfrica_52",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginOtherAmericaAnd_53",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginOtherAsia_54",
+        "type": "string"
+      },
+      {
+        "name": "TotalBornAbroad_55",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginEuropeExclTheNe_56",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginDutchCaribbean_57",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginIndonesia_58",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginMorocco_59",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginSuriname_60",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginTurkey_61",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginOtherAfrica_62",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginOtherAmericaAnd_63",
+        "type": "string"
+      },
+      {
+        "name": "CountryOfOriginOtherAsia_64",
+        "type": "string"
+      },
+      {
+        "name": "TotalPrivateHouseholds_65",
+        "type": "string"
+      },
+      {
+        "name": "MalesAndFemales_66",
+        "type": "string"
+      },
+      {
+        "name": "Males_67",
+        "type": "string"
+      },
+      {
+        "name": "Females_68",
+        "type": "string"
+      },
+      {
+        "name": "MultiPersonHouseholds_69",
+        "type": "string"
+      },
+      {
+        "name": "AverageHouseholdsize_70",
+        "type": "string"
+      },
+      {
+        "name": "TotalPersonsInPrivateHouseholds_71",
+        "type": "string"
+      },
+      {
+        "name": "ChildrenInPrivateHouseholds_72",
+        "type": "string"
+      },
+      {
+        "name": "LiveBornChildren_73",
+        "type": "string"
+      },
+      {
+        "name": "Deaths_74",
+        "type": "string"
+      },
+      {
+        "name": "NaturalIncrease_75",
+        "type": "string"
+      },
+      {
+        "name": "Immigration_76",
+        "type": "string"
+      },
+      {
+        "name": "EmigrationIncludingAdministrativeC_77",
+        "type": "string"
+      },
+      {
+        "name": "NetMigration_78",
+        "type": "string"
+      },
+      {
+        "name": "TotalGrowth_79",
+        "type": "string"
+      },
+      {
+        "name": "TotalGrowthRelative_80",
+        "type": "string"
+      },
+      {
+        "name": "LiveBornChildren_81",
+        "type": "string"
+      },
+      {
+        "name": "LiveBornChildrenRelative_82",
+        "type": "string"
+      },
+      {
+        "name": "SexRatio_83",
+        "type": "string"
+      },
+      {
+        "name": "AverageNumberOfChildrenPerFemale_84",
+        "type": "string"
+      },
+      {
+        "name": "TotalLiveBornChildren_85",
+        "type": "string"
+      },
+      {
+        "name": "YoungerThan20Years_86",
+        "type": "string"
+      },
+      {
+        "name": "k_20To24Years_87",
+        "type": "string"
+      },
+      {
+        "name": "k_25To29Years_88",
+        "type": "string"
+      },
+      {
+        "name": "k_30YearsOrOlder_89",
+        "type": "string"
+      },
+      {
+        "name": "k_1stChild_90",
+        "type": "string"
+      },
+      {
+        "name": "k_2ndChild_91",
+        "type": "string"
+      },
+      {
+        "name": "k_3rdChild_92",
+        "type": "string"
+      },
+      {
+        "name": "k_4thAndSubsequentChildren_93",
+        "type": "string"
+      },
+      {
+        "name": "LiveBornChildrenMotherNotMarried_94",
+        "type": "string"
+      },
+      {
+        "name": "Deaths_95",
+        "type": "string"
+      },
+      {
+        "name": "DeathsRelative_96",
+        "type": "string"
+      },
+      {
+        "name": "DeathsSexRatio_97",
+        "type": "string"
+      },
+      {
+        "name": "LifeExpectancyAtBirthMale_98",
+        "type": "string"
+      },
+      {
+        "name": "LifeExpectancyAtBirthFemale_99",
+        "type": "string"
+      },
+      {
+        "name": "k_28WeeksOrMoreRelative_100",
+        "type": "string"
+      },
+      {
+        "name": "k_24WeeksOrMoreRelative_101",
+        "type": "string"
+      },
+      {
+        "name": "PerinatalMortality24_102",
+        "type": "string"
+      },
+      {
+        "name": "PerinatalMortality24Relative_103",
+        "type": "string"
+      },
+      {
+        "name": "PerinatalMortality28_104",
+        "type": "string"
+      },
+      {
+        "name": "PerinatalMortality28Relative_105",
+        "type": "string"
+      },
+      {
+        "name": "Deaths4WeeksAfterBirth_106",
+        "type": "string"
+      },
+      {
+        "name": "Deaths4WeeksAfterBirthRelative_107",
+        "type": "string"
+      },
+      {
+        "name": "Deaths1YearAfterBirth_108",
+        "type": "string"
+      },
+      {
+        "name": "Deaths1YearAfterBirthRelative_109",
+        "type": "string"
+      },
+      {
+        "name": "k_1To4Years_110",
+        "type": "string"
+      },
+      {
+        "name": "k_5To14Years_111",
+        "type": "string"
+      },
+      {
+        "name": "k_15To44Years_112",
+        "type": "string"
+      },
+      {
+        "name": "k_45To64Years_113",
+        "type": "string"
+      },
+      {
+        "name": "k_65To79Years_114",
+        "type": "string"
+      },
+      {
+        "name": "k_80YearsOrOlder_115",
+        "type": "string"
+      },
+      {
+        "name": "PersonsMovedWithinMunicipalities_116",
+        "type": "string"
+      },
+      {
+        "name": "TotalPersons_117",
+        "type": "string"
+      },
+      {
+        "name": "TotalPersonsRelative_118",
+        "type": "string"
+      },
+      {
+        "name": "WithinTheSameProvinceRelative_119",
+        "type": "string"
+      },
+      {
+        "name": "FamiliesUntil2010Relative_120",
+        "type": "string"
+      },
+      {
+        "name": "TotalImmigration_121",
+        "type": "string"
+      },
+      {
+        "name": "Dutch_122",
+        "type": "string"
+      },
+      {
+        "name": "TotalNonDutch_123",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingDutch_124",
+        "type": "string"
+      },
+      {
+        "name": "Moroccan_125",
+        "type": "string"
+      },
+      {
+        "name": "Turkish_126",
+        "type": "string"
+      },
+      {
+        "name": "TotalEmigrationIncludingAdministra_127",
+        "type": "string"
+      },
+      {
+        "name": "Dutch_128",
+        "type": "string"
+      },
+      {
+        "name": "TotalNonDutch_129",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingDutch_130",
+        "type": "string"
+      },
+      {
+        "name": "Moroccan_131",
+        "type": "string"
+      },
+      {
+        "name": "Turkish_132",
+        "type": "string"
+      },
+      {
+        "name": "TotalEmigrationExcludingAdministra_133",
+        "type": "string"
+      },
+      {
+        "name": "Dutch_134",
+        "type": "string"
+      },
+      {
+        "name": "TotalNonDutch_135",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingDutch_136",
+        "type": "string"
+      },
+      {
+        "name": "Moroccan_137",
+        "type": "string"
+      },
+      {
+        "name": "Turkish_138",
+        "type": "string"
+      },
+      {
+        "name": "TotalImmigration_139",
+        "type": "string"
+      },
+      {
+        "name": "TheNetherlands_140",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingTheNetherl_141",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_142",
+        "type": "string"
+      },
+      {
+        "name": "SurinameAndDutchCaribbean_143",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_144",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_145",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_146",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_147",
+        "type": "string"
+      },
+      {
+        "name": "SpecificEmigrationCountries_148",
+        "type": "string"
+      },
+      {
+        "name": "TotalEmigrationIncludingAdministra_149",
+        "type": "string"
+      },
+      {
+        "name": "TheNetherlands_150",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingTheNetherl_151",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_152",
+        "type": "string"
+      },
+      {
+        "name": "SurinameAndDutchCaribbean_153",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_154",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_155",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_156",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_157",
+        "type": "string"
+      },
+      {
+        "name": "SpecificEmigrationCountries_158",
+        "type": "string"
+      },
+      {
+        "name": "TotalEmigrationExcludingAdministra_159",
+        "type": "string"
+      },
+      {
+        "name": "TheNetherlands_160",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingTheNetherl_161",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_162",
+        "type": "string"
+      },
+      {
+        "name": "SurinameAndDutchCaribbean_163",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_164",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_165",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_166",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_167",
+        "type": "string"
+      },
+      {
+        "name": "SpecificEmigrationCountries_168",
+        "type": "string"
+      },
+      {
+        "name": "TotalImmigration_169",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingTheNetherl_170",
+        "type": "string"
+      },
+      {
+        "name": "IndonesiaSurinameDutchCaribbean_171",
+        "type": "string"
+      },
+      {
+        "name": "SurinameAndDutchCaribbean_172",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_173",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_174",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_175",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_176",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_177",
+        "type": "string"
+      },
+      {
+        "name": "SpecificEmigrationCountries_178",
+        "type": "string"
+      },
+      {
+        "name": "TotalEmigrationExcludingAdministra_179",
+        "type": "string"
+      },
+      {
+        "name": "EuropeanUnionExcludingTheNetherl_180",
+        "type": "string"
+      },
+      {
+        "name": "IndonesiaSurinameDutchCaribbean_181",
+        "type": "string"
+      },
+      {
+        "name": "SurinameAndDutchCaribbean_182",
+        "type": "string"
+      },
+      {
+        "name": "DutchCaribbean_183",
+        "type": "string"
+      },
+      {
+        "name": "Indonesia_184",
+        "type": "string"
+      },
+      {
+        "name": "Suriname_185",
+        "type": "string"
+      },
+      {
+        "name": "Morocco_186",
+        "type": "string"
+      },
+      {
+        "name": "Turkey_187",
+        "type": "string"
+      },
+      {
+        "name": "SpecificEmigrationCountries_188",
+        "type": "string"
+      },
+      {
+        "name": "Marriages_189",
+        "type": "string"
+      },
+      {
+        "name": "MarriagesPer1000Inhabitants_190",
+        "type": "string"
+      },
+      {
+        "name": "MarriagesPer1000UnmarriedMen_191",
+        "type": "string"
+      },
+      {
+        "name": "k_1stMarriageForBothPartnersRelative_192",
+        "type": "string"
+      },
+      {
+        "name": "AverageAgeMarryingMales_193",
+        "type": "string"
+      },
+      {
+        "name": "AverageAgeMarryingFemales_194",
+        "type": "string"
+      },
+      {
+        "name": "MarriageDissolutions_195",
+        "type": "string"
+      },
+      {
+        "name": "MarriageDissolutionsPer1000Inhab_196",
+        "type": "string"
+      },
+      {
+        "name": "MarriageDissolutionsPer1000Marri_197",
+        "type": "string"
+      },
+      {
+        "name": "Divorces_198",
+        "type": "string"
+      },
+      {
+        "name": "DivorcesRelative_199",
+        "type": "string"
+      },
+      {
+        "name": "AverageAgeMales_200",
+        "type": "string"
+      },
+      {
+        "name": "AverageAgeFemales_201",
+        "type": "string"
+      },
+      {
+        "name": "AverageDurationOfTheMarriage_202",
+        "type": "string"
+      },
+      {
+        "name": "DueToDeathHusbandRelative_203",
+        "type": "string"
+      },
+      {
+        "name": "DueToDeathWifeRelative_204",
+        "type": "string"
+      },
+      {
+        "name": "BalanceOfChangesOfNationality_205",
+        "type": "string"
+      },
+      {
+        "name": "Naturalization_206",
+        "type": "string"
+      },
+      {
+        "name": "NaturalizationsRelative_207",
+        "type": "string"
+      }
+    ],
+    "row_count": null,
+    "sample": [
+      {
+        "ID": 0,
+        "Periods": "1899JJ00",
+        "TotalPopulation_1": null,
+        "Males_2": null,
+        "Females_3": null,
+        "TotalPopulation_4": null,
+        "YoungerThan20Years_5": null,
+        "k_20To44Years_6": null,
+        "k_45To64Years_7": null,
+        "k_65To79Years_8": null,
+        "k_80YearsOrOlder_9": null,
+        "GreenPressure_10": null,
+        "GreyPressure_11": null,
+        "TotalPopulation_12": null,
+        "NeverMarried_13": null,
+        "Married_14": null,
+        "Widowed_15": null,
+        "Divorced_16": null,
+        "TotalPopulation_17": null,
+        "NorthNetherlands_18": null,
+        "EastNetherlands_19": null,
+        "WestNetherlands_20": null,
+        "SouthNetherlands_21": null,
+        "TotalPopulation_22": null,
+        "LessThan5000Inhabitants_23": null,
+        "k_5000To19999Inhabitants_24": null,
+        "k_20000To49999Inhabitants_25": null,
+        "k_50000To99999Inhabitants_26": null,
+        "k_100000InhabitantsOrMore_27": null,
+        "TotalNumberOfMunicipalities_28": null,
+        "LessThan5000Inhabitants_29": null,
+        "k_5000To19999Inhabitants_30": null,
+        "k_20000To49999Inhabitants_31": null,
+        "k_50000To99999Inhabitants_32": null,
+        "k_100000InhabitantsOrMore_33": null,
+        "TotalForeignNationalities_34": null,
+        "American_35": null,
+        "Belgian_36": null,
+        "British_37": null,
+        "German_38": null,
+        "Italian_39": null,
+        "FormerYugoslavian_40": null,
+        "Moroccan_41": null,
+        "Spanish_42": null,
+        "Turkish_43": null,
+        "TotalBornInTheNetherlands_44": null,
+        "CountryOfOriginTheNetherlands_45": null,
+        "CountryOfOriginEuropeExclTheNe_46": null,
+        "CountryOfOriginDutchCaribbean_47": null,
+        "CountryOfOriginIndonesia_48": null,
+        "CountryOfOriginMorocco_49": null,
+        "CountryOfOriginSuriname_50": null,
+        "CountryOfOriginTurkey_51": null,
+        "CountryOfOriginOtherAfrica_52": null,
+        "CountryOfOriginOtherAmericaAnd_53": null,
+        "CountryOfOriginOtherAsia_54": null,
+        "TotalBornAbroad_55": null,
+        "CountryOfOriginEuropeExclTheNe_56": null,
+        "CountryOfOriginDutchCaribbean_57": null,
+        "CountryOfOriginIndonesia_58": null,
+        "CountryOfOriginMorocco_59": null,
+        "CountryOfOriginSuriname_60": null,
+        "CountryOfOriginTurkey_61": null,
+        "CountryOfOriginOtherAfrica_62": null,
+        "CountryOfOriginOtherAmericaAnd_63": null,
+        "CountryOfOriginOtherAsia_64": null,
+        "TotalPrivateHouseholds_65": 1113,
+        "MalesAndFemales_66": 89,
+        "Males_67": 35,
+        "Females_68": 54,
+        "MultiPersonHouseholds_69": 1024,
+        "AverageHouseholdsize_70": 4.51,
+        "TotalPersonsInPrivateHouseholds_71": 5021.0,
+        "ChildrenInPrivateHouseholds_72": 2526,
+        "LiveBornChildren_73": null,
+        "Deaths_74": null,
+        "NaturalIncrease_75": null,
+        "Immigration_76": null,
+        "EmigrationIncludingAdministrativeC_77": null,
+        "NetMigration_78": null,
+        "TotalGrowth_79": null,
+        "TotalGrowthRelative_80": null,
+        "LiveBornChildren_81": null,
+        "LiveBornChildrenRelative_82": null,
+        "SexRatio_83": null,
+        "AverageNumberOfChildrenPerFemale_84": null,
+        "TotalLiveBornChildren_85": null,
+        "YoungerThan20Years_86": null,
+        "k_20To24Years_87": null,
+        "k_25To29Years_88": null,
+        "k_30YearsOrOlder_89": null,
+        "k_1stChild_90": null,
+        "k_2ndChild_91": null,
+        "k_3rdChild_92": null,
+        "k_4thAndSubsequentChildren_93": null,
+        "LiveBornChildrenMotherNotMarried_94": null,
+        "Deaths_95": null,
+        "DeathsRelative_96": null,
+        "DeathsSexRatio_97": null,
+        "LifeExpectancyAtBirthMale_98": null,
+        "LifeExpectancyAtBirthFemale_99": null,
+        "k_28WeeksOrMoreRelative_100": null,
+        "k_24WeeksOrMoreRelative_101": null,
+        "PerinatalMortality24_102": null,
+        "PerinatalMortality24Relative_103": null,
+        "PerinatalMortality28_104": null,
+        "PerinatalMortality28Relative_105": null,
+        "Deaths4WeeksAfterBirth_106": null,
+        "Deaths4WeeksAfterBirthRelative_107": null,
+        "Deaths1YearAfterBirth_108": null,
+        "Deaths1YearAfterBirthRelative_109": null,
+        "k_1To4Years_110": null,
+        "k_5To14Years_111": null,
+        "k_15To44Years_112": null,
+        "k_45To64Years_113": null,
+        "k_65To79Years_114": null,
+        "k_80YearsOrOlder_115": null,
+        "PersonsMovedWithinMunicipalities_116": null,
+        "TotalPersons_117": null,
+        "TotalPersonsRelative_118": null,
+        "WithinTheSameProvinceRelative_119": null,
+        "FamiliesUntil2010Relative_120": null,
+        "TotalImmigration_121": null,
+        "Dutch_122": null,
+        "TotalNonDutch_123": null,
+        "EuropeanUnionExcludingDutch_124": null,
+        "Moroccan_125": null,
+        "Turkish_126": null,
+        "TotalEmigrationIncludingAdministra_127": null,
+        "Dutch_128": null,
+        "TotalNonDutch_129": null,
+        "EuropeanUnionExcludingDutch_130": null,
+        "Moroccan_131": null,
+        "Turkish_132": null,
+        "TotalEmigrationExcludingAdministra_133": null,
+        "Dutch_134": null,
+        "TotalNonDutch_135": null,
+        "EuropeanUnionExcludingDutch_136": null,
+        "Moroccan_137": null,
+        "Turkish_138": null,
+        "TotalImmigration_139": null,
+        "TheNetherlands_140": null,
+        "EuropeanUnionExcludingTheNetherl_141": null,
+        "Indonesia_142": null,
+        "SurinameAndDutchCaribbean_143": null,
+        "Suriname_144": null,
+        "DutchCaribbean_145": null,
+        "Morocco_146": null,
+        "Turkey_147": null,
+        "SpecificEmigrationCountries_148": null,
+        "TotalEmigrationIncludingAdministra_149": null,
+        "TheNetherlands_150": null,
+        "EuropeanUnionExcludingTheNetherl_151": null,
+        "Indonesia_152": null,
+        "SurinameAndDutchCaribbean_153": null,
+        "Suriname_154": null,
+        "DutchCaribbean_155": null,
+        "Morocco_156": null,
+        "Turkey_157": null,
+        "SpecificEmigrationCountries_158": null,
+        "TotalEmigrationExcludingAdministra_159": null,
+        "TheNetherlands_160": null,
+        "EuropeanUnionExcludingTheNetherl_161": null,
+        "Indonesia_162": null,
+        "SurinameAndDutchCaribbean_163": null,
+        "Suriname_164": null,
+        "DutchCaribbean_165": null,
+        "Morocco_166": null,
+        "Turkey_167": null,
+        "SpecificEmigrationCountries_168": null,
+        "TotalImmigration_169": null,
+        "EuropeanUnionExcludingTheNetherl_170": null,
+        "IndonesiaSurinameDutchCaribbean_171": null,
+        "SurinameAndDutchCaribbean_172": null,
+        "DutchCaribbean_173": null,
+        "Indonesia_174": null,
+        "Morocco_175": null,
+        "Suriname_176": null,
+        "Turkey_177": null,
+        "SpecificEmigrationCountries_178": null,
+        "TotalEmigrationExcludingAdministra_179": null,
+        "EuropeanUnionExcludingTheNetherl_180": null,
+        "IndonesiaSurinameDutchCaribbean_181": null,
+        "SurinameAndDutchCaribbean_182": null,
+        "DutchCaribbean_183": null,
+        "Indonesia_184": null,
+        "Suriname_185": null,
+        "Morocco_186": null,
+        "Turkey_187": null,
+        "SpecificEmigrationCountries_188": null,
+        "Marriages_189": null,
+        "MarriagesPer1000Inhabitants_190": null,
+        "MarriagesPer1000UnmarriedMen_191": null,
+        "k_1stMarriageForBothPartnersRelative_192": null,
+        "AverageAgeMarryingMales_193": null,
+        "AverageAgeMarryingFemales_194": null,
+        "MarriageDissolutions_195": null,
+        "MarriageDissolutionsPer1000Inhab_196": null,
+        "MarriageDissolutionsPer1000Marri_197": null,
+        "Divorces_198": null,
+        "DivorcesRelative_199": null,
+        "AverageAgeMales_200": null,
+        "AverageAgeFemales_201": null,
+        "AverageDurationOfTheMarriage_202": null,
+        "DueToDeathHusbandRelative_203": null,
+        "DueToDeathWifeRelative_204": null,
+        "BalanceOfChangesOfNationality_205": null,
+        "Naturalization_206": null,
+        "NaturalizationsRelative_207": null
+      },
+      {
+        "ID": 1,
+        "Periods": "1900JJ00",
+        "TotalPopulation_1": 5104.0,
+        "Males_2": 2521.0,
+        "Females_3": 2583.0,
+        "TotalPopulation_4": 5104,
+        "YoungerThan20Years_5": 2264,
+        "k_20To44Years_6": 1732,
+        "k_45To64Years_7": 802,
+        "k_65To79Years_8": 272,
+        "k_80YearsOrOlder_9": 35,
+        "GreenPressure_10": 89.3,
+        "GreyPressure_11": 12.1,
+        "TotalPopulation_12": 5104,
+        "NeverMarried_13": 3152,
+        "Married_14": 1679,
+        "Widowed_15": 268,
+        "Divorced_16": 6,
+        "TotalPopulation_17": 5104,
+        "NorthNetherlands_18": 788,
+        "EastNetherlands_19": 900,
+        "WestNetherlands_20": 2580,
+        "SouthNetherlands_21": 836,
+        "TotalPopulation_22": 5104,
+        "LessThan5000Inhabitants_23": 1752,
+        "k_5000To19999Inhabitants_24": 1494,
+        "k_20000To49999Inhabitants_25": 479,
+        "k_50000To99999Inhabitants_26": 241,
+        "k_100000InhabitantsOrMore_27": 1137,
+        "TotalNumberOfMunicipalities_28": 1121,
+        "LessThan5000Inhabitants_29": 918,
+        "k_5000To19999Inhabitants_30": 179,
+        "k_20000To49999Inhabitants_31": 16,
+        "k_50000To99999Inhabitants_32": 4,
+        "k_100000InhabitantsOrMore_33": 4,
+        "TotalForeignNationalities_34": 53.0,
+        "American_35": null,
+        "Belgian_36": 14.9,
+        "British_37": 1.3,
+        "German_38": 31.9,
+        "Italian_39": 0.2,
+        "FormerYugoslavian_40": null,
+        "Moroccan_41": null,
+        "Spanish_42": null,
+        "Turkish_43": null,
+        "TotalBornInTheNetherlands_44": null,
+        "CountryOfOriginTheNetherlands_45": null,
+        "CountryOfOriginEuropeExclTheNe_46": null,
+        "CountryOfOriginDutchCaribbean_47": null,
+        "CountryOfOriginIndonesia_48": null,
+        "CountryOfOriginMorocco_49": null,
+        "CountryOfOriginSuriname_50": null,
+        "CountryOfOriginTurkey_51": null,
+        "CountryOfOriginOtherAfrica_52": null,
+        "CountryOfOriginOtherAmericaAnd_53": null,
+        "CountryOfOriginOtherAsia_54": null,
+        "TotalBornAbroad_55": null,
+        "CountryOfOriginEuropeExclTheNe_56": null,
+        "CountryOfOriginDutchCaribbean_57": null,
+        "CountryOfOriginIndonesia_58": null,
+        "CountryOfOriginMorocco_59": null,
+        "CountryOfOriginSuriname_60": null,
+        "CountryOfOriginTurkey_61": null,
+        "CountryOfOriginOtherAfrica_62": null,
+        "CountryOfOriginOtherAmericaAnd_63": null,
+        "CountryOfOriginOtherAsia_64": null,
+        "TotalPrivateHouseholds_65": null,
+        "MalesAndFemales_66": null,
+        "Males_67": null,
+        "Females_68": null,
+        "MultiPersonHouseholds_69": null,
+        "AverageHouseholdsize_70": null,
+        "TotalPersonsInPrivateHouseholds_71": null,
+        "ChildrenInPrivateHouseholds_72": null,
+        "LiveBornChildren_73": 163,
+        "Deaths_74": 92,
+        "NaturalIncrease_75": 71,
+        "Immigration_76": 28,
+        "EmigrationIncludingAdministrativeC_77": 25,
+        "NetMigration_78": 3,
+        "TotalGrowth_79": 75,
+        "TotalGrowthRelative_80": 1.5,
+        "LiveBornChildren_81": 163,
+        "LiveBornChildrenRelative_82": 31.6,
+        "SexRatio_83": 1058,
+        "AverageNumberOfChildrenPerFemale_84": 4.45,
+        "TotalLiveBornChildren_85": null,
+        "YoungerThan20Years_86": null,
+        "k_20To24Years_87": null,
+        "k_25To29Years_88": null,
+        "k_30YearsOrOlder_89": null,
+        "k_1stChild_90": null,
+        "k_2ndChild_91": null,
+        "k_3rdChild_92": null,
+        "k_4thAndSubsequentChildren_93": null,
+        "LiveBornChildrenMotherNotMarried_94": 2.6,
+        "Deaths_95": 92,
+        "DeathsRelative_96": 17.9,
+        "DeathsSexRatio_97": 1082,
+        "LifeExpectancyAtBirthMale_98": null,
+        "LifeExpectancyAtBirthFemale_99": null,
+        "k_28WeeksOrMoreRelative_100": 42.9,
+        "k_24WeeksOrMoreRelative_101": null,
+        "PerinatalMortality24_102": null,
+        "PerinatalMortality24Relative_103": null,
+        "PerinatalMortality28_104": null,
+        "PerinatalMortality28Relative_105": null,
+        "Deaths4WeeksAfterBirth_106": 5.8,
+        "Deaths4WeeksAfterBirthRelative_107": 35.7,
+        "Deaths1YearAfterBirth_108": 25.2,
+        "Deaths1YearAfterBirthRelative_109": 155.2,
+        "k_1To4Years_110": 17.3,
+        "k_5To14Years_111": 3.2,
+        "k_15To44Years_112": 5.9,
+        "k_45To64Years_113": 17.7,
+        "k_65To79Years_114": 71.4,
+        "k_80YearsOrOlder_115": 205.5,
+        "PersonsMovedWithinMunicipalities_116": null,
+        "TotalPersons_117": 291,
+        "TotalPersonsRelative_118": 56.7,
+        "WithinTheSameProvinceRelative_119": 63.3,
+        "FamiliesUntil2010Relative_120": null,
+        "TotalImmigration_121": 28.4,
+        "Dutch_122": null,
+        "TotalNonDutch_123": null,
+        "EuropeanUnionExcludingDutch_124": null,
+        "Moroccan_125": null,
+        "Turkish_126": null,
+        "TotalEmigrationIncludingAdministra_127": null,
+        "Dutch_128": null,
+        "TotalNonDutch_129": null,
+        "EuropeanUnionExcludingDutch_130": null,
+        "Moroccan_131": null,
+        "Turkish_132": null,
+        "TotalEmigrationExcludingAdministra_133": 25.1,
+        "Dutch_134": null,
+        "TotalNonDutch_135": null,
+        "EuropeanUnionExcludingDutch_136": null,
+        "Moroccan_137": null,
+        "Turkish_138": null,
+        "TotalImmigration_139": 28.4,
+        "TheNetherlands_140": null,
+        "EuropeanUnionExcludingTheNetherl_141": null,
+        "Indonesia_142": null,
+        "SurinameAndDutchCaribbean_143": null,
+        "Suriname_144": null,
+        "DutchCaribbean_145": null,
+        "Morocco_146": null,
+        "Turkey_147": null,
+        "SpecificEmigrationCountries_148": null,
+        "TotalEmigrationIncludingAdministra_149": null,
+        "TheNetherlands_150": null,
+        "EuropeanUnionExcludingTheNetherl_151": null,
+        "Indonesia_152": null,
+        "SurinameAndDutchCaribbean_153": null,
+        "Suriname_154": null,
+        "DutchCaribbean_155": null,
+        "Morocco_156": null,
+        "Turkey_157": null,
+        "SpecificEmigrationCountries_158": null,
+        "TotalEmigrationExcludingAdministra_159": 25.1,
+        "TheNetherlands_160": null,
+        "EuropeanUnionExcludingTheNetherl_161": null,
+        "Indonesia_162": null,
+        "SurinameAndDutchCaribbean_163": null,
+        "Suriname_164": null,
+        "DutchCaribbean_165": null,
+        "Morocco_166": null,
+        "Turkey_167": null,
+        "SpecificEmigrationCountries_168": null,
+        "TotalImmigration_169": 28.4,
+        "EuropeanUnionExcludingTheNetherl_170": null,
+        "IndonesiaSurinameDutchCaribbean_171": 4.3,
+        "SurinameAndDutchCaribbean_172": null,
+        "DutchCaribbean_173": null,
+        "Indonesia_174": null,
+        "Morocco_175": null,
+        "Suriname_176": null,
+        "Turkey_177": null,
+        "SpecificEmigrationCountries_178": null,
+        "TotalEmigrationExcludingAdministra_179": 25.1,
+        "EuropeanUnionExcludingTheNetherl_180": null,
+        "IndonesiaSurinameDutchCaribbean_181": 3.1,
+        "SurinameAndDutchCaribbean_182": null,
+        "DutchCaribbean_183": null,
+        "Indonesia_184": null,
+        "Suriname_185": null,
+        "Morocco_186": null,
+        "Turkey_187": null,
+        "SpecificEmigrationCountries_188": null,
+        "Marriages_189": 39,
+        "MarriagesPer1000Inhabitants_190": 7.7,
+        "MarriagesPer1000UnmarriedMen_191": 49.8,
+        "k_1stMarriageForBothPartnersRelative_192": 87.5,
+        "AverageAgeMarryingMales_193": 29.3,
+        "AverageAgeMarryingFemales_194": 26.7,
+        "MarriageDissolutions_195": 25.4,
+        "MarriageDissolutionsPer1000Inhab_196": 4.9,
+        "MarriageDissolutionsPer1000Marri_197": 30.3,
+        "Divorces_198": 0.6,
+        "DivorcesRelative_199": 0.7,
+        "AverageAgeMales_200": null,
+        "AverageAgeFemales_201": null,
+        "AverageDurationOfTheMarriage_202": null,
+        "DueToDeathHusbandRelative_203": 16.2,
+        "DueToDeathWifeRelative_204": 13.4,
+        "BalanceOfChangesOfNationality_205": null,
+        "Naturalization_206": null,
+        "NaturalizationsRelative_207": null
+      },
+      {
+        "ID": 2,
+        "Periods": "1901JJ00",
+        "TotalPopulation_1": 5163.0,
+        "Males_2": 2550.0,
+        "Females_3": 2613.0,
+        "TotalPopulation_4": 5163,
+        "YoungerThan20Years_5": 2286,
+        "k_20To44Years_6": 1762,
+        "k_45To64Years_7": 806,
+        "k_65To79Years_8": 274,
+        "k_80YearsOrOlder_9": 35,
+        "GreenPressure_10": 89.1,
+        "GreyPressure_11": 12.0,
+        "TotalPopulation_12": 5163,
+        "NeverMarried_13": null,
+        "Married_14": null,
+        "Widowed_15": null,
+        "Divorced_16": null,
+        "TotalPopulation_17": 5163,
+        "NorthNetherlands_18": 795,
+        "EastNetherlands_19": 911,
+        "WestNetherlands_20": 2627,
+        "SouthNetherlands_21": 845,
+        "TotalPopulation_22": 5163,
+        "LessThan5000Inhabitants_23": 1765,
+        "k_5000To19999Inhabitants_24": 1514,
+        "k_20000To49999Inhabitants_25": 486,
+        "k_50000To99999Inhabitants_26": 245,
+        "k_100000InhabitantsOrMore_27": 1169,
+        "TotalNumberOfMunicipalities_28": 1121,
+        "LessThan5000Inhabitants_29": 914,
+        "k_5000To19999Inhabitants_30": 182,
+        "k_20000To49999Inhabitants_31": 17,
+        "k_50000To99999Inhabitants_32": 4,
+        "k_100000InhabitantsOrMore_33": 4,
+        "TotalForeignNationalities_34": null,
+        "American_35": null,
+        "Belgian_36": null,
+        "British_37": null,
+        "German_38": null,
+        "Italian_39": null,
+        "FormerYugoslavian_40": null,
+        "Moroccan_41": null,
+        "Spanish_42": null,
+        "Turkish_43": null,
+        "TotalBornInTheNetherlands_44": null,
+        "CountryOfOriginTheNetherlands_45": null,
+        "CountryOfOriginEuropeExclTheNe_46": null,
+        "CountryOfOriginDutchCaribbean_47": null,
+        "CountryOfOriginIndonesia_48": null,
+        "CountryOfOriginMorocco_49": null,
+        "CountryOfOriginSuriname_50": null,
+        "CountryOfOriginTurkey_51": null,
+        "CountryOfOriginOtherAfrica_52": null,
+        "CountryOfOriginOtherAmericaAnd_53": null,
+        "CountryOfOriginOtherAsia_54": null,
+        "TotalBornAbroad_55": null,
+        "CountryOfOriginEuropeExclTheNe_56": null,
+        "CountryOfOriginDutchCaribbean_57": null,
+        "CountryOfOriginIndonesia_58": null,
+        "CountryOfOriginMorocco_59": null,
+        "CountryOfOriginSuriname_60": null,
+        "CountryOfOriginTurkey_61": null,
+        "CountryOfOriginOtherAfrica_62": null,
+        "CountryOfOriginOtherAmericaAnd_63": null,
+        "CountryOfOriginOtherAsia_64": null,
+        "TotalPrivateHouseholds_65": null,
+        "MalesAndFemales_66": null,
+        "Males_67": null,
+        "Females_68": null,
+        "MultiPersonHouseholds_69": null,
+        "AverageHouseholdsize_70": null,
+        "TotalPersonsInPrivateHouseholds_71": null,
+        "ChildrenInPrivateHouseholds_72": null,
+        "LiveBornChildren_73": 168,
+        "Deaths_74": 90,
+        "NaturalIncrease_75": 78,
+        "Immigration_76": 26,
+        "EmigrationIncludingAdministrativeC_77": 23,
+        "NetMigration_78": 3,
+        "TotalGrowth_79": 84,
+        "TotalGrowthRelative_80": 1.6,
+        "LiveBornChildren_81": 168,
+        "LiveBornChildrenRelative_82": 32.2,
+        "SexRatio_83": 1052,
+        "AverageNumberOfChildrenPerFemale_84": 4.53,
+        "TotalLiveBornChildren_85": null,
+        "YoungerThan20Years_86": null,
+        "k_20To24Years_87": null,
+        "k_25To29Years_88": null,
+        "k_30YearsOrOlder_89": null,
+        "k_1stChild_90": null,
+        "k_2ndChild_91": null,
+        "k_3rdChild_92": null,
+        "k_4thAndSubsequentChildren_93": null,
+        "LiveBornChildrenMotherNotMarried_94": 2.5,
+        "Deaths_95": 90,
+        "DeathsRelative_96": 17.2,
+        "DeathsSexRatio_97": 1103,
+        "LifeExpectancyAtBirthMale_98": null,
+        "LifeExpectancyAtBirthFemale_99": null,
+        "k_28WeeksOrMoreRelative_100": 41.5,
+        "k_24WeeksOrMoreRelative_101": null,
+        "PerinatalMortality24_102": null,
+        "PerinatalMortality24Relative_103": null,
+        "PerinatalMortality28_104": null,
+        "PerinatalMortality28Relative_105": null,
+        "Deaths4WeeksAfterBirth_106": 5.6,
+        "Deaths4WeeksAfterBirthRelative_107": 33.5,
+        "Deaths1YearAfterBirth_108": 25.1,
+        "Deaths1YearAfterBirthRelative_109": 149.3,
+        "k_1To4Years_110": 20.7,
+        "k_5To14Years_111": 3.8,
+        "k_15To44Years_112": 5.5,
+        "k_45To64Years_113": 16.2,
+        "k_65To79Years_114": 63.5,
+        "k_80YearsOrOlder_115": 186.2,
+        "PersonsMovedWithinMunicipalities_116": null,
+        "TotalPersons_117": 308,
+        "TotalPersonsRelative_118": 59.2,
+        "WithinTheSameProvinceRelative_119": 63.4,
+        "FamiliesUntil2010Relative_120": null,
+        "TotalImmigration_121": 26.1,
+        "Dutch_122": null,
+        "TotalNonDutch_123": null,
+        "EuropeanUnionExcludingDutch_124": null,
+        "Moroccan_125": null,
+        "Turkish_126": null,
+        "TotalEmigrationIncludingAdministra_127": null,
+        "Dutch_128": null,
+        "TotalNonDutch_129": null,
+        "EuropeanUnionExcludingDutch_130": null,
+        "Moroccan_131": null,
+        "Turkish_132": null,
+        "TotalEmigrationExcludingAdministra_133": 22.8,
+        "Dutch_134": null,
+        "TotalNonDutch_135": null,
+        "EuropeanUnionExcludingDutch_136": null,
+        "Moroccan_137": null,
+        "Turkish_138": null,
+        "TotalImmigration_139": 26.1,
+        "TheNetherlands_140": null,
+        "EuropeanUnionExcludingTheNetherl_141": null,
+        "Indonesia_142": null,
+        "SurinameAndDutchCaribbean_143": null,
+        "Suriname_144": null,
+        "DutchCaribbean_145": null,
+        "Morocco_146": null,
+        "Turkey_147": null,
+        "SpecificEmigrationCountries_148": null,
+        "TotalEmigrationIncludingAdministra_149": null,
+        "TheNetherlands_150": null,
+        "EuropeanUnionExcludingTheNetherl_151": null,
+        "Indonesia_152": null,
+        "SurinameAndDutchCaribbean_153": null,
+        "Suriname_154": null,
+        "DutchCaribbean_155": null,
+        "Morocco_156": null,
+        "Turkey_157": null,
+        "SpecificEmigrationCountries_158": null,
+        "TotalEmigrationExcludingAdministra_159": 22.8,
+        "TheNetherlands_160": null,
+        "EuropeanUnionExcludingTheNetherl_161": null,
+        "Indonesia_162": null,
+        "SurinameAndDutchCaribbean_163": null,
+        "Suriname_164": null,
+        "DutchCaribbean_165": null,
+        "Morocco_166": null,
+        "Turkey_167": null,
+        "SpecificEmigrationCountries_168": null,
+        "TotalImmigration_169": 26.1,
+        "EuropeanUnionExcludingTheNetherl_170": null,
+        "IndonesiaSurinameDutchCaribbean_171": 4.0,
+        "SurinameAndDutchCaribbean_172": null,
+        "DutchCaribbean_173": null,
+        "Indonesia_174": null,
+        "Morocco_175": null,
+        "Suriname_176": null,
+        "Turkey_177": null,
+        "SpecificEmigrationCountries_178": null,
+        "TotalEmigrationExcludingAdministra_179": 22.8,
+        "EuropeanUnionExcludingTheNetherl_180": null,
+        "IndonesiaSurinameDutchCaribbean_181": 3.6,
+        "SurinameAndDutchCaribbean_182": null,
+        "DutchCaribbean_183": null,
+        "Indonesia_184": null,
+        "Suriname_185": null,
+        "Morocco_186": null,
+        "Turkey_187": null,
+        "SpecificEmigrationCountries_188": null,
+        "Marriages_189": 40,
+        "MarriagesPer1000Inhabitants_190": 7.7,
+        "MarriagesPer1000UnmarriedMen_191": 50.2,
+        "k_1stMarriageForBothPartnersRelative_192": 87.5,
+        "AverageAgeMarryingMales_193": 29.3,
+        "AverageAgeMarryingFemales_194": 26.7,
+        "MarriageDissolutions_195": 23.5,
+        "MarriageDissolutionsPer1000Inhab_196": 4.5,
+        "MarriageDissolutionsPer1000Marri_197": 27.5,
+        "Divorces_198": 0.6,
+        "DivorcesRelative_199": 0.7,
+        "AverageAgeMales_200": null,
+        "AverageAgeFemales_201": null,
+        "AverageDurationOfTheMarriage_202": null,
+        "DueToDeathHusbandRelative_203": 14.8,
+        "DueToDeathWifeRelative_204": 12.1,
+        "BalanceOfChangesOfNationality_205": null,
+        "Naturalization_206": null,
+        "NaturalizationsRelative_207": null
+      }
+    ],
+    "status": "ok",
+    "source": "cbs",
+    "url": "https://opendata.cbs.nl/ODataApi/odata/85524ENG"
+  }
+]
