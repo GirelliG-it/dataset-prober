@@ -4,3 +4,5 @@ duckdb
 python-dotenv
 requests
 rich
+tavily-python
+cbsodata
