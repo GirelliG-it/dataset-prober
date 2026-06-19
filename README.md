@@ -57,5 +57,9 @@ Add your API key to a `.env` file:## Example output
 See [`output/analysis_summary.txt`](output/analysis_summary.txt) for a sample Claude analysis.
 
 
+
+## Tools & Resources
+- [DuckDB Web Shell](https://shell.duckdb.org) — browser-based DuckDB interface for quickly testing CSV URLs before adding them to dataset-prober
+- [DuckDB httpfs docs](https://duckdb.org/docs/extensions/httpfs.html) — reference for remote file querying
 ## Acknowledgements
 Inspired by [Jurjen van Genugten](https://www.linkedin.com/in/jurjenvangenugten/)'s LinkedIn post demonstrating DuckDB httpfs for probing Dutch open datasets.
