@@ -259,27 +259,31 @@ def tool_fetch_cbs_table(table_id: str, budget: Budget, sample_only: bool = True
     try:
         import cbsodata
 
-        # Get table metadata
-        meta = cbsodata.get_meta(table_id)
-        table_infos = meta.get("TableInfos", [])
-        table_info = table_infos[0] if table_infos else {}
-        modified = table_info.get("Modified", "unknown")
-        title = table_info.get("Title", table_id)
+        # Get sample data first to infer structure
+        data = cbsodata.get_data(table_id)
+        sample = data[:10] if data else []
 
-        # Fetch data
-        if sample_only:
-            data = cbsodata.get_data(table_id, select="*")
-            data = data[:10]
-        else:
-            data = cbsodata.get_data(table_id)
-
-        if not data:
+        if not sample:
             return {"error": "No data returned"}
 
-        columns = [{"name": k, "type": "string"} for k in data[0].keys()]
+        columns = [{"name": k, "type": "string"} for k in sample[0].keys()]
+
+        # Try to get metadata — API varies by cbsodata version
+        modified = "unknown"
+        title = table_id
+        try:
+            # Try catalog lookup for metadata
+            catalog = cbsodata.get_table_list()
+            for entry in catalog:
+                if entry.get("Identifier", "").lower() == table_id.lower():
+                    modified = entry.get("Modified", "unknown")
+                    title = entry.get("Title", table_id)
+                    break
+        except Exception:
+            pass  # metadata is optional — proceed without it
 
         console.print(f"    → ✅ {title}")
-        console.print(f"    → {len(columns)} columns | Last modified: {modified}")
+        console.print(f"    → {len(columns)} columns | {len(data)} rows | Last modified: {modified}")
 
         return {
             "table_id": table_id,
@@ -287,8 +291,9 @@ def tool_fetch_cbs_table(table_id: str, budget: Budget, sample_only: bool = True
             "modified": modified,
             "columns": columns,
             "row_count": len(data),
-            "sample": data[:3],
+            "sample": sample[:3],
             "status": "ok",
+            "source": "cbs",
             "url": f"https://opendata.cbs.nl/ODataApi/odata/{table_id}"
         }
     except Exception as e:
@@ -296,22 +301,56 @@ def tool_fetch_cbs_table(table_id: str, budget: Budget, sample_only: bool = True
         return {"error": str(e)}
 
 
-def tool_download(name: str, url: str, row_count: int, columns: list) -> dict:
-    """Download a dataset to local DuckDB."""
+def tool_download(name: str, url: str, row_count: int, columns: list,
+                  table_id: str = None) -> dict:
+    """
+    Download a dataset to local DuckDB.
+    For CBS tables (table_id provided), uses cbsodata.
+    For direct CSV URLs, uses DuckDB httpfs.
+    """
     console.print(f"  💾 [cyan]Downloading:[/cyan] {name}")
     db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
 
     try:
-        result = ProbeResult(
-            url=url,
-            name=name,
-            status="ok",
-            row_count=row_count,
-            columns=columns
-        )
-        download_to_duckdb([result], db_path)
-        return {"success": True, "db_path": db_path}
+        # CBS tables — use cbsodata, not httpfs
+        if table_id:
+            import cbsodata
+            import duckdb
+            console.print(f"  📥 Fetching CBS table {table_id} via cbsodata...")
+            data = cbsodata.get_data(table_id)
+            if not data:
+                return {"success": False, "error": "No data returned from CBS"}
+
+            # Create safe table name
+            table_name = name.lower()
+            table_name = "".join(c if c.isalnum() else "_" for c in table_name)
+            table_name = table_name.strip("_")[:50]
+
+            # Save to DuckDB via pandas
+            import pandas as pd
+            df = pd.DataFrame(data)
+            con = duckdb.connect(db_path)
+            con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
+            actual_rows = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+            con.close()
+
+            console.print(f"    → ✅ {actual_rows} rows saved to table '{table_name}'")
+            return {"success": True, "db_path": db_path, "table": table_name, "rows": actual_rows}
+
+        # Direct CSV — use existing httpfs method
+        else:
+            result = ProbeResult(
+                url=url,
+                name=name,
+                status="ok",
+                row_count=row_count,
+                columns=columns
+            )
+            download_to_duckdb([result], db_path)
+            return {"success": True, "db_path": db_path}
+
     except Exception as e:
+        console.print(f"    → ❌ {str(e)[:80]}")
         return {"success": False, "error": str(e)}
 
 
@@ -445,6 +484,10 @@ TOOLS = [
                     "type": "array",
                     "items": {"type": "object"},
                     "description": "Column definitions from probe"
+                },
+                "table_id": {
+                    "type": "string",
+                    "description": "CBS table ID if this is a CBS dataset (e.g. '37230ned'). Required for CBS tables."
                 }
             },
             "required": ["name", "url", "row_count", "columns"]
@@ -463,7 +506,14 @@ AVAILABLE DATA SOURCES (in order of preference):
 2. RIVM — use search + extract. Best for health, environment, air quality.
 3. RDW — use search + probe. Best for vehicles, transport.
 4. data.overheid.nl — use search + extract. Central Dutch open data portal.
-5. Gemeente portals — use search + extract. City-level data.
+5. Den Haag open data — three sources:
+   - den-haag-opendata.opendatasoft.com — CSV API, directly probeable. Use probe() on export URLs ending in /exports/csv
+   - denhaag.dataplatform.nl — gemeente data platform, use search + extract
+   - geoportaal-ddh.opendata.arcgis.com — geospatial data, use search + extract
+   NOTE: denhaag.incijfers.nl blocks automated access — do not attempt to crawl it.
+6. Other gemeente portals — many Dutch municipalities use OpenDataSoft (*.opendatasoft.com).
+   CSV export URLs follow the pattern: https://<gemeente>-opendata.opendatasoft.com/api/explore/v2.1/catalog/datasets/<id>/exports/csv
+   These are directly probeable with probe().
 
 BEHAVIOUR RULES:
 1. Parse the user's prompt carefully — extract topic, geography, source preferences, freshness rules, and whether to download.
@@ -484,6 +534,17 @@ FRESHNESS EVALUATION:
 - Apply the user's time rule strictly.
 - If date is unknown, flag it as "freshness unverifiable" — do not assume it passes.
 
+LICENSE EVALUATION (CCREL / ODRL):
+When dataset metadata includes license information, evaluate and report it:
+- CC0 / Public Domain (creativecommons.org/publicdomain) → ✅ Unrestricted use
+- CC-BY (creativecommons.org/licenses/by) → ✅ Free with attribution required
+- CC-BY-SA (creativecommons.org/licenses/by-sa) → ⚠️ Share-alike required
+- CC-BY-NC (creativecommons.org/licenses/by-nc) → ⚠️ Non-commercial only
+- ODRL compliant → check permissions and obligations in metadata
+- No license found → flag as "license unverified — verify before use"
+Always include license status in the final report. For Dutch government data,
+most datasets use CC0 or CC-BY, but always verify.
+
 OUTPUT FORMAT:
 Present a clear summary with:
 - Dataset name and table ID (for CBS)
@@ -491,6 +552,7 @@ Present a clear summary with:
 - Rows and columns
 - Last modified date
 - Freshness verdict (passes/fails user's rule)
+- License (CC0, CC-BY, etc. or "unverified")
 - Recommendation (download / review manually / skip)"""
 
 # ─── Agent loop ─────────────────────────────────────────────────────────────
@@ -591,7 +653,8 @@ def run_agent(user_prompt: str, budget: Budget, allow_download: bool = False) ->
                         tool_input["name"],
                         tool_input["url"],
                         tool_input["row_count"],
-                        tool_input["columns"]
+                        tool_input["columns"],
+                        table_id=tool_input.get("table_id")
                     )
                 else:
                     result = {"error": "Download not permitted — user did not request download"}
