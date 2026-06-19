@@ -72,6 +72,7 @@ def display_results(results):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Probe open datasets via DuckDB httpfs")
     parser.add_argument("--file", help="Path to a JSON file with dataset sources")
+    parser.add_argument("--analyze", action="store_true", help="Run Claude analysis after probing")
     args = parser.parse_args()
 
     # Get sources
@@ -122,3 +123,17 @@ if __name__ == "__main__":
     # Save results
     output_path = Path(__file__).parent.parent / "output" / "probe_results.json"
     save_results(results, str(output_path))
+
+    # Optionally run Claude analysis
+    if args.analyze:
+        console.print("\n[bold]Running Claude analysis...[/bold]\n")
+        from agent import summarize_probe_results
+        import json
+        with open(output_path) as f:
+            saved = json.load(f)
+        summary = summarize_probe_results(saved)
+        console.print(summary)
+        summary_path = Path(__file__).parent.parent / "output" / "analysis_summary.txt"
+        with open(summary_path, "w") as f:
+            f.write(summary)
+        console.print(f"\n[green]Summary saved to {summary_path}[/green]")
