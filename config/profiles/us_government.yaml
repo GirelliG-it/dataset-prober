@@ -1,0 +1,97 @@
+# config/profiles/us_government.yaml
+#
+# Profile for US federal government open data discovery.
+# Sources: data.gov (CKAN), SSA, Census Bureau, BLS, CDC.
+
+name: US Government
+description: Official US federal government open data sources
+language: en
+cost_warning: false
+
+# Geographic scope
+scope:
+  regions:
+    - United States of America
+    - US federal government agencies
+    - US states and territories
+    - US counties and municipalities
+  instruction: >
+    You are operating as the US Government profile.
+    ONLY search for data from US federal or state government sources.
+    DO NOT attempt to find data from Dutch, EU, or other non-US sources.
+    If the user's prompt requests data from multiple countries,
+    you handle ONLY the US portion — other profiles handle the rest.
+    For CBS, overheid.nl, or other Dutch sources — ignore them in this profile.
+
+# Budget limits
+budget:
+  max_searches: 5
+  max_crawls: 8
+  max_probes: 15
+  max_tokens: 4096
+  timeout_minutes: 10
+  sample_rows: 10
+  download_timeout_seconds: 300
+
+# Cost tracking (Claude Sonnet 4.6 pricing)
+pricing:
+  input_per_million: 3.00
+  output_per_million: 15.00
+  cache_read_per_million: 0.30
+
+# Catalog sources
+catalogs:
+  - name: Data.gov
+    type: ckan
+    base_url: https://api.gsa.gov/technology/datagov/v3
+    api_key_env: DATAGOV_API_KEY
+    timeout_seconds: 30
+    priority: 1
+
+# Trusted domains
+trusted_domains:
+  - .gov
+  - data.gov
+  - ssa.gov
+  - census.gov
+  - bls.gov
+  - cdc.gov
+  - hhs.gov
+  - data.cdc.gov
+
+# Blocked sources
+blocked_sources: []
+
+# License preferences
+# US federal government works are public domain by default (17 U.S.C. § 105)
+license_preference:
+  - CC0
+  - US-PD       # US Government Public Domain
+  - other-pd    # Other public domain designations
+license_warn:
+  - CC-BY
+  - CC-BY-SA
+license_reject:
+  - CC-BY-NC
+
+# Domain keywords for query expansion
+domain_keywords:
+  population:
+    - population
+    - demographics
+    - census
+  economy:
+    - economy
+    - income
+    - employment
+    - labor
+  social:
+    - social security
+    - benefits
+    - welfare
+    - medicaid
+    - medicare
+  environment:
+    - environment
+    - air quality
+    - climate

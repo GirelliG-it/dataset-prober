@@ -1,0 +1,108 @@
+# config/profiles/dutch_government.yaml
+#
+# Profile for Dutch government open data discovery.
+# Sources: CBS (Statistics Netherlands), data.overheid.nl, RIVM, RDW,
+#          Den Haag Open Data, OpenDataSoft gemeente portals.
+
+name: Dutch Government
+description: Official Dutch government open data sources
+language: nl
+cost_warning: false
+
+# Geographic scope — agent only searches within this scope
+scope:
+  regions:
+    - Netherlands
+    - Dutch municipalities (gemeenten)
+    - Dutch provinces (provincies)
+    - Kingdom of the Netherlands (including Caribbean municipalities)
+  instruction: >
+    You are operating as the Dutch Government profile.
+    ONLY search for data from Dutch government sources.
+    DO NOT attempt to find data from US, EU, or other non-Dutch sources.
+    If the user's prompt requests data from multiple countries,
+    you handle ONLY the Dutch portion — other profiles handle the rest.
+
+# Budget limits — all values controlled by end-user via CLI flags
+# These are profile suggestions, not enforced defaults
+budget:
+  max_searches: 5
+  max_crawls: 8
+  max_probes: 15
+  max_tokens: 4096
+  timeout_minutes: 10
+  sample_rows: 10
+  download_timeout_seconds: 300
+
+# Cost tracking (Claude Sonnet 4.6 pricing)
+pricing:
+  input_per_million: 3.00
+  output_per_million: 15.00
+  cache_read_per_million: 0.30
+
+# Catalog sources — searched in order
+catalogs:
+  - name: CBS Statistics Netherlands
+    type: cbs
+    base_url: https://opendata.cbs.nl/ODataCatalog
+    api_key_env: null
+    timeout_seconds: 30
+    priority: 1
+
+  - name: data.overheid.nl
+    type: ckan
+    base_url: https://data.overheid.nl
+    api_key_env: null
+    timeout_seconds: 30
+    priority: 2
+
+# Trusted domains — agent prefers results from these
+trusted_domains:
+  - cbs.nl
+  - opendata.cbs.nl
+  - rivm.nl
+  - rdw.nl
+  - data.overheid.nl
+  - overheid.nl
+  - den-haag-opendata.opendatasoft.com
+  - denhaag.dataplatform.nl
+  - geoportaal-ddh.opendata.arcgis.com
+
+# Blocked sources — agent will not attempt to access these
+blocked_sources:
+  - denhaag.incijfers.nl  # blocks automated access (robots.txt)
+
+# OpenDataSoft gemeente portals
+# CSV export URL pattern: https://<host>/api/explore/v2.1/catalog/datasets/<id>/exports/csv
+opendatasoft_portals:
+  - den-haag-opendata.opendatasoft.com
+
+# License preferences (CCREL/ODRL)
+# Agent will flag datasets not matching preferred licenses
+license_preference:
+  - CC0
+  - CC-BY
+license_warn:
+  - CC-BY-SA
+license_reject:
+  - CC-BY-NC
+
+# Search keywords — agent uses these to expand user queries
+# Format: [dutch_term, english_term]
+domain_keywords:
+  population:
+    - bevolking
+    - inwoners
+    - demografie
+  economy:
+    - economie
+    - inkomen
+    - arbeidsmarkt
+  environment:
+    - milieu
+    - luchtkwaliteit
+    - klimaat
+  social:
+    - sociale zekerheid
+    - uitkeringen
+    - zorg

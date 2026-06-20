@@ -14,3 +14,5 @@ data/cache/
 
 # OS
 .DS_Store
+output/datasets.duckdb
+output/agent_results.json

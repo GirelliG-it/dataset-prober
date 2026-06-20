@@ -1,13 +1,25 @@
 """
-dataset_agent.py — Agentic dataset discovery for dataset-prober
+src/dataset_agent.py — Profile-driven agentic dataset discovery
 
-Uses Claude as the reasoning brain, Tavily for web search/extraction,
-and cbsodata for direct CBS (Statistics Netherlands) access.
+Architecture:
+    1. PromptInterpreter classifies user intent → selects profiles
+    2. User confirms the plan
+    3. For each profile (sequential):
+       a. ConfigLoader loads profile YAML
+       b. tools_for_profile() instantiates the right tools
+       c. Agent loop runs with Claude — tools and system prompt
+          are injected from profile, no hardcoded values
+       d. Token and cost tracked per call
+    4. Results aggregated and saved
+
+No hardcoded URLs, sources, or limits anywhere in this file.
+Everything comes from profiles in config/profiles/*.yaml.
 
 Usage:
     python src/dataset_agent.py
-    python src/dataset_agent.py --timeout 10
-    python src/dataset_agent.py --max-searches 5 --max-probes 15
+    python src/dataset_agent.py --timeout 15 --max-searches 8
+    python src/dataset_agent.py --profile dutch_government
+    python src/dataset_agent.py --download
 """
 
 import os
@@ -15,43 +27,92 @@ import sys
 import json
 import time
 import argparse
-from datetime import datetime, timedelta
 from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional
 from dotenv import load_dotenv
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-# Load environment
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 import anthropic
-from tavily import TavilyClient
 
-# Local tools
+# Local imports
 sys.path.insert(0, str(Path(__file__).parent))
-from prober import probe_url, download_to_duckdb, ProbeResult
+from config_loader import ConfigLoader, Profile, BudgetConfig
+from prompt_interpreter import PromptInterpreter
+from tools import tools_for_profile, DatasetResult
+from prober import download_to_duckdb, ProbeResult
 
 console = Console()
 
-# ─── Clients ────────────────────────────────────────────────────────────────
+AGENT_MODEL = "claude-sonnet-4-6"
 
-anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
 
-# ─── Budget tracking ────────────────────────────────────────────────────────
+# ─── Session cost tracker ────────────────────────────────────────────────────
 
+@dataclass
+class SessionCost:
+    """Tracks token usage and cost across the entire session."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    total_calls: int = 0
+    interpreter_cost_usd: float = 0.0
+
+    def add(self, usage, pricing):
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
+        self.total_calls += 1
+
+    def total_cost(self, pricing) -> float:
+        return (
+            (self.input_tokens / 1_000_000) * pricing.input_per_million +
+            (self.output_tokens / 1_000_000) * pricing.output_per_million +
+            (self.cache_read_tokens / 1_000_000) * pricing.cache_read_per_million +
+            self.interpreter_cost_usd
+        )
+
+    def summary(self, pricing) -> str:
+        cost = self.total_cost(pricing)
+        return (
+            f"📊 Session: {self.total_calls} API calls | "
+            f"{self.input_tokens + self.output_tokens:,} tokens | "
+            f"cost: ${cost:.4f}"
+        )
+
+
+# ─── Budget tracker ──────────────────────────────────────────────────────────
+
+@dataclass
 class Budget:
-    def __init__(self, max_searches: int, max_crawls: int, max_probes: int, timeout_minutes: int):
-        self.max_searches = max_searches
-        self.max_crawls = max_crawls
-        self.max_probes = max_probes
-        self.searches_used = 0
-        self.crawls_used = 0
-        self.probes_used = 0
-        self.start_time = time.time()
-        self.timeout_seconds = timeout_minutes * 60
+    """Runtime budget — enforces limits from profile, overrideable by CLI."""
+    max_searches: int
+    max_crawls: int
+    max_probes: int
+    max_tokens: int
+    timeout_seconds: float
+
+    searches_used: int = 0
+    crawls_used: int = 0
+    probes_used: int = 0
+    tokens_used: int = 0
+    start_time: float = field(default_factory=time.time)
+
+    @classmethod
+    def from_profile(cls, budget_config: BudgetConfig) -> "Budget":
+        return cls(
+            max_searches=budget_config.max_searches,
+            max_crawls=budget_config.max_crawls,
+            max_probes=budget_config.max_probes,
+            max_tokens=budget_config.max_tokens,
+            timeout_seconds=budget_config.timeout_minutes * 60
+        )
 
     def time_remaining(self) -> float:
         return self.timeout_seconds - (time.time() - self.start_time)
@@ -71,7 +132,7 @@ class Budget:
     def can_probe(self) -> bool:
         return self.probes_used < self.max_probes and not self.timed_out()
 
-    def status(self) -> str:
+    def status_line(self) -> str:
         remaining = self.time_remaining()
         mins = int(remaining // 60)
         secs = int(remaining % 60)
@@ -79,557 +140,392 @@ class Budget:
             f"⏱  {mins}m{secs}s remaining | "
             f"🔍 {self.searches_used}/{self.max_searches} searches | "
             f"🌐 {self.crawls_used}/{self.max_crawls} crawls | "
-            f"📊 {self.probes_used}/{self.max_probes} probes"
+            f"📊 {self.probes_used}/{self.max_probes} probes | "
+            f"🔤 {self.tokens_used:,}/{self.max_tokens:,} tokens"
         )
 
-# ─── Tool implementations ───────────────────────────────────────────────────
-
-def tool_search(query: str, budget: Budget) -> dict:
-    """Search the web for dataset sources using Tavily."""
-    if not budget.can_search():
-        return {"error": "Search budget exhausted or timed out"}
-
-    console.print(f"  🔍 [cyan]Searching:[/cyan] {query}")
-    budget.searches_used += 1
-
-    try:
-        response = tavily_client.search(
-            query=query,
-            search_depth="advanced",
-            max_results=5,
-            include_domains=[".nl", "data.overheid.nl", "opendata.cbs.nl",
-                             "rivm.nl", "rdw.nl", "government.nl"]
-        )
-        results = [
-            {"url": r["url"], "title": r["title"], "snippet": r.get("content", "")[:200]}
-            for r in response.get("results", [])
-        ]
-        console.print(f"    → Found {len(results)} results")
-        return {"results": results}
-    except Exception as e:
-        return {"error": str(e)}
+    def reset_timer(self):
+        self.start_time = time.time()
 
 
-def tool_extract(url: str, budget: Budget) -> dict:
-    """Extract content from a URL using Tavily (handles JS-rendered pages)."""
-    if not budget.can_crawl():
-        return {"error": "Crawl budget exhausted or timed out"}
+# ─── Dynamic tool definitions for Claude ────────────────────────────────────
 
-    console.print(f"  🌐 [cyan]Extracting:[/cyan] {url}")
-    budget.crawls_used += 1
-
-    try:
-        response = tavily_client.extract(urls=[url])
-        results = response.get("results", [])
-        if results:
-            content = results[0].get("raw_content", "")[:3000]
-            import re
-            dataset_urls = re.findall(
-                r'https?://[^\s<>"]+?\.(?:csv|xlsx|xls|json|parquet)',
-                content,
-                re.IGNORECASE
-            )
-            console.print(f"    → Extracted content, found {len(dataset_urls)} dataset URLs")
-            return {"content": content, "dataset_urls": dataset_urls}
-        return {"error": "No content extracted"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def tool_probe(name: str, url: str, budget: Budget) -> dict:
-    """Probe a dataset URL using DuckDB httpfs."""
-    if not budget.can_probe():
-        return {"error": "Probe budget exhausted or timed out"}
-
-    console.print(f"  📊 [cyan]Probing:[/cyan] {name}")
-    budget.probes_used += 1
-
-    try:
-        result = probe_url(name, url)
-        output = {
-            "name": result.name,
-            "url": result.url,
-            "status": result.status,
-            "row_count": result.row_count,
-            "columns": result.columns,
-            "error": result.error
-        }
-        if result.status == "ok":
-            console.print(f"    → ✅ {result.row_count} rows, {len(result.columns)} columns")
-        else:
-            console.print(f"    → ❌ {result.status}: {str(result.error)[:80]}")
-        return output
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def tool_check_freshness(url: str, last_updated: str, rule: str) -> dict:
-    """Evaluate dataset freshness against a rule."""
-    console.print(f"  📅 [cyan]Checking freshness:[/cyan] last updated {last_updated}")
-
-    result = {
-        "url": url,
-        "last_updated": last_updated,
-        "rule": rule,
-        "passes": None,
-        "reason": ""
-    }
-
-    try:
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%Y"):
-            try:
-                update_date = datetime.strptime(last_updated.strip()[:19], fmt)
-                break
-            except ValueError:
-                continue
-        else:
-            result["passes"] = None
-            result["reason"] = f"Could not parse date: {last_updated}"
-            console.print(f"    → ⚠️  Could not parse date")
-            return result
-
-        now = datetime.now()
-
-        if "6 month" in rule.lower():
-            cutoff = now - timedelta(days=180)
-        elif "1 year" in rule.lower() or "12 month" in rule.lower():
-            cutoff = now - timedelta(days=365)
-        elif "2 year" in rule.lower():
-            cutoff = now - timedelta(days=730)
-        else:
-            cutoff = now - timedelta(days=365)
-
-        passes = update_date >= cutoff
-        result["passes"] = passes
-        result["reason"] = (
-            f"Updated {(now - update_date).days} days ago — "
-            f"{'passes' if passes else 'fails'} the '{rule}' rule"
-        )
-        icon = "✅" if passes else "⏭️ "
-        console.print(f"    → {icon} {result['reason']}")
-
-    except Exception as e:
-        result["passes"] = None
-        result["reason"] = str(e)
-
-    return result
-
-
-def tool_search_cbs_catalog(keyword: str, max_results: int = 10) -> dict:
+def build_tool_definitions(profile: Profile) -> list[dict]:
     """
-    Search the CBS catalog for tables matching a keyword.
-    Scores results by relevance — title matches rank higher than description matches.
-    Also filters to active/recent tables only.
+    Build Claude tool definitions dynamically from profile.
+    No hardcoded tool descriptions — profile context is injected at runtime.
     """
-    console.print(f"  📚 [cyan]Searching CBS catalog:[/cyan] {keyword}")
-    try:
-        import cbsodata
-        import requests
-        from datetime import datetime, timedelta
+    catalog_types = [c.type for c in profile.catalogs]
+    has_cbs = "cbs" in catalog_types
+    has_ckan = "ckan" in catalog_types
 
-        # Use CBS OData catalog API directly with timeout
-        catalog_url = "https://opendata.cbs.nl/ODataCatalog/Tables?$format=json"
-        resp = requests.get(catalog_url, timeout=30)
-        resp.raise_for_status()
-        all_tables = resp.json().get("value", [])
+    tools = []
 
-        keyword_lower = keyword.lower()
-        scored = []
+    # search_catalog — adapts description based on available catalogs
+    catalog_desc = []
+    if has_cbs:
+        catalog_desc.append("CBS OData catalog (for Dutch statistics)")
+    if has_ckan:
+        catalog_desc.append("CKAN catalog (for government open data portals)")
+    catalog_desc.append("Tavily web search (fallback for any source)")
 
-        for table in all_tables:
-            title = table.get("Title", "").lower()
-            desc = table.get("ShortDescription", "").lower()
-            status = table.get("OutputStatus", "").lower()
-
-            # Skip archived/discontinued tables
-            if "archief" in status or "gestopt" in status or "discontinued" in status:
-                continue
-
-            score = 0
-            if keyword_lower in title:
-                score += 2  # Title match scores higher
-            if keyword_lower in desc:
-                score += 1
-
-            if score == 0:
-                continue
-
-            # Parse modified date
-            modified = table.get("Modified", "")
-            modified_display = modified[:10] if modified else "unknown"
-
-            scored.append({
-                "score": score,
-                "identifier": table.get("Identifier"),
-                "title": table.get("Title"),
-                "description": table.get("ShortDescription", "")[:200],
-                "modified": modified_display,
-                "frequency": table.get("Frequency", "unknown"),
-                "period": table.get("Period", "unknown"),
-                "language": table.get("Language", "nl"),
-                "status": table.get("OutputStatus", "unknown")
-            })
-
-        # Sort by score then by modified date (most recent first)
-        scored.sort(key=lambda x: (x["score"], x["modified"]), reverse=True)
-        matches = [{k: v for k, v in m.items() if k != "score"} for m in scored[:max_results]]
-
-        console.print(f"    → Found {len(matches)} matching CBS tables")
-        return {"matches": matches, "total_found": len(scored)}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def tool_fetch_cbs_table(table_id: str, budget: Budget, sample_only: bool = True) -> dict:
-    """
-    Fetch metadata and sample from a CBS table via direct OData API.
-    Uses $top=10 with a 30-second timeout — never blocks on large tables.
-    Full download is handled separately by tool_download.
-    """
-    if not budget.can_probe():
-        return {"error": "Probe budget exhausted or timed out"}
-
-    console.print(f"  🏛️  [cyan]Fetching CBS table:[/cyan] {table_id}")
-    budget.probes_used += 1
-
-    import requests
-
-    try:
-        # Step 1: Get table metadata with timeout
-        meta_url = f"https://opendata.cbs.nl/ODataApi/odata/{table_id}/TableInfos?$format=json"
-        meta_resp = requests.get(meta_url, timeout=30)
-        meta_resp.raise_for_status()
-        meta_values = meta_resp.json().get("value", [{}])
-        meta = meta_values[0] if meta_values else {}
-        title = meta.get("Title", table_id)
-        modified = meta.get("Modified", "unknown")
-        summary = meta.get("Summary", "")
-
-        # Step 2: Get sample rows with timeout
-        sample_url = (
-            f"https://opendata.cbs.nl/ODataApi/odata/{table_id}"
-            f"/TypedDataSet?$top=10&$format=json"
-        )
-        sample_resp = requests.get(sample_url, timeout=30)
-        sample_resp.raise_for_status()
-        sample_data = sample_resp.json().get("value", [])
-
-        if not sample_data:
-            return {"error": f"No sample data returned for {table_id}"}
-
-        columns = [{"name": k, "type": "string"} for k in sample_data[0].keys()]
-
-        console.print(f"    → ✅ {title}")
-        console.print(f"    → {len(columns)} columns | Last modified: {modified}")
-
-        return {
-            "table_id": table_id,
-            "title": title,
-            "modified": modified,
-            "summary": summary[:300],
-            "columns": columns,
-            "row_count": None,  # Unknown until full download
-            "sample": sample_data[:3],
-            "status": "ok",
-            "source": "cbs",
-            "url": f"https://opendata.cbs.nl/ODataApi/odata/{table_id}"
-        }
-
-    except requests.Timeout:
-        console.print(f"    → ❌ Timed out after 30s")
-        return {"error": f"CBS table {table_id} timed out — may be too large or unavailable"}
-    except Exception as e:
-        console.print(f"    → ❌ {str(e)[:80]}")
-        return {"error": str(e)}
-
-
-def tool_download(name: str, url: str, row_count: int, columns: list,
-                  table_id: str = None) -> dict:
-    """
-    Download a dataset to local DuckDB.
-    For CBS tables (table_id provided), uses cbsodata.
-    For direct CSV URLs, uses DuckDB httpfs.
-    """
-    console.print(f"  💾 [cyan]Downloading:[/cyan] {name}")
-    db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
-
-    try:
-        # CBS tables — use cbsodata in a thread with timeout
-        if table_id:
-            import cbsodata
-            import duckdb
-            import pandas as pd
-            import threading
-            import queue as queue_module
-
-            console.print(f"  📥 Fetching CBS table {table_id} via cbsodata (may take a few minutes)...")
-
-            result_queue = queue_module.Queue()
-
-            def _fetch():
-                try:
-                    data = cbsodata.get_data(table_id)
-                    result_queue.put(("ok", data))
-                except Exception as e:
-                    result_queue.put(("error", str(e)))
-
-            thread = threading.Thread(target=_fetch, daemon=True)
-            thread.start()
-            thread.join(timeout=300)  # 5 minute max per table
-
-            if thread.is_alive():
-                return {"success": False, "error": f"CBS download timed out after 5 minutes for {table_id}"}
-
-            status, payload = result_queue.get()
-            if status == "error":
-                return {"success": False, "error": payload}
-
-            data = payload
-            if not data:
-                return {"success": False, "error": "No data returned from CBS"}
-
-            # Create safe table name
-            table_name = name.lower()
-            table_name = "".join(c if c.isalnum() else "_" for c in table_name)
-            table_name = table_name.strip("_")[:50]
-
-            # Save to DuckDB via pandas
-            df = pd.DataFrame(data)
-            con = duckdb.connect(db_path)
-            con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM df")
-            actual_rows = con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-            con.close()
-
-            console.print(f"    → ✅ {actual_rows} rows saved to table '{table_name}'")
-            return {"success": True, "db_path": db_path, "table": table_name, "rows": actual_rows}
-
-        # Direct CSV — use existing httpfs method
-        else:
-            result = ProbeResult(
-                url=url,
-                name=name,
-                status="ok",
-                row_count=row_count,
-                columns=columns
-            )
-            download_to_duckdb([result], db_path)
-            return {"success": True, "db_path": db_path}
-
-    except Exception as e:
-        console.print(f"    → ❌ {str(e)[:80]}")
-        return {"success": False, "error": str(e)}
-
-
-# ─── Tool definitions for Claude ────────────────────────────────────────────
-
-TOOLS = [
-    {
-        "name": "search",
+    tools.append({
+        "name": "search_catalog",
         "description": (
-            "Search the web for Dutch open dataset sources using Tavily. "
-            "Prefer government domains (.nl, overheid.nl, cbs.nl, rivm.nl). "
-            "Use specific queries including topic, geography, and data type. "
-            "Use this for non-CBS sources. For CBS data, prefer search_cbs_catalog."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query in Dutch or English"}
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "extract",
-        "description": (
-            "Extract content and dataset URLs from a webpage using Tavily. "
-            "Handles JavaScript-rendered pages. Use when a search result looks "
-            "promising but needs deeper inspection for direct file URLs."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "URL of the page to extract"}
-            },
-            "required": ["url"]
-        }
-    },
-    {
-        "name": "probe",
-        "description": (
-            "Probe a CSV/dataset URL directly using DuckDB httpfs. "
-            "Returns row count, column names, and data types. "
-            "Use only on direct file URLs ending in .csv, .parquet etc. "
-            "Do NOT use on CBS OData or ZIP URLs — use fetch_cbs_table instead."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Human-readable dataset name"},
-                "url": {"type": "string", "description": "Direct URL to the dataset file"}
-            },
-            "required": ["name", "url"]
-        }
-    },
-    {
-        "name": "check_freshness",
-        "description": (
-            "Check if a dataset meets the freshness requirement from the user's prompt. "
-            "Use when you know the last update date from metadata or catalog."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "url": {"type": "string", "description": "Dataset URL or identifier"},
-                "last_updated": {"type": "string", "description": "Last update date (e.g. '2024-03-15')"},
-                "rule": {"type": "string", "description": "Freshness rule (e.g. 'within 6 months')"}
-            },
-            "required": ["url", "last_updated", "rule"]
-        }
-    },
-    {
-        "name": "search_cbs_catalog",
-        "description": (
-            "Search the CBS (Statistics Netherlands) catalog for datasets by keyword. "
-            "ALWAYS use this first when looking for CBS data — it bypasses all "
-            "JavaScript walls and ZIP issues. Returns table IDs, titles, descriptions, "
-            "and last modification dates. Try both Dutch and English keywords."
+            f"Search for datasets using available catalogs: {', '.join(catalog_desc)}. "
+            f"The source parameter determines which catalog to use. "
+            f"Use multiple searches with different keywords to maximize coverage. "
+            f"Always prefer catalog APIs over web search when available."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "keyword": {
                     "type": "string",
-                    "description": "Search keyword in Dutch or English (e.g. 'bevolking', 'luchtkwaliteit')"
+                    "description": "Search keyword — try both native language and English"
+                },
+                "source": {
+                    "type": "string",
+                    "enum": catalog_types + ["tavily"],
+                    "description": f"Which catalog to search. Available: {', '.join(catalog_types + ['tavily'])}"
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum results to return (default: 10)"
+                    "description": "Number of results to return"
                 }
             },
-            "required": ["keyword"]
+            "required": ["keyword", "source", "max_results"]
         }
-    },
-    {
-        "name": "fetch_cbs_table",
+    })
+
+    # fetch_dataset
+    tools.append({
+        "name": "fetch_dataset",
         "description": (
-            "Fetch data from a specific CBS table by its ID (e.g. '37230NED'). "
-            "Bypasses JavaScript walls and ZIP archives completely. "
-            "Returns columns, sample rows, title, and last modification date. "
-            "Use sample_only=true for evaluation, false only when downloading."
+            "Fetch full metadata and sample data for a specific dataset by its ID. "
+            "For CBS: use the table ID (e.g. '37230ned'). "
+            "For CKAN: use the package name or ID. "
+            "For web URLs: use the full URL. "
+            "Always fetch before downloading to verify quality and freshness."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "table_id": {
+                "dataset_id": {
                     "type": "string",
-                    "description": "CBS table identifier (e.g. '37230NED')"
+                    "description": "Dataset identifier (CBS table ID, CKAN package name, or URL)"
                 },
-                "sample_only": {
-                    "type": "boolean",
-                    "description": "Fetch only 10 rows for evaluation (default: true)"
+                "source": {
+                    "type": "string",
+                    "enum": catalog_types + ["tavily"],
+                    "description": "Which tool to use for fetching"
+                },
+                "sample_rows": {
+                    "type": "integer",
+                    "description": "Number of sample rows to retrieve"
                 }
             },
-            "required": ["table_id"]
+            "required": ["dataset_id", "source", "sample_rows"]
         }
-    },
-    {
-        "name": "download",
+    })
+
+    # check_freshness
+    tools.append({
+        "name": "check_freshness",
+        "description": (
+            "Check if a dataset meets the freshness requirement from the user's prompt. "
+            "Parse the last_updated date and compare against the max_days_old rule. "
+            "Always check freshness before recommending or downloading a dataset."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dataset_id": {
+                    "type": "string",
+                    "description": "Dataset identifier for reference"
+                },
+                "last_updated": {
+                    "type": "string",
+                    "description": "Last update date from metadata (ISO format preferred)"
+                },
+                "max_days_old": {
+                    "type": "integer",
+                    "description": "Maximum allowed age in days (from user's freshness rule)"
+                }
+            },
+            "required": ["dataset_id", "last_updated", "max_days_old"]
+        }
+    })
+
+    # download_dataset
+    tools.append({
+        "name": "download_dataset",
         "description": (
             "Download a dataset into the local DuckDB database. "
-            "ONLY call this if the user explicitly requested downloading. "
-            "Always confirm freshness and quality checks passed first."
+            "ONLY call this if: (1) the user explicitly requested downloading, "
+            "AND (2) the dataset has passed freshness and quality checks. "
+            "For CBS datasets, provide the table_id. "
+            "For CSV datasets, provide the download_url."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Dataset name"},
-                "url": {"type": "string", "description": "Dataset URL"},
-                "row_count": {"type": "integer", "description": "Row count from probe"},
-                "columns": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "Column definitions from probe"
+                "dataset_id": {
+                    "type": "string",
+                    "description": "Dataset identifier"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Human-readable dataset title (used as DuckDB table name)"
+                },
+                "source": {
+                    "type": "string",
+                    "enum": catalog_types + ["tavily"],
+                    "description": "Which tool to use for downloading"
+                },
+                "download_url": {
+                    "type": "string",
+                    "description": "Direct file URL for CSV downloads (omit for CBS)"
                 },
                 "table_id": {
                     "type": "string",
-                    "description": "CBS table ID if this is a CBS dataset (e.g. '37230ned'). Required for CBS tables."
+                    "description": "CBS table ID for CBS downloads (omit for CSV)"
                 }
             },
-            "required": ["name", "url", "row_count", "columns"]
+            "required": ["dataset_id", "title", "source"]
         }
-    }
-]
+    })
 
-# ─── System prompt ───────────────────────────────────────────────────────────
+    return tools
 
-SYSTEM_PROMPT = """You are an autonomous dataset discovery agent for a Dutch public sector data analyst.
 
-Your job is to find, evaluate, and report on open datasets based on the user's prompt.
+# ─── Tool executor ───────────────────────────────────────────────────────────
 
-AVAILABLE DATA SOURCES (in order of preference):
-1. CBS (Statistics Netherlands) — use search_cbs_catalog + fetch_cbs_table. Best for demographics, economy, population, regional stats.
-2. RIVM — use search + extract. Best for health, environment, air quality.
-3. RDW — use search + probe. Best for vehicles, transport.
-4. data.overheid.nl — use search + extract. Central Dutch open data portal.
-5. Den Haag open data — three sources:
-   - den-haag-opendata.opendatasoft.com — CSV API, directly probeable. Use probe() on export URLs ending in /exports/csv
-   - denhaag.dataplatform.nl — gemeente data platform, use search + extract
-   - geoportaal-ddh.opendata.arcgis.com — geospatial data, use search + extract
-   NOTE: denhaag.incijfers.nl blocks automated access — do not attempt to crawl it.
-6. Other gemeente portals — many Dutch municipalities use OpenDataSoft (*.opendatasoft.com).
-   CSV export URLs follow the pattern: https://<gemeente>-opendata.opendatasoft.com/api/explore/v2.1/catalog/datasets/<id>/exports/csv
-   These are directly probeable with probe().
+def execute_tool(
+    tool_name: str,
+    tool_input: dict,
+    tool_map: dict,
+    budget: Budget,
+    profile: Profile,
+    allow_download: bool,
+    found_datasets: list,
+    session_cost: SessionCost
+) -> dict:
+    """
+    Route a Claude tool call to the correct tool implementation.
+    Updates budget and found_datasets in place.
+    Returns JSON-serializable result dict.
+    """
+    db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
+
+    if tool_name == "search_catalog":
+        source = tool_input["source"]
+        keyword = tool_input["keyword"]
+        max_results = tool_input["max_results"]
+
+        tool = tool_map.get(source)
+        if not tool:
+            return {"error": f"Tool '{source}' not available in current profile"}
+
+        if not budget.can_search():
+            return {"error": "Search budget exhausted or timed out"}
+
+        console.print(f"  🔍 [cyan]Searching {source}:[/cyan] {keyword}")
+        budget.searches_used += 1
+
+        results = tool.search(keyword, max_results)
+        console.print(f"    → Found {len(results)} results")
+        return {"results": [r.to_dict() for r in results]}
+
+    elif tool_name == "fetch_dataset":
+        source = tool_input["source"]
+        dataset_id = tool_input["dataset_id"]
+        sample_rows = tool_input["sample_rows"]
+
+        tool = tool_map.get(source)
+        if not tool:
+            return {"error": f"Tool '{source}' not available in current profile"}
+
+        if not budget.can_probe():
+            return {"error": "Probe budget exhausted or timed out"}
+
+        console.print(f"  📊 [cyan]Fetching ({source}):[/cyan] {dataset_id}")
+        budget.probes_used += 1
+
+        result = tool.fetch(dataset_id, sample_rows)
+
+        if result.status == "probed":
+            console.print(f"    → ✅ {result.title} | {len(result.columns or [])} columns | modified: {result.modified}")
+            found_datasets.append(result)
+        else:
+            console.print(f"    → ❌ {result.error or 'fetch failed'}")
+
+        return result.to_dict()
+
+    elif tool_name == "check_freshness":
+        dataset_id = tool_input["dataset_id"]
+        last_updated = tool_input["last_updated"]
+        max_days_old = tool_input["max_days_old"]
+
+        console.print(f"  📅 [cyan]Checking freshness:[/cyan] {dataset_id} (last: {last_updated})")
+
+        # Create a temporary DatasetResult to use its freshness logic
+        temp = DatasetResult(
+            id=dataset_id, title=dataset_id, description="",
+            source="", source_name="", url="",
+            modified=last_updated,
+            download_url=None, format=None, frequency=None,
+            license=None, license_url=None, row_count=None,
+            columns=None, sample=None, language=None, tags=[]
+        )
+
+        days = temp.freshness_days()
+        passes = temp.passes_freshness(max_days_old)
+
+        if days is None:
+            console.print(f"    → ⚠️  Cannot parse date: {last_updated}")
+            return {
+                "dataset_id": dataset_id,
+                "last_updated": last_updated,
+                "days_old": None,
+                "max_days_old": max_days_old,
+                "passes": None,
+                "reason": f"Cannot parse date format: {last_updated}"
+            }
+
+        icon = "✅" if passes else "⏭️ "
+        status = "passes" if passes else "fails"
+        console.print(f"    → {icon} {days} days old — {status} the {max_days_old}-day rule")
+
+        return {
+            "dataset_id": dataset_id,
+            "last_updated": last_updated,
+            "days_old": days,
+            "max_days_old": max_days_old,
+            "passes": passes,
+            "reason": f"Updated {days} days ago — {status} the rule (max {max_days_old} days)"
+        }
+
+    elif tool_name == "download_dataset":
+        if not allow_download:
+            console.print("  ⛔ [yellow]Download blocked — not requested by user[/yellow]")
+            return {"error": "Download not permitted — user did not request download"}
+
+        source = tool_input["source"]
+        dataset_id = tool_input["dataset_id"]
+        title = tool_input["title"]
+        download_url = tool_input.get("download_url")
+        table_id = tool_input.get("table_id")
+
+        tool = tool_map.get(source)
+        if not tool:
+            return {"error": f"Tool '{source}' not available"}
+
+        console.print(f"  💾 [cyan]Downloading:[/cyan] {title}")
+
+        # Find the DatasetResult in found_datasets or create one
+        dataset = next((d for d in found_datasets if d.id == dataset_id), None)
+        if not dataset:
+            dataset = DatasetResult(
+                id=table_id or dataset_id,
+                title=title,
+                description="",
+                source=source,
+                source_name=tool.source_name,
+                url=download_url or "",
+                download_url=download_url,
+                format="CSV",
+                modified=None, frequency=None,
+                license=None, license_url=None,
+                row_count=None, columns=[], sample=None,
+                language=None, tags=[]
+            )
+
+        # Override ID with CBS table_id if provided
+        if table_id:
+            dataset.id = table_id
+
+        result = tool.download(dataset, db_path)
+
+        if result.status == "downloaded":
+            console.print(f"    → ✅ {result.row_count:,} rows saved to DuckDB")
+        else:
+            console.print(f"    → ❌ {result.error}")
+
+        return result.to_dict()
+
+    else:
+        return {"error": f"Unknown tool: {tool_name}"}
+
+
+# ─── Agent loop ──────────────────────────────────────────────────────────────
+
+def run_profile(
+    user_prompt: str,
+    profile: Profile,
+    budget: Budget,
+    allow_download: bool,
+    session_cost: SessionCost,
+    cli_overrides: dict
+) -> list[DatasetResult]:
+    """
+    Run the agent loop for a single profile.
+    Returns list of found/downloaded DatasetResult objects.
+    """
+    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Apply CLI overrides to budget
+    budget_config = profile.budget.override(**cli_overrides)
+    budget = Budget.from_profile(budget_config)
+
+    # Instantiate tools
+    tool_instances = tools_for_profile(profile)
+    tool_map = {t.source_type: t for t in tool_instances}
+
+    # Build dynamic tool definitions
+    tool_definitions = build_tool_definitions(profile)
+
+    # Build dynamic system prompt — no hardcoded values
+    system_prompt = f"""You are an autonomous dataset discovery agent.
+
+{profile.system_prompt_context()}
 
 BEHAVIOUR RULES:
-1. Parse the user's prompt carefully — extract topic, geography, source preferences, freshness rules, and whether to download.
-2. For CBS data: ALWAYS start with search_cbs_catalog, then fetch_cbs_table for promising results.
-3. For non-CBS data: use search + extract to find direct file URLs, then probe.
-4. Apply freshness rules strictly from the user's prompt.
-5. Only download if the user explicitly asked to download.
-6. Think step by step and explain each decision briefly in Dutch if the user wrote in Dutch.
-7. Try multiple keywords (Dutch AND English) before giving up.
-8. Stop and report clearly when budget is exhausted.
+1. Parse the user's prompt carefully — extract topic, geography, freshness rules, and download intent.
+2. Search systematically using multiple keywords — try native language AND English.
+3. Always fetch dataset details before recommending — verify quality, schema, and freshness.
+4. Apply freshness rules strictly using check_freshness — never assume a dataset is fresh.
+5. Evaluate licenses — prefer {', '.join(profile.license.preference)}.
+6. Only download if the user explicitly requested it.
+7. Stop and report when budget is exhausted.
+8. Explain each decision briefly before each tool call.
 
-AUDIT TRAIL:
-Before each tool call, briefly explain WHY you are calling it.
-After each result, explain what you learned and what you will do next.
+BUDGET AWARENESS:
+- You have {budget.max_searches} searches, {budget.max_crawls} crawls, {budget.max_probes} probes.
+- Use them efficiently — don't repeat the same search twice.
+- Prioritize catalog APIs over web search when available.
 
-FRESHNESS EVALUATION:
-- Extract the last modification date from catalog metadata or file metadata.
-- Apply the user's time rule strictly.
-- If date is unknown, flag it as "freshness unverifiable" — do not assume it passes.
-
-LICENSE EVALUATION (CCREL / ODRL):
-When dataset metadata includes license information, evaluate and report it:
-- CC0 / Public Domain (creativecommons.org/publicdomain) → ✅ Unrestricted use
-- CC-BY (creativecommons.org/licenses/by) → ✅ Free with attribution required
-- CC-BY-SA (creativecommons.org/licenses/by-sa) → ⚠️ Share-alike required
-- CC-BY-NC (creativecommons.org/licenses/by-nc) → ⚠️ Non-commercial only
-- ODRL compliant → check permissions and obligations in metadata
-- No license found → flag as "license unverified — verify before use"
-Always include license status in the final report. For Dutch government data,
-most datasets use CC0 or CC-BY, but always verify.
+LICENSE EVALUATION (CCREL/ODRL):
+- CC0 / Public Domain → ✅ Grade A — unrestricted
+- CC-BY → ✅ Grade B — attribution required
+- CC-BY-SA → ⚠️ Grade B- — share-alike required
+- CC-BY-NC → ⚠️ Grade C — non-commercial only
+- Unknown → flag as unverified
 
 OUTPUT FORMAT:
-Present a clear summary with:
-- Dataset name and table ID (for CBS)
+When done, present a structured summary table with:
+- Dataset name and ID
 - Source and URL
-- Rows and columns
+- Rows and columns (if probed)
 - Last modified date
-- Freshness verdict (passes/fails user's rule)
-- License (CC0, CC-BY, etc. or "unverified")
-- Recommendation (download / review manually / skip)"""
-
-# ─── Agent loop ─────────────────────────────────────────────────────────────
-
-def run_agent(user_prompt: str, budget: Budget, allow_download: bool = False) -> None:
-    """Main agentic loop."""
+- Freshness verdict
+- License grade
+- Recommendation (download / review / skip)"""
 
     console.print(Panel(
-        f"[bold cyan]Dataset Discovery Agent[/bold cyan]\n\n"
+        f"[bold cyan]Running profile: {profile.name}[/bold cyan]\n\n"
         f"[white]{user_prompt}[/white]\n\n"
-        f"[dim]{budget.status()}[/dim]",
+        f"[dim]{budget.status_line()}[/dim]",
         box=box.ROUNDED
     ))
 
@@ -642,31 +538,51 @@ def run_agent(user_prompt: str, budget: Budget, allow_download: bool = False) ->
 
         # Check timeout
         if budget.timed_out():
-            console.print(f"\n[yellow]⏰ Time limit reached after {budget.elapsed_minutes():.1f} minutes.[/yellow]")
-            console.print(f"[yellow]Found {len(found_datasets)} dataset(s) so far.[/yellow]\n")
-            _ask_for_instructions(found_datasets, budget)
+            console.print(
+                f"\n[yellow]⏰ Time limit reached after "
+                f"{budget.elapsed_minutes():.1f} minutes.[/yellow]"
+            )
+            console.print(
+                f"[yellow]Found {len(found_datasets)} dataset(s) so far.[/yellow]\n"
+            )
+            _handle_timeout(found_datasets, budget, tool_map, allow_download)
             break
 
-        # Print budget status every 3 iterations
+        # Status every 3 iterations
         if iteration % 3 == 0:
-            console.print(f"\n[dim]{budget.status()}[/dim]\n")
+            console.print(f"\n[dim]{budget.status_line()}[/dim]\n")
 
         # Call Claude
-        response = anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            tools=TOOLS,
+        response = client.messages.create(
+            model=AGENT_MODEL,
+            max_tokens=profile.budget.max_tokens,
+            system=system_prompt,
+            tools=tool_definitions,
             messages=messages
         )
 
-        # Add assistant response to history
+        # Track tokens and cost
+        session_cost.add(response.usage, profile.pricing)
+        budget.tokens_used += response.usage.input_tokens + response.usage.output_tokens
+
+        call_cost = profile.pricing.calculate_cost(
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            getattr(response.usage, "cache_read_input_tokens", 0) or 0
+        )
+        console.print(
+            f"[dim]  tokens: {response.usage.input_tokens + response.usage.output_tokens:,} | "
+            f"call cost: {profile.pricing.format_cost(call_cost)} | "
+            f"session total: {profile.pricing.format_cost(session_cost.total_cost(profile.pricing))}[/dim]"
+        )
+
+        # Add response to history
         messages.append({"role": "assistant", "content": response.content})
 
         # Check stop reason
         if response.stop_reason == "end_turn":
             for block in response.content:
-                if hasattr(block, "text"):
+                if hasattr(block, "text") and block.text:
                     console.print(f"\n[bold green]Agent Report:[/bold green]\n{block.text}")
             break
 
@@ -682,51 +598,16 @@ def run_agent(user_prompt: str, budget: Budget, allow_download: bool = False) ->
                     console.print(f"\n[dim italic]{block.text}[/dim italic]")
                 continue
 
-            tool_name = block.name
-            tool_input = block.input
-
-            # Execute tool
-            if tool_name == "search":
-                result = tool_search(tool_input["query"], budget)
-            elif tool_name == "extract":
-                result = tool_extract(tool_input["url"], budget)
-            elif tool_name == "probe":
-                result = tool_probe(tool_input["name"], tool_input["url"], budget)
-                if result.get("status") == "ok":
-                    found_datasets.append(result)
-            elif tool_name == "check_freshness":
-                result = tool_check_freshness(
-                    tool_input["url"],
-                    tool_input["last_updated"],
-                    tool_input["rule"]
-                )
-            elif tool_name == "search_cbs_catalog":
-                result = tool_search_cbs_catalog(
-                    tool_input["keyword"],
-                    tool_input.get("max_results", 10)
-                )
-            elif tool_name == "fetch_cbs_table":
-                result = tool_fetch_cbs_table(
-                    tool_input["table_id"],
-                    budget,
-                    tool_input.get("sample_only", True)
-                )
-                if result.get("status") == "ok":
-                    found_datasets.append(result)
-            elif tool_name == "download":
-                if allow_download:
-                    result = tool_download(
-                        tool_input["name"],
-                        tool_input["url"],
-                        tool_input["row_count"],
-                        tool_input["columns"],
-                        table_id=tool_input.get("table_id")
-                    )
-                else:
-                    result = {"error": "Download not permitted — user did not request download"}
-                    console.print("  ⛔ [yellow]Download blocked — not requested by user[/yellow]")
-            else:
-                result = {"error": f"Unknown tool: {tool_name}"}
+            result = execute_tool(
+                tool_name=block.name,
+                tool_input=block.input,
+                tool_map=tool_map,
+                budget=budget,
+                profile=profile,
+                allow_download=allow_download,
+                found_datasets=found_datasets,
+                session_cost=session_cost
+            )
 
             tool_results.append({
                 "type": "tool_result",
@@ -734,19 +615,18 @@ def run_agent(user_prompt: str, budget: Budget, allow_download: bool = False) ->
                 "content": json.dumps(result, default=str)
             })
 
-        # Add tool results to history
         messages.append({"role": "user", "content": tool_results})
 
-    # Save results
-    if found_datasets:
-        output_path = Path(__file__).parent.parent / "output" / "agent_results.json"
-        with open(output_path, "w") as f:
-            json.dump(found_datasets, f, indent=2, default=str)
-        console.print(f"\n[green]Results saved to {output_path}[/green]")
+    return found_datasets
 
 
-def _ask_for_instructions(found_datasets: list, budget: Budget) -> None:
-    """Ask user for instructions when time runs out mid-run."""
+def _handle_timeout(
+    found_datasets: list,
+    budget: Budget,
+    tool_map: dict,
+    allow_download: bool
+):
+    """Handle timeout — ask user what to do with partial results."""
     console.print("\n[bold yellow]What would you like to do?[/bold yellow]")
     console.print("  1. Continue searching (resets timer)")
     console.print("  2. Download what was found so far")
@@ -756,46 +636,47 @@ def _ask_for_instructions(found_datasets: list, budget: Budget) -> None:
 
     if choice == "1":
         console.print("[green]Continuing...[/green]")
-        budget.start_time = time.time()
-    elif choice == "2":
-        if found_datasets:
-            console.print(f"\n[bold]Downloading {len(found_datasets)} dataset(s)...[/bold]")
-            db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
-            results = [
-                ProbeResult(
-                    url=d["url"], name=d["name"], status="ok",
-                    row_count=d.get("row_count", 0), columns=d.get("columns", [])
-                )
-                for d in found_datasets
-            ]
-            download_to_duckdb(results, db_path)
+        budget.reset_timer()
+    elif choice == "2" and found_datasets and allow_download:
+        db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
+        for dataset in found_datasets:
+            tool = tool_map.get(dataset.source)
+            if tool and dataset.status == "probed":
+                tool.download(dataset, db_path)
     else:
         _print_results_table(found_datasets)
 
 
-def _print_results_table(datasets: list) -> None:
-    """Print a summary table of found datasets."""
+def _print_results_table(datasets: list):
+    """Print a summary table of discovered datasets."""
     if not datasets:
         console.print("[yellow]No datasets found.[/yellow]")
         return
 
     table = Table(title="Discovered Datasets", box=box.ROUNDED)
-    table.add_column("Name", style="cyan")
+    table.add_column("Title", style="cyan", max_width=40)
+    table.add_column("Source", max_width=10)
     table.add_column("Rows", justify="right")
-    table.add_column("Columns", justify="right")
     table.add_column("Modified")
-    table.add_column("URL/ID")
+    table.add_column("License")
+    table.add_column("Status")
 
     for d in datasets:
-        identifier = d.get("table_id", d.get("url", "-"))
-        if len(identifier) > 40:
-            identifier = identifier[:37] + "..."
+        status_color = {
+            "downloaded": "green",
+            "probed": "cyan",
+            "found": "white",
+            "failed": "red",
+            "skipped": "yellow"
+        }.get(d.status, "white")
+
         table.add_row(
-            d.get("name", d.get("title", "-")),
-            str(d.get("row_count", "-")),
-            str(len(d.get("columns", []))),
-            str(d.get("modified", "-"))[:10],
-            identifier
+            d.title[:40],
+            d.source,
+            str(d.row_count) if d.row_count else "-",
+            (d.modified or "unknown")[:10],
+            d.license_grade() if d.license else "?",
+            f"[{status_color}]{d.status}[/{status_color}]"
         )
 
     console.print(table)
@@ -803,41 +684,175 @@ def _print_results_table(datasets: list) -> None:
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Agentic dataset discovery")
-    parser.add_argument("--timeout", type=int, default=10,
-                        help="Timeout in minutes (default: 10)")
-    parser.add_argument("--max-searches", type=int, default=5,
-                        help="Maximum Tavily searches (default: 5)")
-    parser.add_argument("--max-crawls", type=int, default=8,
-                        help="Maximum page extractions (default: 8)")
-    parser.add_argument("--max-probes", type=int, default=15,
-                        help="Maximum dataset probes (default: 15)")
-    parser.add_argument("--download", action="store_true",
-                        help="Allow agent to download datasets")
+def main():
+    parser = argparse.ArgumentParser(
+        description="Profile-driven agentic dataset discovery"
+    )
+    parser.add_argument(
+        "--profile",
+        help="Force a specific profile (skips auto-detection)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Timeout in minutes (overrides profile default)"
+    )
+    parser.add_argument(
+        "--max-searches",
+        type=int,
+        default=None,
+        dest="max_searches",
+        help="Maximum catalog searches (overrides profile default)"
+    )
+    parser.add_argument(
+        "--max-crawls",
+        type=int,
+        default=None,
+        dest="max_crawls",
+        help="Maximum page extractions (overrides profile default)"
+    )
+    parser.add_argument(
+        "--max-probes",
+        type=int,
+        default=None,
+        dest="max_probes",
+        help="Maximum dataset probes (overrides profile default)"
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        dest="max_tokens",
+        help="Maximum tokens per Claude call (overrides profile default)"
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Allow agent to download datasets to DuckDB"
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        dest="list_profiles",
+        help="List available profiles and exit"
+    )
     args = parser.parse_args()
 
-    budget = Budget(
-        max_searches=args.max_searches,
-        max_crawls=args.max_crawls,
-        max_probes=args.max_probes,
-        timeout_minutes=args.timeout
-    )
+    # CLI overrides dict (None values are ignored by budget.override())
+    cli_overrides = {
+        "timeout_minutes": args.timeout,
+        "max_searches": args.max_searches,
+        "max_crawls": args.max_crawls,
+        "max_probes": args.max_probes,
+        "max_tokens": args.max_tokens,
+    }
 
+    # Load available profiles
+    loader = ConfigLoader()
+    available_profiles = loader.list_profiles()
+
+    if args.list_profiles:
+        console.print("\n[bold]Available profiles:[/bold]")
+        for name in available_profiles:
+            profile = loader.load(name)
+            console.print(f"  [cyan]{name}[/cyan] — {profile.description}")
+        console.print()
+        return
+
+    # Get user prompt
     console.print("\n[bold cyan]Dataset Discovery Agent[/bold cyan]")
-    console.print("[dim]Type your dataset discovery request. Be as specific as possible.[/dim]\n")
-
+    console.print("[dim]Describe the datasets you are looking for.[/dim]\n")
     user_prompt = console.input("[cyan]What datasets are you looking for?[/cyan]\n> ").strip()
 
     if not user_prompt:
         console.print("[red]No prompt provided. Exiting.[/red]")
-        exit(1)
+        return
 
     # Detect download intent from prompt
-    download_keywords = ["download", "save", "store", "load into duckdb", "downloaden", "opslaan"]
-    allow_download = args.download or any(kw in user_prompt.lower() for kw in download_keywords)
+    download_keywords = [
+        "download", "save", "store", "load into duckdb",
+        "downloaden", "opslaan", "bewaar"
+    ]
+    allow_download = args.download or any(
+        kw in user_prompt.lower() for kw in download_keywords
+    )
 
     if allow_download:
-        console.print("[yellow]⚠️  Download mode enabled — datasets will be saved to DuckDB[/yellow]\n")
+        console.print(
+            "[yellow]⚠️  Download mode enabled — datasets will be saved to DuckDB[/yellow]\n"
+        )
 
-    run_agent(user_prompt, budget, allow_download=allow_download)
+    # Session cost tracker
+    session_cost = SessionCost()
+
+    # Determine profiles to run
+    if args.profile:
+        # Manual profile override
+        if args.profile not in available_profiles:
+            console.print(f"[red]Profile '{args.profile}' not found.[/red]")
+            console.print(f"Available: {', '.join(available_profiles)}")
+            return
+        profile_names = [args.profile]
+        console.print(f"[dim]Using profile: {args.profile}[/dim]\n")
+    else:
+        # Auto-detect via prompt interpreter
+        interpreter = PromptInterpreter(available_profiles)
+        interpretation = interpreter.interpret(user_prompt)
+        session_cost.interpreter_cost_usd = interpretation.cost_usd
+
+        confirmed = interpreter.present_and_confirm(interpretation, None)
+        if not confirmed:
+            console.print("[yellow]Cancelled.[/yellow]")
+            return
+
+        profile_names = interpretation.profile_names
+
+    # Run agent for each profile sequentially
+    all_results = []
+
+    for i, profile_name in enumerate(profile_names, 1):
+        if len(profile_names) > 1:
+            console.print(
+                f"\n[bold]── Profile {i}/{len(profile_names)}: "
+                f"{profile_name} ──[/bold]\n"
+            )
+
+        profile = loader.load(profile_name)
+
+        # Show global warning and get confirmation
+        if profile.cost_warning:
+            console.print(profile.warning_message or "⚠️  This may be slow and costly.")
+            confirm = console.input("[cyan]Continue? (Y/n): [/cyan]").strip().lower()
+            if confirm not in ("", "y", "yes"):
+                console.print(f"[yellow]Skipping {profile_name}.[/yellow]")
+                continue
+
+        budget = Budget.from_profile(profile.budget)
+        results = run_profile(
+            user_prompt=user_prompt,
+            profile=profile,
+            budget=budget,
+            allow_download=allow_download,
+            session_cost=session_cost,
+            cli_overrides={k: v for k, v in cli_overrides.items() if v is not None}
+        )
+        all_results.extend(results)
+
+    # Final summary
+    console.print(f"\n[dim]{session_cost.summary(profile.pricing)}[/dim]")
+
+    if all_results:
+        _print_results_table(all_results)
+
+        # Save results
+        output_path = Path(__file__).parent.parent / "output" / "agent_results.json"
+        with open(output_path, "w") as f:
+            json.dump([r.to_dict() for r in all_results], f, indent=2, default=str)
+        console.print(f"\n[green]Results saved to {output_path}[/green]")
+    else:
+        console.print("\n[yellow]No datasets found across all profiles.[/yellow]")
+
+
+if __name__ == "__main__":
+    main()

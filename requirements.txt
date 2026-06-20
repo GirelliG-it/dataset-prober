@@ -6,3 +6,4 @@ requests
 rich
 tavily-python
 cbsodata
+pyyaml
