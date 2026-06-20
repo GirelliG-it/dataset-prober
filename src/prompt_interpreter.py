@@ -48,6 +48,12 @@ class ProfileSelection:
     execution_order: int       # 1 = first, 2 = second, etc.
     keywords_detected: list    # Keywords from prompt that triggered this
     language_detected: str     # Language of user prompt
+    # Per-profile objective — what this profile specifically needs to find
+    what_to_find: str = ""
+    geographic_scope: str = ""
+    topic: str = ""
+    freshness_rule: str = ""
+    download_requested: bool = False
 
 
 @dataclass
@@ -77,6 +83,23 @@ class InterpretationResult:
         if self.profiles:
             return self.profiles[0].language_detected
         return "en"
+
+    def to_objectives(self) -> list:
+        """Convert profile selections to ProfileObjective objects for the orchestrator."""
+        from orchestrator import ProfileObjective
+        return [
+            ProfileObjective(
+                profile_name=p.profile_name,
+                display_name=p.display_name,
+                what_to_find=p.what_to_find or f"Datasets from {p.display_name}",
+                geographic_scope=p.geographic_scope or p.display_name,
+                topic=p.topic or "general",
+                freshness_rule=p.freshness_rule or "no specific rule",
+                download_requested=p.download_requested,
+                execution_order=p.execution_order
+            )
+            for p in self.profiles
+        ]
 
 
 # System prompt for the interpreter — no profile-specific content
@@ -120,7 +143,14 @@ Respond ONLY with valid JSON. No preamble, no explanation, no markdown fences.
       "reason": "Prompt explicitly mentions Dutch government and CBS",
       "execution_order": 1,
       "keywords_detected": ["Dutch", "government", "CBS"],
-      "language_detected": "en"
+      "language_detected": "en",
+      "objective": {
+        "what_to_find": "One official Dutch government dataset about social security",
+        "geographic_scope": "Netherlands only",
+        "topic": "social security",
+        "freshness_rule": "updated within 12 months",
+        "download_requested": true
+      }
     }
   ],
   "is_global": false,
@@ -218,6 +248,7 @@ Classify this request and return JSON."""
             name = p.get("profile_name", "global")
             if name not in self.available_profiles:
                 name = "global"
+            obj = p.get("objective", {})
             profiles.append(ProfileSelection(
                 profile_name=name,
                 display_name=p.get("display_name", name),
@@ -225,7 +256,12 @@ Classify this request and return JSON."""
                 reason=p.get("reason", ""),
                 execution_order=p.get("execution_order", 1),
                 keywords_detected=p.get("keywords_detected", []),
-                language_detected=p.get("language_detected", "en")
+                language_detected=p.get("language_detected", "en"),
+                what_to_find=obj.get("what_to_find", ""),
+                geographic_scope=obj.get("geographic_scope", ""),
+                topic=obj.get("topic", ""),
+                freshness_rule=obj.get("freshness_rule", ""),
+                download_requested=obj.get("download_requested", False)
             ))
 
         return InterpretationResult(

@@ -45,6 +45,7 @@ import anthropic
 sys.path.insert(0, str(Path(__file__).parent))
 from config_loader import ConfigLoader, Profile, BudgetConfig
 from prompt_interpreter import PromptInterpreter
+from orchestrator import Orchestrator, ProfileResult, AggregatedResult
 from tools import tools_for_profile, DatasetResult
 from prober import download_to_duckdb, ProbeResult
 
@@ -466,12 +467,20 @@ def run_profile(
     budget: Budget,
     allow_download: bool,
     session_cost: SessionCost,
-    cli_overrides: dict
-) -> list[DatasetResult]:
+    cli_overrides: dict,
+    initial_message: Optional[str] = None
+) -> ProfileResult:
     """
     Run the agent loop for a single profile.
-    Returns list of found/downloaded DatasetResult objects.
+    Accepts optional initial_message from orchestrator (replaces full history).
+    Returns ProfileResult with found/downloaded datasets and cost tracking.
     """
+    from orchestrator import ProfileResult as PR
+    profile_result = PR(
+        profile_name=profile.name,
+        display_name=profile.name,
+        objective=None  # set by orchestrator
+    )
     client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
     # Apply CLI overrides to budget
@@ -529,7 +538,9 @@ When done, present a structured summary table with:
         box=box.ROUNDED
     ))
 
-    messages = [{"role": "user", "content": user_prompt}]
+    # Use orchestrator handoff message if provided, otherwise use raw prompt
+    start_message = initial_message if initial_message else user_prompt
+    messages = [{"role": "user", "content": start_message}]
     found_datasets = []
     iteration = 0
 
@@ -617,7 +628,13 @@ When done, present a structured summary table with:
 
         messages.append({"role": "user", "content": tool_results})
 
-    return found_datasets
+    profile_result.datasets_found = found_datasets
+    profile_result.datasets_downloaded = [d for d in found_datasets if d.status == "downloaded"]
+    profile_result.datasets_failed = [d for d in found_datasets if d.status == "failed"]
+    profile_result.tokens_used = session_cost.input_tokens + session_cost.output_tokens
+    profile_result.cost_usd = session_cost.total_cost(profile.pricing)
+    profile_result.api_calls = session_cost.total_calls
+    return profile_result
 
 
 def _handle_timeout(
@@ -808,8 +825,18 @@ def main():
 
         profile_names = interpretation.profile_names
 
-    # Run agent for each profile sequentially
-    all_results = []
+    # Build objectives from interpretation
+    objectives = interpretation.to_objectives() if not args.profile else []
+
+    # Initialize orchestrator
+    orchestrator = Orchestrator(objectives)
+    aggregated = AggregatedResult(
+        interpreter_cost_usd=session_cost.interpreter_cost_usd,
+        interpreter_tokens=session_cost.input_tokens + session_cost.output_tokens
+    )
+
+    # Run profiles sequentially with orchestrator handoffs
+    previous_results = []
 
     for i, profile_name in enumerate(profile_names, 1):
         if len(profile_names) > 1:
@@ -820,7 +847,7 @@ def main():
 
         profile = loader.load(profile_name)
 
-        # Show global warning and get confirmation
+        # Show global warning
         if profile.cost_warning:
             console.print(profile.warning_message or "⚠️  This may be slow and costly.")
             confirm = console.input("[cyan]Continue? (Y/n): [/cyan]").strip().lower()
@@ -828,27 +855,56 @@ def main():
                 console.print(f"[yellow]Skipping {profile_name}.[/yellow]")
                 continue
 
+        # Get objective for this profile
+        objective = orchestrator.objectives.get(profile_name)
+
+        # Build initial message with handoff context from previous profiles
+        initial_message = orchestrator.build_initial_message(
+            user_prompt=user_prompt,
+            objective=objective,
+            previous_results=previous_results
+        ) if objective else user_prompt
+
+        # Fresh cost tracker per profile
+        profile_session_cost = SessionCost()
+        profile_session_cost.interpreter_cost_usd = 0.0
+
         budget = Budget.from_profile(profile.budget)
-        results = run_profile(
+        profile_result = run_profile(
             user_prompt=user_prompt,
             profile=profile,
             budget=budget,
             allow_download=allow_download,
-            session_cost=session_cost,
-            cli_overrides={k: v for k, v in cli_overrides.items() if v is not None}
+            session_cost=profile_session_cost,
+            cli_overrides={k: v for k, v in cli_overrides.items() if v is not None},
+            initial_message=initial_message
         )
-        all_results.extend(results)
+
+        if objective:
+            profile_result.objective = objective
+            profile_result = orchestrator.evaluate_result(profile_result, objective)
+
+        orchestrator.print_progress(profile_name, i, len(profile_names), profile_result)
+        previous_results.append(profile_result)
+        aggregated.profile_results.append(profile_result)
+
+        # Stop early if all objectives met
+        if orchestrator.all_objectives_met(previous_results):
+            console.print(
+                "\n[green]✅ All objectives met — stopping early.[/green]"
+            )
+            break
 
     # Final summary
-    console.print(f"\n[dim]{session_cost.summary(profile.pricing)}[/dim]")
+    console.print(aggregated.cost_summary())
+    aggregated.print_summary_table()
 
-    if all_results:
-        _print_results_table(all_results)
-
-        # Save results
+    # Save results
+    all_datasets = aggregated.all_datasets
+    if all_datasets:
         output_path = Path(__file__).parent.parent / "output" / "agent_results.json"
         with open(output_path, "w") as f:
-            json.dump([r.to_dict() for r in all_results], f, indent=2, default=str)
+            json.dump([r.to_dict() for r in all_datasets], f, indent=2, default=str)
         console.print(f"\n[green]Results saved to {output_path}[/green]")
     else:
         console.print("\n[yellow]No datasets found across all profiles.[/yellow]")
