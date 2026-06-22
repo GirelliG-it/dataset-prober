@@ -21,35 +21,38 @@ Give a natural language prompt and let the agent autonomously find, evaluate, an
 ```
 User prompt
      ↓
-Prompt Interpreter (Claude API) — classifies intent, selects profiles
+Prompt Interpreter (Claude API) — classifies intent, selects profiles, sets per-profile objectives
      ↓
-User confirms plan
+User confirms plan (pre-flight, before any budget is spent)
      ↓
-Orchestrator — manages sequential profile execution
+Orchestrator — manages sequential profile execution with compact handoff summaries
      ↓
 For each profile:
-  ├── Config Loader — loads profile YAML (sources, budget, license rules)
+  ├── Config Loader — loads profile YAML (sources, budget, scope, license rules)
   ├── Tool Factory — instantiates CBS, CKAN, Tavily tools
   ├── Agent Loop (Claude) — searches, fetches, checks freshness, downloads
-  └── Handoff Summary — compact context passed to next profile
+  ├── Handoff Summary — compact context passed to next profile (~300 tokens, not full history)
+  └── Early stop — halts when ALL profile objectives are met
      ↓
-Aggregated results + cost breakdown
+Aggregated results + per-profile cost breakdown
 ```
 
 ### Profiles
-Profiles live in `config/profiles/` and define everything — no hardcoded values in code:
+Profiles live in `config/profiles/` — no hardcoded values in code:
 
 | Profile | Sources | Use for |
 |---|---|---|
 | `dutch_government` | CBS, data.overheid.nl, Den Haag Open Data | Dutch official statistics |
-| `us_government` | data.gov (CKAN), SSA, Census | US federal open data |
+| `us_government` | data.gov (CKAN), Census, CMS, BLS, HHS | US federal open data |
 | `eu_open_data` | EU Open Data Portal, Eurostat | EU-wide statistics |
 | `global` | Tavily web search | Any country (with cost warning) |
+
+All budget limits, trusted domains, blocked sources, and license rules are configured per profile. CLI flags override profile defaults — the end-user controls everything.
 
 ### Tools
 Each tool implements a standard interface (`search`, `fetch`, `download`):
 - **CBSTool** — CBS OData catalog, direct table fetch, cbsodata download
-- **CKANTool** — Generic CKAN API (data.gov, overheid.nl, EU portal)
+- **CKANTool** — Generic CKAN API (data.gov, overheid.nl, EU portal); blocked sources checked before probing
 - **TavilyTool** — Web search + JS-rendered page extraction (fallback)
 
 ---
@@ -60,9 +63,9 @@ Each tool implements a standard interface (`search`, `fetch`, `download`):
 dataset-prober/
 ├── src/
 │   ├── dataset_agent.py      — Agentic entry point
-│   ├── prompt_interpreter.py — Claude-based intent classifier
-│   ├── orchestrator.py       — Multi-profile execution with handoffs
-│   ├── config_loader.py      — Profile YAML loader
+│   ├── prompt_interpreter.py — Claude-based intent classifier with per-profile objectives
+│   ├── orchestrator.py       — Multi-profile execution, handoff summaries, early stop
+│   ├── config_loader.py      — Profile YAML loader with scope enforcement
 │   ├── tools/
 │   │   ├── base.py           — DataSourceTool interface + DatasetResult
 │   │   ├── cbs_tool.py       — CBS Statistics Netherlands
@@ -78,10 +81,21 @@ dataset-prober/
 │       ├── us_government.yaml
 │       ├── eu_open_data.yaml
 │       └── global.yaml
-└── output/
-    ├── datasets.duckdb       — Downloaded datasets
-    ├── agent_results.json    — Last agent run results
-    └── probe_results.json    — Last prober run results
+├── tests/
+│   ├── conftest.py                           — shared fixtures
+│   ├── unit/
+│   │   ├── test_pure_functions.py            — _safe_url, freshness, license grade, pricing
+│   │   ├── test_orchestrator.py              — early stop, handoff, evaluate_result
+│   │   └── test_prompt_interpreter.py        — JSON parsing, fallback, objectives
+│   ├── integration_light/
+│   │   └── test_config_loader.py             — profile loading, scope, budget
+│   └── mocked/
+│       └── test_prober.py                    — ProbeResult structure, save_results
+├── output/
+│   ├── datasets.duckdb       — Downloaded datasets
+│   ├── agent_results.json    — Last agent run results
+│   └── probe_results.json    — Last prober run results
+└── pyproject.toml            — Pinned dependencies, pytest config, ruff config
 ```
 
 ---
@@ -97,9 +111,9 @@ dataset-prober/
 
 ## Known Limitations
 
-- **SSA.gov** blocks programmatic HTTP access — US social security files require manual download
-- **CBS OData** returns JSON, not CSV — httpfs cannot probe OData endpoints directly (use CBSTool instead)
-- **JavaScript-rendered portals** (e.g. CBS Statline, Socrata) are handled via Tavily extraction; some remain inaccessible
+- **SSA.gov** blocks all server-side HTTP access — excluded from `us_government` profile; use Census, CMS, BLS instead
+- **CBS OData** returns JSON, not CSV — httpfs cannot probe OData endpoints directly (CBSTool handles this natively)
+- **JavaScript-rendered portals** (e.g. CBS Statline, Socrata) handled via Tavily extraction; some remain inaccessible
 - **denhaag.incijfers.nl** blocks automated access (robots.txt) — excluded from all profiles
 
 ---
@@ -119,7 +133,7 @@ python src/dataset_agent.py --profile dutch_government
 python src/dataset_agent.py --list-profiles
 ```
 
-All CLI flags override profile defaults — you control every limit:
+All CLI flags override profile defaults:
 
 | Flag | Description |
 |---|---|
@@ -134,23 +148,10 @@ All CLI flags override profile defaults — you control every limit:
 
 ### Manual prober
 
-**Interactive mode:**
 ```bash
 python src/run.py
-```
-
-**Batch mode (JSON file):**
-```bash
 python src/run.py --file sources.json
-```
-
-**With Claude analysis:**
-```bash
 python src/run.py --analyze
-```
-
-**With local Ollama model (free, offline):**
-```bash
 python src/run.py --analyze --local
 python src/run.py --analyze --local --model gemma3:12b
 ```
@@ -160,7 +161,7 @@ python src/run.py --analyze --local --model gemma3:12b
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
 Add your API keys to a `.env` file:
@@ -173,9 +174,19 @@ DATAGOV_API_KEY=DEMO_KEY
 ### Local model support (optional)
 Install [Ollama](https://ollama.com) and pull a model:
 ```bash
-ollama pull qwen2.5-coder:3b   # fast, interactive
-ollama pull gemma3:12b          # slower, more thorough
+ollama pull qwen2.5-coder:3b
+ollama pull gemma3:12b
 ```
+
+---
+
+## Running tests
+
+```bash
+pytest tests/ -v
+```
+
+115 tests across unit, integration-light, and mocked layers. No real API calls in the test suite — all external services are mocked.
 
 ---
 
@@ -193,9 +204,18 @@ The agent evaluates dataset licenses using CCREL/ODRL standards:
 
 ---
 
-## Example output
+## Cost tracking
 
-See [`output/analysis_summary.txt`](output/analysis_summary.txt) for a sample Claude analysis.
+Every Claude API call reports tokens used and USD cost. Per-profile cost breakdown shown at session end:
+
+```
+📊 Session Cost Breakdown:
+  Interpreter: 1,102 tokens | $0.0086
+  Dutch Government: 19,996 tokens | $0.0786 | 4 calls
+  US Government: 45,000 tokens | $0.15 | 8 calls
+  ─────────────────────────────────────────
+  Total: 66,098 tokens | $0.2372 | 13 API calls
+```
 
 ---
 
