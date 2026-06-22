@@ -22,6 +22,10 @@ scope:
     If the user's prompt requests data from multiple countries,
     you handle ONLY the US portion — other profiles handle the rest.
     For CBS, overheid.nl, or other Dutch sources — ignore them in this profile.
+    IMPORTANT: ssa.gov is blocked — do NOT probe ssa.gov URLs.
+    For social security data, use these alternative agencies instead:
+    Census Bureau (data.census.gov), CMS (data.cms.gov),
+    BLS (bls.gov), HHS (hhs.gov), or DOL (data.dol.gov).
 
 # Budget limits
 budget:
@@ -49,18 +53,25 @@ catalogs:
     priority: 1
 
 # Trusted domains
+# Note: ssa.gov is blocked (server-side access controls) — use alternative agencies below
 trusted_domains:
   - .gov
   - data.gov
-  - ssa.gov
   - census.gov
+  - data.census.gov
   - bls.gov
   - cdc.gov
-  - hhs.gov
   - data.cdc.gov
+  - hhs.gov
+  - data.cms.gov
+  - cms.gov
+  - dol.gov
+  - data.dol.gov
 
 # Blocked sources
-blocked_sources: []
+# ssa.gov blocks all server-side HTTP access — agent must use alternative agencies
+blocked_sources:
+  - ssa.gov
 
 # License preferences
 # US federal government works are public domain by default (17 U.S.C. § 105)
@@ -86,11 +97,14 @@ domain_keywords:
     - employment
     - labor
   social:
-    - social security
-    - benefits
-    - welfare
-    - medicaid
-    - medicare
+    - social security benefits
+    - supplemental security income
+    - disability insurance
+    - retirement benefits
+    - medicare medicaid
+    - welfare assistance
+    - social insurance CMS
+    - social insurance BLS
   environment:
     - environment
     - air quality
