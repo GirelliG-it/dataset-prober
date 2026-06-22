@@ -1,5 +1,6 @@
 import duckdb
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -15,27 +16,32 @@ class ProbeResult:
     error: Optional[str] = None
 
 
+def _safe_url(url: str) -> str:
+    """Strip single quotes to prevent SQL injection via URL."""
+    return url.replace("'","")
+
+
 def probe_url(name: str, url: str) -> ProbeResult:
     """Probe a single URL with DuckDB and return a structured result."""
     con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute("LOAD httpfs;")
 
     try:
         # Get row count
         count_result = con.execute(
-            f"SELECT COUNT(*) FROM read_csv_auto('{url}')"
+            f"SELECT COUNT(*) FROM read_csv_auto('{_safe_url(url)}')"
         ).fetchone()
         row_count = count_result[0]
 
         # Get column names and types
         describe = con.execute(
-            f"DESCRIBE SELECT * FROM read_csv_auto('{url}') LIMIT 1"
+            f"DESCRIBE SELECT * FROM read_csv_auto('{_safe_url(url)}') LIMIT 1"
         ).fetchall()
         columns = [{"name": row[0], "type": row[1]} for row in describe]
 
         # Get sample rows
         sample_rows = con.execute(
-            f"SELECT * FROM read_csv_auto('{url}') LIMIT 3"
+            f"SELECT * FROM read_csv_auto('{_safe_url(url)}') LIMIT 3"
         ).fetchall()
         sample = [list(row) for row in sample_rows]
 
@@ -68,6 +74,7 @@ def probe_all(sources: list[dict]) -> list[ProbeResult]:
         print(f"  Probing: {source['name']}...")
         result = probe_url(source["name"], source["url"])
         results.append(result)
+        time.sleep(0.5)
     return results
 
 
@@ -82,7 +89,7 @@ def save_results(results: list[ProbeResult], path: str):
 def download_to_duckdb(results: list[ProbeResult], db_path: str):
     """Download selected datasets into a shared DuckDB database file."""
     con = duckdb.connect(db_path)
-    con.execute("INSTALL httpfs; LOAD httpfs;")
+    con.execute("LOAD httpfs;")
 
     for result in results:
         if result.status != "ok":
@@ -98,7 +105,7 @@ def download_to_duckdb(results: list[ProbeResult], db_path: str):
         try:
             con.execute(f"""
                 CREATE OR REPLACE TABLE {table_name} AS
-                SELECT * FROM read_csv_auto('{result.url}')
+                SELECT * FROM read_csv_auto('{_safe_url(result.url)}')
             """)
             print(f"  Done — {result.row_count} rows loaded.")
         except Exception as e:

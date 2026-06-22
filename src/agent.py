@@ -8,7 +8,10 @@ from pathlib import Path
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    max_retries=3
+)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
