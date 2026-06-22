@@ -291,7 +291,15 @@ class Orchestrator:
         return profile_result
 
     def all_objectives_met(self, results: list[ProfileResult]) -> bool:
-        """Check if all profiles have met their objectives."""
+        """
+        Check if all registered objectives have been met.
+        Requires: results is non-empty AND covers all registered objectives
+        AND every result has objective_met=True.
+        """
+        if not results:
+            return False
+        if len(results) < len(self.objectives):
+            return False
         return all(r.objective_met for r in results)
 
     def print_progress(
