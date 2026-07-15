@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from tools.base import DataSourceTool, DatasetResult
+from tools.base import safe_table_name, load_csv_to_table, ensure_httpfs
 
 
 # Known license mappings from CKAN license_id to standardized names
@@ -173,19 +174,19 @@ class CKANTool(DataSourceTool):
 
             # Get column info
             describe = con.execute(
-                f"DESCRIBE SELECT * FROM read_csv_auto('{result.download_url}') LIMIT 1"
+                "DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [result.download_url]
             ).fetchall()
             columns = [{"name": row[0], "type": row[1]} for row in describe]
 
             # Get sample
             sample_rows_data = con.execute(
-                f"SELECT * FROM read_csv_auto('{result.download_url}') LIMIT {sample_rows}"
+                f"SELECT * FROM read_csv_auto(?) LIMIT {int(sample_rows)}", [result.download_url]
             ).fetchall()
 
             # Get row count (may be slow for large files — use with care)
             try:
                 count = con.execute(
-                    f"SELECT COUNT(*) FROM read_csv_auto('{result.download_url}')"
+                    "SELECT COUNT(*) FROM read_csv_auto(?)", [result.download_url]
                 ).fetchone()[0]
                 result.row_count = count
             except Exception:
@@ -216,20 +217,11 @@ class CKANTool(DataSourceTool):
         try:
             import duckdb
 
-            # Create safe table name
-            table_name = dataset.title.lower()
-            table_name = "".join(c if c.isalnum() else "_" for c in table_name)
-            table_name = table_name.strip("_")[:50]
+            table_name = safe_table_name(dataset.id, dataset.title)
 
             con = duckdb.connect(db_path)
-            con.execute("INSTALL httpfs; LOAD httpfs;")
-            con.execute(f"""
-                CREATE OR REPLACE TABLE "{table_name}" AS
-                SELECT * FROM read_csv_auto('{dataset.download_url}')
-            """)
-            actual_rows = con.execute(
-                f'SELECT COUNT(*) FROM "{table_name}"'
-            ).fetchone()[0]
+            ensure_httpfs(con)
+            actual_rows = load_csv_to_table(con, table_name, dataset.download_url)
             con.close()
 
             dataset.row_count = actual_rows

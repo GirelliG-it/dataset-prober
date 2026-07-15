@@ -214,3 +214,64 @@ class DataSourceTool(ABC):
         Returns True by default.
         """
         return True
+
+
+# ─── Shared DuckDB loading helpers ───────────────────────────────────────────
+# These exist so that every download path — prober.download_to_duckdb,
+# CBSTool, CKANTool, TavilyTool — goes through ONE implementation.
+# Previously each path had its own copy of the CTAS statement, and a security
+# fix applied to one copy silently missed the other three.
+
+def safe_table_name(dataset_id: str, title: str = "") -> str:
+    """
+    Build a collision-resistant DuckDB table name.
+
+    Uses the source's stable ID, NOT the human title: two datasets titled
+    "Bevolking per gemeente, 2024" and "Bevolking per gemeente (2024)" both
+    sanitise to the same identifier, and the second silently overwrites the
+    first. IDs are unique per source by construction.
+
+    The title, when supplied, is appended as a truncated readable suffix so
+    tables stay browsable — but identity always rests on the ID.
+    """
+    def _clean(s: str) -> str:
+        return "".join(c if c.isalnum() else "_" for c in s.lower()).strip("_")
+
+    ident = _clean(dataset_id)
+    if not ident:
+        raise ValueError("dataset_id must produce a non-empty table name")
+
+    suffix = _clean(title)[:40]
+    name = f"{ident}_{suffix}".strip("_") if suffix else ident
+
+    # DuckDB identifiers may not start with a digit unless quoted; we always
+    # quote, but a leading digit still confuses humans reading the catalogue.
+    if name[0].isdigit():
+        name = f"t_{name}"
+    return name[:63]
+
+
+def load_csv_to_table(con, table_name: str, url: str) -> int:
+    """
+    Load a CSV at `url` into `table_name`, returning the row count.
+
+    `url` is ALWAYS bound as a parameter, never interpolated. It arrives from
+    third-party catalogues and web search results and must be treated as
+    hostile. DuckDB resolves a bound value as a literal path, so an injection
+    payload fails as a bad filename instead of executing.
+
+    `table_name` is ours, not the source's, and is identifier-quoted.
+    """
+    con.execute(
+        f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM read_csv_auto(?)',
+        [url],
+    )
+    return con.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+
+
+def ensure_httpfs(con) -> None:
+    """
+    Install AND load httpfs. prober.py previously only called LOAD, which
+    fails on any machine with a cold DuckDB extension cache.
+    """
+    con.execute("INSTALL httpfs; LOAD httpfs;")

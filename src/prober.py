@@ -1,6 +1,11 @@
 import duckdb
 import json
 import time
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from tools.base import load_csv_to_table, ensure_httpfs, safe_table_name
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -16,32 +21,37 @@ class ProbeResult:
     error: Optional[str] = None
 
 
-def _safe_url(url: str) -> str:
-    """Strip single quotes to prevent SQL injection via URL."""
-    return url.replace("'","")
+def _url_identity(url: str) -> str:
+    """Short stable identity for a URL — used to key its DuckDB table."""
+    import hashlib
+    stem = url.rstrip("/").split("/")[-1].split("?")[0] or "src"
+    digest = hashlib.sha256(url.encode()).hexdigest()[:8]
+    return f"{stem}_{digest}"
 
 
 def probe_url(name: str, url: str) -> ProbeResult:
     """Probe a single URL with DuckDB and return a structured result."""
     con = duckdb.connect()
-    con.execute("LOAD httpfs;")
+    ensure_httpfs(con)
 
     try:
-        # Get row count
+        # URLs are bound as parameters, never interpolated into SQL text.
+        # DuckDB treats a bound value as a literal path, so an injection
+        # payload fails as a bad filename rather than executing.
         count_result = con.execute(
-            f"SELECT COUNT(*) FROM read_csv_auto('{_safe_url(url)}')"
+            "SELECT COUNT(*) FROM read_csv_auto(?)", [url]
         ).fetchone()
         row_count = count_result[0]
 
         # Get column names and types
         describe = con.execute(
-            f"DESCRIBE SELECT * FROM read_csv_auto('{_safe_url(url)}') LIMIT 1"
+            "DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]
         ).fetchall()
         columns = [{"name": row[0], "type": row[1]} for row in describe]
 
         # Get sample rows
         sample_rows = con.execute(
-            f"SELECT * FROM read_csv_auto('{_safe_url(url)}') LIMIT 3"
+            "SELECT * FROM read_csv_auto(?) LIMIT 3", [url]
         ).fetchall()
         sample = [list(row) for row in sample_rows]
 
@@ -89,25 +99,21 @@ def save_results(results: list[ProbeResult], path: str):
 def download_to_duckdb(results: list[ProbeResult], db_path: str):
     """Download selected datasets into a shared DuckDB database file."""
     con = duckdb.connect(db_path)
-    con.execute("LOAD httpfs;")
+    ensure_httpfs(con)
 
     for result in results:
         if result.status != "ok":
             print(f"  Skipping {result.name} — status: {result.status}")
             continue
 
-        # Create a safe table name from the dataset name
-        table_name = result.name.lower()
-        table_name = "".join(c if c.isalnum() else "_" for c in table_name)
-        table_name = table_name.strip("_")
+        # Identity comes from the URL (unique), not the display name (not unique).
+        # Two sources both called "population" would otherwise clobber each other.
+        table_name = safe_table_name(_url_identity(result.url), result.name)
 
         print(f"  Downloading: {result.name} → table '{table_name}'...")
         try:
-            con.execute(f"""
-                CREATE OR REPLACE TABLE {table_name} AS
-                SELECT * FROM read_csv_auto('{_safe_url(result.url)}')
-            """)
-            print(f"  Done — {result.row_count} rows loaded.")
+            rows = load_csv_to_table(con, table_name, result.url)
+            print(f"  Done — {rows} rows loaded.")
         except Exception as e:
             print(f"  Failed: {e}")
 
