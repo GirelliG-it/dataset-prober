@@ -337,3 +337,14 @@ class ConfigLoader:
 def load_profile(profile_name: str, profiles_dir: Optional[Path] = None) -> Profile:
     """Convenience function to load a profile in one call."""
     return ConfigLoader(profiles_dir).load(profile_name)
+
+
+def get_anthropic_api_key() -> str:
+    """Resolve and validate the Anthropic API key from the environment."""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise EnvironmentError(
+            "ANTHROPIC_API_KEY environment variable is not set. "
+            "Add it to your .env file (see README Setup)."
+        )
+    return key

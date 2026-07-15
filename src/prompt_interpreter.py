@@ -30,6 +30,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
+from config_loader import get_anthropic_api_key
+
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 console = Console()
@@ -172,7 +174,7 @@ class PromptInterpreter:
         """
         self.available_profiles = available_profiles
         self.client = anthropic.Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY")
+            api_key=get_anthropic_api_key()
         )
 
     def interpret(self, user_prompt: str) -> InterpretationResult:

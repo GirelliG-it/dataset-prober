@@ -43,7 +43,7 @@ import anthropic
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
-from config_loader import ConfigLoader, Profile, BudgetConfig
+from config_loader import ConfigLoader, Profile, BudgetConfig, get_anthropic_api_key
 from prompt_interpreter import PromptInterpreter
 from orchestrator import Orchestrator, ProfileResult, AggregatedResult
 from tools import tools_for_profile, DatasetResult
@@ -481,7 +481,7 @@ def run_profile(
         display_name=profile.name,
         objective=None  # set by orchestrator
     )
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    client = anthropic.Anthropic(api_key=get_anthropic_api_key())
 
     # Apply CLI overrides to budget
     budget_config = profile.budget.override(**cli_overrides)

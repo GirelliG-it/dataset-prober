@@ -5,11 +5,13 @@ import anthropic
 from dotenv import load_dotenv
 from pathlib import Path
 
+from config_loader import get_anthropic_api_key
+
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 client = anthropic.Anthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    api_key=get_anthropic_api_key(),
     max_retries=3
 )
 
