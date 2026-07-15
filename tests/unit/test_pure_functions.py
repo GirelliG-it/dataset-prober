@@ -12,42 +12,94 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 
-# ─── _safe_url tests ─────────────────────────────────────────────────────────
+# ─── SQL injection tests ─────────────────────────────────────────────────────
 
-class TestSafeUrl:
-    """Tests for SQL injection prevention in prober._safe_url."""
+class TestSqlInjection:
+    """
+    URLs reach DuckDB from untrusted places: CKAN catalogues, Tavily web search
+    results, user input. These assert the property that matters — a payload does
+    NOT execute — instead of asserting *how* we sanitise.
 
-    def test_clean_url_unchanged(self):
-        from prober import _safe_url
-        url = "https://example.com/data.csv"
-        assert _safe_url(url) == url
+    The previous tests checked `"'" not in _safe_url(url)`. A function that
+    returns "" would also pass that. They could not have caught the fact that
+    ckan_tool and tavily_tool never called _safe_url at all.
+    """
 
-    def test_single_quote_stripped(self):
-        from prober import _safe_url
-        url = "https://example.com/data's.csv"
-        assert "'" not in _safe_url(url)
+    def test_injection_payload_cannot_drop_a_table(self, tmp_path):
+        import duckdb
+        from tools.base import load_csv_to_table
 
-    def test_multiple_quotes_stripped(self):
-        from prober import _safe_url
-        url = "https://example.com/it's-a-trap's.csv"
-        result = _safe_url(url)
-        assert "'" not in result
+        con = duckdb.connect(str(tmp_path / "victim.duckdb"))
+        con.execute("CREATE TABLE canary AS SELECT 1 AS x")
 
-    def test_sql_injection_attempt(self):
-        from prober import _safe_url
-        url = "https://example.com/data.csv'); DROP TABLE results; --"
-        result = _safe_url(url)
-        assert "'" not in result
-        assert "DROP" in result  # content preserved, only quotes stripped
+        payload = "http://x/a.csv'); DROP TABLE canary; --"
+        with pytest.raises(Exception):
+            load_csv_to_table(con, "loot", payload)
 
-    def test_empty_url(self):
-        from prober import _safe_url
-        assert _safe_url("") == ""
+        survived = con.execute(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'canary'"
+        ).fetchone()[0]
+        con.close()
+        assert survived == 1, "injection payload executed and dropped the canary"
 
-    def test_url_with_query_params(self):
-        from prober import _safe_url
-        url = "https://example.com/data.csv?format=csv&year=2024"
-        assert _safe_url(url) == url
+    def test_legitimate_url_still_loads(self, tmp_path):
+        import duckdb
+        from tools.base import load_csv_to_table
+
+        csv = tmp_path / "data.csv"
+        csv.write_text("a,b\n1,x\n2,y\n")
+
+        con = duckdb.connect()
+        rows = load_csv_to_table(con, "ok", str(csv))
+        con.close()
+        assert rows == 2
+
+    def test_quote_in_path_is_not_silently_mangled(self, tmp_path):
+        """
+        A legitimate path containing a quote used to be corrupted by stripping
+        the character — the old blocklist rewrote the user's URL behind their
+        back. Binding passes it through intact.
+        """
+        import duckdb
+        from tools.base import load_csv_to_table
+
+        csv = tmp_path / "it's.csv"
+        csv.write_text("a\n1\n")
+
+        con = duckdb.connect()
+        rows = load_csv_to_table(con, "quoted", str(csv))
+        con.close()
+        assert rows == 1
+
+
+# ─── Table naming tests ──────────────────────────────────────────────────────
+
+class TestSafeTableName:
+    """Table identity must rest on the source ID, never the human title."""
+
+    def test_distinct_ids_never_collide_despite_identical_titles(self):
+        from tools.base import safe_table_name
+        a = safe_table_name("83765NED", "Bevolking per gemeente, 2024")
+        b = safe_table_name("85496NED", "Bevolking per gemeente (2024)")
+        assert a != b, "two different datasets mapped to one table"
+
+    def test_same_id_is_stable(self):
+        from tools.base import safe_table_name
+        assert safe_table_name("83765NED", "x") == safe_table_name("83765NED", "x")
+
+    def test_empty_id_raises_rather_than_producing_junk(self):
+        from tools.base import safe_table_name
+        with pytest.raises(ValueError):
+            safe_table_name("!!!", "title")
+
+    def test_leading_digit_is_prefixed(self):
+        from tools.base import safe_table_name
+        assert not safe_table_name("2024data", "x")[0].isdigit()
+
+    def test_respects_duckdb_identifier_length(self):
+        from tools.base import safe_table_name
+        assert len(safe_table_name("x" * 200, "y" * 200)) <= 63
+
 
 
 # ─── DatasetResult method tests ──────────────────────────────────────────────
@@ -131,15 +183,19 @@ class TestDatasetResultFreshness:
 
     def test_freshness_iso_datetime_format(self):
         """CBS returns ISO datetime with time component — must parse correctly."""
+        from datetime import datetime, timedelta
         from tools.base import DatasetResult
+
+        # Relative, not hardcoded: a literal date silently rots into a failure
+        # once it drifts past the threshold being asserted.
+        five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S")
         d = DatasetResult(
             id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified="2026-06-12T02:00:00", download_url=None, format=None,
+            url="", modified=five_days_ago, download_url=None, format=None,
             frequency=None, license=None, license_url=None, row_count=None,
             columns=None, sample=None, language=None, tags=[]
         )
-        assert d.freshness_days() is not None
-        assert d.freshness_days() < 30  # very recent
+        assert d.freshness_days() == 5
 
 
 class TestDatasetResultLicenseGrade:

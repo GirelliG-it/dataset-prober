@@ -42,29 +42,6 @@ HEADERS_ONLY_CSV = b"""id,name,value,date
 """
 
 
-class TestProbeUrlSafeUrl:
-    """Tests for SQL injection prevention — no network needed."""
-
-    def test_url_with_single_quote_probes_safely(self):
-        """URL with single quote must not raise SyntaxError — content is sanitized."""
-        from prober import _safe_url
-        dangerous = "https://example.com/it's-a-trap.csv"
-        safe = _safe_url(dangerous)
-        assert "'" not in safe
-
-    def test_safe_url_preserves_url_structure(self):
-        from prober import _safe_url
-        url = "https://opendata.cbs.nl/ODataApi/odata/37789ksz/TypedDataSet?$top=10"
-        assert _safe_url(url) == url
-
-    def test_safe_url_strips_only_quotes(self):
-        from prober import _safe_url
-        url = "https://example.com/data.csv?a=1&b=test's"
-        result = _safe_url(url)
-        assert "'" not in result
-        assert "?" in result
-        assert "&" in result
-
 
 class TestProbeResultStructure:
     """Tests that ProbeResult has the correct structure."""

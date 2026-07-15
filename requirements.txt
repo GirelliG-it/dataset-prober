@@ -7,3 +7,4 @@ rich
 tavily-python
 cbsodata
 pyyaml
+responses
