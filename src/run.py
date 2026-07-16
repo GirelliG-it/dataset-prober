@@ -45,7 +45,9 @@ def get_sources_from_file(filepath: str) -> list[dict]:
     with open(path) as f:
         sources = json.load(f)
 
-    console.print(f"\n[bold cyan]Dataset Prober[/bold cyan] — Loaded {len(sources)} sources from {filepath}\n")
+    console.print(
+        f"\n[bold cyan]Dataset Prober[/bold cyan] — Loaded {len(sources)} sources from {filepath}\n"
+    )
     return sources
 
 
@@ -75,8 +77,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Probe open datasets via DuckDB httpfs")
     parser.add_argument("--file", help="Path to a JSON file with dataset sources")
     parser.add_argument("--analyze", action="store_true", help="Run Claude analysis after probing")
-    parser.add_argument("--local", action="store_true", help="Use local Ollama model instead of Claude")
-    parser.add_argument("--model", default="qwen2.5-coder:3b", help="Ollama model to use (default: qwen2.5-coder:3b)")
+    parser.add_argument(
+        "--local", action="store_true", help="Use local Ollama model instead of Claude"
+    )
+    parser.add_argument(
+        "--model",
+        default="qwen2.5-coder:3b",
+        help="Ollama model to use (default: qwen2.5-coder:3b)",
+    )
     args = parser.parse_args()
 
     # Get sources
@@ -96,7 +104,6 @@ if __name__ == "__main__":
     # Display results
     display_results(results)
 
-
     # Ask user which datasets to download
     ok_results = [r for r in results if r.status == "ok"]
     if ok_results:
@@ -104,9 +111,11 @@ if __name__ == "__main__":
         for i, r in enumerate(ok_results, 1):
             console.print(f"  {i}. {r.name} ({r.row_count} rows)")
 
-        selection = console.input(
-            "\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] "
-        ).strip().lower()
+        selection = (
+            console.input("\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] ")
+            .strip()
+            .lower()
+        )
 
         if selection != "none" and selection != "":
             if selection == "all":
@@ -120,8 +129,6 @@ if __name__ == "__main__":
                 console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
                 download_to_duckdb(to_download, db_path)
 
-
-
     # Save results
     output_path = Path(__file__).parent.parent / "output" / "probe_results.json"
     save_results(results, str(output_path))
@@ -129,15 +136,18 @@ if __name__ == "__main__":
     # Optionally run analysis
     if args.analyze:
         import json
+
         with open(output_path) as f:
             saved = json.load(f)
         if args.local:
             console.print(f"\n[bold]Running local analysis ({args.model})...[/bold]\n")
             from agent import summarize_probe_results_local
+
             summary = summarize_probe_results_local(saved, model=args.model)
         else:
             console.print("\n[bold]Running Claude analysis...[/bold]\n")
             from agent import summarize_probe_results
+
             summary = summarize_probe_results(saved)
         console.print(summary)
         summary_path = Path(__file__).parent.parent / "output" / "analysis_summary.txt"

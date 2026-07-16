@@ -42,13 +42,14 @@ INTERPRETER_MODEL = "claude-sonnet-4-6"
 @dataclass
 class ProfileSelection:
     """A single profile selected for a run."""
-    profile_name: str          # e.g. "dutch_government"
-    display_name: str          # e.g. "Dutch Government"
-    confidence: str            # "high", "medium", "low"
-    reason: str                # Why this profile was selected
-    execution_order: int       # 1 = first, 2 = second, etc.
-    keywords_detected: list    # Keywords from prompt that triggered this
-    language_detected: str     # Language of user prompt
+
+    profile_name: str  # e.g. "dutch_government"
+    display_name: str  # e.g. "Dutch Government"
+    confidence: str  # "high", "medium", "low"
+    reason: str  # Why this profile was selected
+    execution_order: int  # 1 = first, 2 = second, etc.
+    keywords_detected: list  # Keywords from prompt that triggered this
+    language_detected: str  # Language of user prompt
     # Per-profile objective — what this profile specifically needs to find
     what_to_find: str = ""
     geographic_scope: str = ""
@@ -63,6 +64,7 @@ class InterpretationResult:
     Complete result of prompt interpretation.
     Contains all selected profiles and cost tracking.
     """
+
     profiles: list[ProfileSelection]
     is_global: bool
     is_multi_profile: bool
@@ -88,6 +90,7 @@ class InterpretationResult:
     def to_objectives(self) -> list:
         """Convert profile selections to ProfileObjective objects for the orchestrator."""
         from orchestrator import ProfileObjective
+
         return [
             ProfileObjective(
                 profile_name=p.profile_name,
@@ -97,7 +100,7 @@ class InterpretationResult:
                 topic=p.topic or "general",
                 freshness_rule=p.freshness_rule or "no specific rule",
                 download_requested=p.download_requested,
-                execution_order=p.execution_order
+                execution_order=p.execution_order,
             )
             for p in self.profiles
         ]
@@ -169,9 +172,7 @@ class PromptInterpreter:
             available_profiles: List of profile names available on disk
         """
         self.available_profiles = available_profiles
-        self.client = anthropic.Anthropic(
-            api_key=get_anthropic_api_key()
-        )
+        self.client = anthropic.Anthropic(api_key=get_anthropic_api_key())
 
     def interpret(self, user_prompt: str) -> InterpretationResult:
         """
@@ -188,7 +189,7 @@ class PromptInterpreter:
         # Add available profiles context to the user message
         user_message = f"""User request: {user_prompt}
 
-Available profiles on this system: {', '.join(self.available_profiles)}
+Available profiles on this system: {", ".join(self.available_profiles)}
 
 Classify this request and return JSON."""
 
@@ -196,7 +197,7 @@ Classify this request and return JSON."""
             model=INTERPRETER_MODEL,
             max_tokens=1024,
             system=INTERPRETER_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}]
+            messages=[{"role": "user", "content": user_message}],
         )
 
         # Extract token usage
@@ -207,9 +208,9 @@ Classify this request and return JSON."""
 
         # Calculate cost (Sonnet 4.6 pricing)
         cost_usd = (
-            (input_tokens / 1_000_000) * 3.00 +
-            (output_tokens / 1_000_000) * 15.00 +
-            (cache_read_tokens / 1_000_000) * 0.30
+            (input_tokens / 1_000_000) * 3.00
+            + (output_tokens / 1_000_000) * 15.00
+            + (cache_read_tokens / 1_000_000) * 0.30
         )
 
         # Parse response
@@ -220,24 +221,27 @@ Classify this request and return JSON."""
         except json.JSONDecodeError:
             # Fallback: try to extract JSON from response
             import re
-            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
             if match:
                 data = json.loads(match.group())
             else:
                 # Last resort: default to global
                 data = {
-                    "profiles": [{
-                        "profile_name": "global",
-                        "display_name": "Global Discovery",
-                        "confidence": "low",
-                        "reason": "Could not parse interpreter response — defaulting to global",
-                        "execution_order": 1,
-                        "keywords_detected": [],
-                        "language_detected": "en"
-                    }],
+                    "profiles": [
+                        {
+                            "profile_name": "global",
+                            "display_name": "Global Discovery",
+                            "confidence": "low",
+                            "reason": "Could not parse interpreter response — defaulting to global",
+                            "execution_order": 1,
+                            "keywords_detected": [],
+                            "language_detected": "en",
+                        }
+                    ],
                     "is_global": True,
                     "is_multi_profile": False,
-                    "interpreter_reasoning": "Fallback to global due to parse error"
+                    "interpreter_reasoning": "Fallback to global due to parse error",
                 }
 
         # Validate profiles exist
@@ -247,20 +251,22 @@ Classify this request and return JSON."""
             if name not in self.available_profiles:
                 name = "global"
             obj = p.get("objective", {})
-            profiles.append(ProfileSelection(
-                profile_name=name,
-                display_name=p.get("display_name", name),
-                confidence=p.get("confidence", "medium"),
-                reason=p.get("reason", ""),
-                execution_order=p.get("execution_order", 1),
-                keywords_detected=p.get("keywords_detected", []),
-                language_detected=p.get("language_detected", "en"),
-                what_to_find=obj.get("what_to_find", ""),
-                geographic_scope=obj.get("geographic_scope", ""),
-                topic=obj.get("topic", ""),
-                freshness_rule=obj.get("freshness_rule", ""),
-                download_requested=obj.get("download_requested", False)
-            ))
+            profiles.append(
+                ProfileSelection(
+                    profile_name=name,
+                    display_name=p.get("display_name", name),
+                    confidence=p.get("confidence", "medium"),
+                    reason=p.get("reason", ""),
+                    execution_order=p.get("execution_order", 1),
+                    keywords_detected=p.get("keywords_detected", []),
+                    language_detected=p.get("language_detected", "en"),
+                    what_to_find=obj.get("what_to_find", ""),
+                    geographic_scope=obj.get("geographic_scope", ""),
+                    topic=obj.get("topic", ""),
+                    freshness_rule=obj.get("freshness_rule", ""),
+                    download_requested=obj.get("download_requested", False),
+                )
+            )
 
         return InterpretationResult(
             profiles=sorted(profiles, key=lambda p: p.execution_order),
@@ -271,14 +277,10 @@ Classify this request and return JSON."""
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
-            cost_usd=cost_usd
+            cost_usd=cost_usd,
         )
 
-    def present_and_confirm(
-        self,
-        result: InterpretationResult,
-        pricing_config=None
-    ) -> bool:
+    def present_and_confirm(self, result: InterpretationResult, pricing_config=None) -> bool:
         """
         Show the interpretation result to the user and ask for confirmation.
 
@@ -298,31 +300,26 @@ Classify this request and return JSON."""
         table.add_column("Reason")
 
         for p in result.profiles:
-            confidence_color = {
-                "high": "green",
-                "medium": "yellow",
-                "low": "red"
-            }.get(p.confidence, "white")
+            confidence_color = {"high": "green", "medium": "yellow", "low": "red"}.get(
+                p.confidence, "white"
+            )
 
             table.add_row(
                 str(p.execution_order),
                 p.display_name,
                 f"[{confidence_color}]{p.confidence}[/{confidence_color}]",
-                p.reason[:60] + "..." if len(p.reason) > 60 else p.reason
+                p.reason[:60] + "..." if len(p.reason) > 60 else p.reason,
             )
 
         console.print()
-        console.print(Panel(
-            table,
-            title="[bold cyan]Detected Profiles[/bold cyan]",
-            box=box.ROUNDED
-        ))
+        console.print(
+            Panel(table, title="[bold cyan]Detected Profiles[/bold cyan]", box=box.ROUNDED)
+        )
 
         # Show execution order for multi-profile
         if result.is_multi_profile:
             console.print(
-                f"[dim]Execution order: "
-                f"{' → '.join(p.display_name for p in result.profiles)}[/dim]"
+                f"[dim]Execution order: {' → '.join(p.display_name for p in result.profiles)}[/dim]"
             )
 
         # Show interpreter cost
@@ -355,9 +352,7 @@ Classify this request and return JSON."""
 
         # Confirm
         console.print()
-        choice = console.input(
-            "[cyan]Proceed with this plan? (Y/n/list): [/cyan]"
-        ).strip().lower()
+        choice = console.input("[cyan]Proceed with this plan? (Y/n/list): [/cyan]").strip().lower()
 
         if choice == "list":
             self._show_available_profiles()
@@ -381,9 +376,7 @@ Classify this request and return JSON."""
             List of selected profile names
         """
         self._show_available_profiles()
-        raw = console.input(
-            "[cyan]Enter profile name(s) separated by commas: [/cyan]"
-        ).strip()
+        raw = console.input("[cyan]Enter profile name(s) separated by commas: [/cyan]").strip()
 
         selected = []
         for name in raw.split(","):

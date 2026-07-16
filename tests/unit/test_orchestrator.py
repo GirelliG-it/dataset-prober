@@ -28,6 +28,7 @@ class TestAllObjectivesMet:
 
     def test_single_met_returns_true(self, dutch_objective):
         from orchestrator import Orchestrator, ProfileResult
+
         o = Orchestrator([dutch_objective])
         pr = ProfileResult("dutch_government", "Dutch Government", dutch_objective)
         pr.objective_met = True
@@ -35,6 +36,7 @@ class TestAllObjectivesMet:
 
     def test_single_not_met_returns_false(self, dutch_objective):
         from orchestrator import Orchestrator, ProfileResult
+
         o = Orchestrator([dutch_objective])
         pr = ProfileResult("dutch_government", "Dutch Government", dutch_objective)
         pr.objective_met = False
@@ -42,32 +44,39 @@ class TestAllObjectivesMet:
 
     def test_both_met_returns_true(self, dutch_objective, us_objective, profile_result_met):
         from orchestrator import Orchestrator, ProfileResult
+
         o = Orchestrator([dutch_objective, us_objective])
         us_met = ProfileResult("us_government", "US Government", us_objective)
         us_met.objective_met = True
         assert o.all_objectives_met([profile_result_met, us_met]) is True
 
-    def test_first_met_second_not_run_returns_false(self, dutch_objective, us_objective, profile_result_met):
+    def test_first_met_second_not_run_returns_false(
+        self, dutch_objective, us_objective, profile_result_met
+    ):
         """
         Critical: Profile 1 met objective but Profile 2 hasn't run.
         This is the early stop bug we identified — must return False.
         """
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective, us_objective])
         assert o.all_objectives_met([profile_result_met]) is False
 
     def test_partial_success_is_not_met(self, dutch_objective, profile_result_partial):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         assert o.all_objectives_met([profile_result_partial]) is False
 
     def test_empty_results_returns_false(self, dutch_objective):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         assert o.all_objectives_met([]) is False
 
     def test_failed_result_is_not_met(self, dutch_objective, profile_result_empty):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         assert o.all_objectives_met([profile_result_empty]) is False
 
@@ -75,6 +84,7 @@ class TestAllObjectivesMet:
         self, dutch_objective, us_objective, profile_result_met, profile_result_partial
     ):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective, us_objective])
         assert o.all_objectives_met([profile_result_met, profile_result_partial]) is False
 
@@ -120,7 +130,11 @@ class TestHandoffSummary:
     def test_summary_instructs_next_profile(self, profile_result_met):
         """Next profile must be told not to re-search what was already found."""
         summary = profile_result_met.handoff_summary()
-        assert "do not" in summary.lower() or "your task" in summary.lower() or "scope" in summary.lower()
+        assert (
+            "do not" in summary.lower()
+            or "your task" in summary.lower()
+            or "scope" in summary.lower()
+        )
 
     def test_summary_does_not_contain_full_history(self, profile_result_met):
         """Handoff must never contain conversation history markers."""
@@ -137,19 +151,17 @@ class TestEvaluateResult:
     Maps ProfileResult outcomes to objective_met / partial_success / failed.
     """
 
-    def test_downloaded_sets_objective_met(
-        self, dutch_objective, profile_result_met
-    ):
+    def test_downloaded_sets_objective_met(self, dutch_objective, profile_result_met):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         profile_result_met.objective_met = False  # reset
         result = o.evaluate_result(profile_result_met, dutch_objective)
         assert result.objective_met is True
 
-    def test_found_not_downloaded_sets_partial(
-        self, us_objective, profile_result_partial
-    ):
+    def test_found_not_downloaded_sets_partial(self, us_objective, profile_result_partial):
         from orchestrator import Orchestrator
+
         o = Orchestrator([us_objective])
         profile_result_partial.objective_met = False  # reset
         profile_result_partial.partial_success = False  # reset
@@ -157,20 +169,18 @@ class TestEvaluateResult:
         assert result.partial_success is True
         assert result.objective_met is False
 
-    def test_nothing_found_sets_failed(
-        self, us_objective, profile_result_empty
-    ):
+    def test_nothing_found_sets_failed(self, us_objective, profile_result_empty):
         from orchestrator import Orchestrator
+
         o = Orchestrator([us_objective])
         result = o.evaluate_result(profile_result_empty, us_objective)
         assert result.objective_met is False
         assert result.partial_success is False
         assert result.failure_reason is not None
 
-    def test_partial_has_failure_reason(
-        self, us_objective, profile_result_partial
-    ):
+    def test_partial_has_failure_reason(self, us_objective, profile_result_partial):
         from orchestrator import Orchestrator
+
         o = Orchestrator([us_objective])
         profile_result_partial.partial_success = False  # reset
         result = o.evaluate_result(profile_result_partial, us_objective)
@@ -188,45 +198,47 @@ class TestBuildInitialMessage:
 
     def test_first_profile_no_handoff(self, dutch_objective):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         msg = o.build_initial_message(
             user_prompt="Find Dutch social security data",
             objective=dutch_objective,
-            previous_results=[]
+            previous_results=[],
         )
         assert "HANDOFF FROM PREVIOUS PROFILE" not in msg
         assert "Find Dutch social security data" in msg
 
-    def test_second_profile_gets_handoff(
-        self, dutch_objective, us_objective, profile_result_met
-    ):
+    def test_second_profile_gets_handoff(self, dutch_objective, us_objective, profile_result_met):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective, us_objective])
         msg = o.build_initial_message(
             user_prompt="Find Dutch and US social security data",
             objective=us_objective,
-            previous_results=[profile_result_met]
+            previous_results=[profile_result_met],
         )
         assert "HANDOFF FROM PREVIOUS PROFILE" in msg
 
     def test_message_contains_objective(self, dutch_objective):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         msg = o.build_initial_message(
             user_prompt="Find Dutch social security data",
             objective=dutch_objective,
-            previous_results=[]
+            previous_results=[],
         )
         assert dutch_objective.what_to_find in msg
         assert dutch_objective.geographic_scope in msg
 
     def test_message_contains_freshness_rule(self, dutch_objective):
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective])
         msg = o.build_initial_message(
             user_prompt="Find Dutch social security data",
             objective=dutch_objective,
-            previous_results=[]
+            previous_results=[],
         )
         assert dutch_objective.freshness_rule in msg
 
@@ -238,11 +250,10 @@ class TestBuildInitialMessage:
         The full conversation history of Profile 1 must NOT appear.
         """
         from orchestrator import Orchestrator
+
         o = Orchestrator([dutch_objective, us_objective])
         msg = o.build_initial_message(
-            user_prompt="Find data",
-            objective=us_objective,
-            previous_results=[profile_result_met]
+            user_prompt="Find data", objective=us_objective, previous_results=[profile_result_met]
         )
         # Should not contain raw API response markers
         assert '"role"' not in msg

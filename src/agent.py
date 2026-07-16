@@ -10,10 +10,7 @@ from config_loader import get_anthropic_api_key
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-client = anthropic.Anthropic(
-    api_key=get_anthropic_api_key(),
-    max_retries=3
-)
+client = anthropic.Anthropic(api_key=get_anthropic_api_key(), max_retries=3)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
@@ -53,7 +50,7 @@ def summarize_probe_results(results: list[dict]) -> str:
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1024,
-        messages=[{"role": "user", "content": _build_prompt(results)}]
+        messages=[{"role": "user", "content": _build_prompt(results)}],
     )
     return message.content[0].text
 
@@ -65,9 +62,9 @@ def summarize_probe_results_local(results: list[dict], model: str = "qwen2.5-cod
         json={
             "model": model,
             "messages": [{"role": "user", "content": _build_prompt(results)}],
-            "stream": False
+            "stream": False,
         },
-        timeout=600
+        timeout=600,
     )
     response.raise_for_status()
     return response.json()["message"]["content"]
@@ -76,9 +73,17 @@ def summarize_probe_results_local(results: list[dict], model: str = "qwen2.5-cod
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Analyse probe results with Claude or a local model")
-    parser.add_argument("--local", action="store_true", help="Use local Ollama model instead of Claude")
-    parser.add_argument("--model", default="qwen2.5-coder:3b", help="Ollama model to use (default: qwen2.5-coder:3b)")
+    parser = argparse.ArgumentParser(
+        description="Analyse probe results with Claude or a local model"
+    )
+    parser.add_argument(
+        "--local", action="store_true", help="Use local Ollama model instead of Claude"
+    )
+    parser.add_argument(
+        "--model",
+        default="qwen2.5-coder:3b",
+        help="Ollama model to use (default: qwen2.5-coder:3b)",
+    )
     args = parser.parse_args()
 
     output_path = Path(__file__).parent.parent / "output" / "probe_results.json"

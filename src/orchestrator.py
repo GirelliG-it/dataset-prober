@@ -37,12 +37,13 @@ class ProfileObjective:
     What a specific profile is expected to find.
     Set by the interpreter upfront — not inferred during the run.
     """
+
     profile_name: str
     display_name: str
-    what_to_find: str        # e.g. "One Dutch social security dataset"
-    geographic_scope: str    # e.g. "Netherlands only"
-    topic: str               # e.g. "social security"
-    freshness_rule: str      # e.g. "updated within 12 months"
+    what_to_find: str  # e.g. "One Dutch social security dataset"
+    geographic_scope: str  # e.g. "Netherlands only"
+    topic: str  # e.g. "social security"
+    freshness_rule: str  # e.g. "updated within 12 months"
     download_requested: bool
     execution_order: int
 
@@ -53,14 +54,15 @@ class ProfileResult:
     What a profile actually found and did.
     Generated after a profile completes its run.
     """
+
     profile_name: str
     display_name: str
     objective: ProfileObjective
 
     # Outcomes
-    datasets_found: list = field(default_factory=list)      # DatasetResult objects
+    datasets_found: list = field(default_factory=list)  # DatasetResult objects
     datasets_downloaded: list = field(default_factory=list)  # Successfully downloaded
-    datasets_failed: list = field(default_factory=list)      # Found but couldn't download
+    datasets_failed: list = field(default_factory=list)  # Found but couldn't download
 
     # Status
     objective_met: bool = False
@@ -114,6 +116,7 @@ class AggregatedResult:
     """
     Combined results from all profiles in a session.
     """
+
     profile_results: list[ProfileResult] = field(default_factory=list)
     interpreter_cost_usd: float = 0.0
     interpreter_tokens: int = 0
@@ -136,15 +139,11 @@ class AggregatedResult:
 
     @property
     def total_cost_usd(self) -> float:
-        return self.interpreter_cost_usd + sum(
-            pr.cost_usd for pr in self.profile_results
-        )
+        return self.interpreter_cost_usd + sum(pr.cost_usd for pr in self.profile_results)
 
     @property
     def total_tokens(self) -> int:
-        return self.interpreter_tokens + sum(
-            pr.tokens_used for pr in self.profile_results
-        )
+        return self.interpreter_tokens + sum(pr.tokens_used for pr in self.profile_results)
 
     @property
     def total_api_calls(self) -> int:
@@ -153,17 +152,14 @@ class AggregatedResult:
     def cost_summary(self) -> str:
         lines = ["\n📊 Session Cost Breakdown:"]
         lines.append(
-            f"  Interpreter: {self.interpreter_tokens:,} tokens | "
-            f"${self.interpreter_cost_usd:.4f}"
+            f"  Interpreter: {self.interpreter_tokens:,} tokens | ${self.interpreter_cost_usd:.4f}"
         )
         for pr in self.profile_results:
             lines.append(
                 f"  {pr.display_name}: {pr.tokens_used:,} tokens | "
                 f"${pr.cost_usd:.4f} | {pr.api_calls} calls"
             )
-        lines.append(
-            "  ─────────────────────────────────────────"
-        )
+        lines.append("  ─────────────────────────────────────────")
         lines.append(
             f"  Total: {self.total_tokens:,} tokens | "
             f"${self.total_cost_usd:.4f} | {self.total_api_calls} API calls"
@@ -192,7 +188,7 @@ class AggregatedResult:
                 "probed": "cyan",
                 "found": "white",
                 "failed": "red",
-                "skipped": "yellow"
+                "skipped": "yellow",
             }.get(d.status, "white")
 
             table.add_row(
@@ -202,7 +198,7 @@ class AggregatedResult:
                 str(d.row_count) if d.row_count else "-",
                 (d.modified or "unknown")[:10],
                 d.license_grade() if d.license else "?",
-                f"[{status_color}]{d.status}[/{status_color}]"
+                f"[{status_color}]{d.status}[/{status_color}]",
             )
 
         console.print(table)
@@ -230,10 +226,7 @@ class Orchestrator:
         self.objectives = {obj.profile_name: obj for obj in objectives}
 
     def build_initial_message(
-        self,
-        user_prompt: str,
-        objective: ProfileObjective,
-        previous_results: list[ProfileResult]
+        self, user_prompt: str, objective: ProfileObjective, previous_results: list[ProfileResult]
     ) -> str:
         """
         Build the initial user message for a profile run.
@@ -262,9 +255,7 @@ class Orchestrator:
         return "\n".join(lines)
 
     def evaluate_result(
-        self,
-        profile_result: ProfileResult,
-        objective: ProfileObjective
+        self, profile_result: ProfileResult, objective: ProfileObjective
     ) -> ProfileResult:
         """
         Evaluate whether a profile met its objective.
@@ -282,9 +273,7 @@ class Orchestrator:
                 f"Manual download may be required."
             )
         else:
-            profile_result.failure_reason = (
-                f"No datasets found matching: {objective.what_to_find}"
-            )
+            profile_result.failure_reason = f"No datasets found matching: {objective.what_to_find}"
 
         return profile_result
 
@@ -301,11 +290,7 @@ class Orchestrator:
         return all(r.objective_met for r in results)
 
     def print_progress(
-        self,
-        profile_name: str,
-        current: int,
-        total: int,
-        result: Optional[ProfileResult] = None
+        self, profile_name: str, current: int, total: int, result: Optional[ProfileResult] = None
     ):
         """Print progress between profile runs."""
         if result:
@@ -319,9 +304,7 @@ class Orchestrator:
                 icon = "❌"
                 status = result.failure_reason or "nothing found"
 
-            console.print(
-                f"\n{icon} Profile {current}/{total} ({profile_name}): {status}"
-            )
+            console.print(f"\n{icon} Profile {current}/{total} ({profile_name}): {status}")
             console.print(
                 f"   Cost: ${result.cost_usd:.4f} | "
                 f"Tokens: {result.tokens_used:,} | "

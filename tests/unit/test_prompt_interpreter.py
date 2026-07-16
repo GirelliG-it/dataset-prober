@@ -25,42 +25,41 @@ def make_mock_response(json_payload: dict):
     """Helper to create a mock Anthropic response with given JSON payload."""
     mock = MagicMock()
     mock.content = [MagicMock(text=json.dumps(json_payload), type="text")]
-    mock.usage = MagicMock(
-        input_tokens=500,
-        output_tokens=200,
-        cache_read_input_tokens=0
-    )
+    mock.usage = MagicMock(input_tokens=500, output_tokens=200, cache_read_input_tokens=0)
     return mock
 
 
 def make_interpreter(available_profiles=None):
     """Create a PromptInterpreter with mock Anthropic client."""
     from prompt_interpreter import PromptInterpreter
+
     if available_profiles is None:
         available_profiles = ["dutch_government", "us_government", "eu_open_data", "global"]
     return PromptInterpreter(available_profiles)
 
 
 VALID_DUTCH_RESPONSE = {
-    "profiles": [{
-        "profile_name": "dutch_government",
-        "display_name": "Dutch Government",
-        "confidence": "high",
-        "reason": "Prompt mentions Dutch government",
-        "execution_order": 1,
-        "keywords_detected": ["Dutch", "government"],
-        "language_detected": "en",
-        "objective": {
-            "what_to_find": "Dutch social security dataset",
-            "geographic_scope": "Netherlands only",
-            "topic": "social security",
-            "freshness_rule": "within 12 months",
-            "download_requested": True
+    "profiles": [
+        {
+            "profile_name": "dutch_government",
+            "display_name": "Dutch Government",
+            "confidence": "high",
+            "reason": "Prompt mentions Dutch government",
+            "execution_order": 1,
+            "keywords_detected": ["Dutch", "government"],
+            "language_detected": "en",
+            "objective": {
+                "what_to_find": "Dutch social security dataset",
+                "geographic_scope": "Netherlands only",
+                "topic": "social security",
+                "freshness_rule": "within 12 months",
+                "download_requested": True,
+            },
         }
-    }],
+    ],
     "is_global": False,
     "is_multi_profile": False,
-    "interpreter_reasoning": "Clear Dutch government request"
+    "interpreter_reasoning": "Clear Dutch government request",
 }
 
 VALID_MULTI_RESPONSE = {
@@ -78,8 +77,8 @@ VALID_MULTI_RESPONSE = {
                 "geographic_scope": "Netherlands",
                 "topic": "social security",
                 "freshness_rule": "within 12 months",
-                "download_requested": True
-            }
+                "download_requested": True,
+            },
         },
         {
             "profile_name": "us_government",
@@ -94,35 +93,37 @@ VALID_MULTI_RESPONSE = {
                 "geographic_scope": "United States",
                 "topic": "social security",
                 "freshness_rule": "within 12 months",
-                "download_requested": True
-            }
-        }
+                "download_requested": True,
+            },
+        },
     ],
     "is_global": False,
     "is_multi_profile": True,
-    "interpreter_reasoning": "Both Dutch and US requested"
+    "interpreter_reasoning": "Both Dutch and US requested",
 }
 
 GLOBAL_RESPONSE = {
-    "profiles": [{
-        "profile_name": "global",
-        "display_name": "Global Discovery",
-        "confidence": "medium",
-        "reason": "No specific country mentioned",
-        "execution_order": 1,
-        "keywords_detected": [],
-        "language_detected": "en",
-        "objective": {
-            "what_to_find": "Any dataset",
-            "geographic_scope": "Worldwide",
-            "topic": "population",
-            "freshness_rule": "no restriction",
-            "download_requested": False
+    "profiles": [
+        {
+            "profile_name": "global",
+            "display_name": "Global Discovery",
+            "confidence": "medium",
+            "reason": "No specific country mentioned",
+            "execution_order": 1,
+            "keywords_detected": [],
+            "language_detected": "en",
+            "objective": {
+                "what_to_find": "Any dataset",
+                "geographic_scope": "Worldwide",
+                "topic": "population",
+                "freshness_rule": "no restriction",
+                "download_requested": False,
+            },
         }
-    }],
+    ],
     "is_global": True,
     "is_multi_profile": False,
-    "interpreter_reasoning": "Global search requested"
+    "interpreter_reasoning": "Global search requested",
 }
 
 
@@ -131,31 +132,43 @@ class TestValidJSONParsing:
 
     def test_single_profile_detected(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch social security data")
         assert len(result.profiles) == 1
         assert result.profiles[0].profile_name == "dutch_government"
 
     def test_confidence_level_preserved(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch data")
         assert result.profiles[0].confidence == "high"
 
     def test_multi_profile_detected(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_MULTI_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_MULTI_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch and US social security data")
         assert len(result.profiles) == 2
         assert result.is_multi_profile is True
 
     def test_execution_order_preserved(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_MULTI_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_MULTI_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch and US data")
         assert result.profiles[0].execution_order == 1
         assert result.profiles[1].execution_order == 2
@@ -165,24 +178,31 @@ class TestValidJSONParsing:
         # Reverse the order in the response
         reversed_response = {
             **VALID_MULTI_RESPONSE,
-            "profiles": list(reversed(VALID_MULTI_RESPONSE["profiles"]))
+            "profiles": list(reversed(VALID_MULTI_RESPONSE["profiles"])),
         }
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(reversed_response)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(reversed_response),
+        ):
             result = interpreter.interpret("Find data")
         assert result.profiles[0].execution_order < result.profiles[1].execution_order
 
     def test_global_flag_set(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(GLOBAL_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages, "create", return_value=make_mock_response(GLOBAL_RESPONSE)
+        ):
             result = interpreter.interpret("Find any population data worldwide")
         assert result.is_global is True
 
     def test_cost_tracked(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find data")
         assert result.cost_usd > 0
         assert result.input_tokens > 0
@@ -194,29 +214,41 @@ class TestObjectiveExtraction:
 
     def test_what_to_find_extracted(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch social security data")
         assert result.profiles[0].what_to_find == "Dutch social security dataset"
 
     def test_geographic_scope_extracted(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch data")
         assert result.profiles[0].geographic_scope == "Netherlands only"
 
     def test_freshness_rule_extracted(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch data")
         assert result.profiles[0].freshness_rule == "within 12 months"
 
     def test_download_requested_extracted(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find and download Dutch data")
         assert result.profiles[0].download_requested is True
 
@@ -254,13 +286,18 @@ class TestFallbackBehavior:
         interpreter = make_interpreter()
         bad_profile_response = {
             **VALID_DUTCH_RESPONSE,
-            "profiles": [{
-                **VALID_DUTCH_RESPONSE["profiles"][0],
-                "profile_name": "netherlands_data"  # doesn't exist
-            }]
+            "profiles": [
+                {
+                    **VALID_DUTCH_RESPONSE["profiles"][0],
+                    "profile_name": "netherlands_data",  # doesn't exist
+                }
+            ],
         }
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(bad_profile_response)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(bad_profile_response),
+        ):
             result = interpreter.interpret("Find Dutch data")
         assert result.profiles[0].profile_name == "global"
 
@@ -270,10 +307,11 @@ class TestFallbackBehavior:
             "profiles": [],
             "is_global": False,
             "is_multi_profile": False,
-            "interpreter_reasoning": ""
+            "interpreter_reasoning": "",
         }
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(empty_response)):
+        with patch.object(
+            interpreter.client.messages, "create", return_value=make_mock_response(empty_response)
+        ):
             result = interpreter.interpret("Find data")
         # Should not crash — either returns empty or falls back
         assert isinstance(result.profiles, list)
@@ -284,8 +322,11 @@ class TestToObjectives:
 
     def test_converts_to_profile_objectives(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch data")
         objectives = result.to_objectives()
         assert len(objectives) == 1
@@ -293,16 +334,22 @@ class TestToObjectives:
 
     def test_objective_preserves_what_to_find(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_DUTCH_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch data")
         objectives = result.to_objectives()
         assert objectives[0].what_to_find == "Dutch social security dataset"
 
     def test_multi_profile_produces_multiple_objectives(self):
         interpreter = make_interpreter()
-        with patch.object(interpreter.client.messages, "create",
-                          return_value=make_mock_response(VALID_MULTI_RESPONSE)):
+        with patch.object(
+            interpreter.client.messages,
+            "create",
+            return_value=make_mock_response(VALID_MULTI_RESPONSE),
+        ):
             result = interpreter.interpret("Find Dutch and US data")
         objectives = result.to_objectives()
         assert len(objectives) == 2

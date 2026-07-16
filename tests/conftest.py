@@ -15,6 +15,7 @@ import pytest
 
 # ─── Sample data fixtures ────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def sample_columns():
     return [
@@ -29,6 +30,7 @@ def sample_columns():
 def sample_probe_result_ok(sample_columns):
     """A successful ProbeResult."""
     from prober import ProbeResult
+
     return ProbeResult(
         url="https://example.com/data.csv",
         name="test-dataset",
@@ -36,7 +38,7 @@ def sample_probe_result_ok(sample_columns):
         row_count=1000,
         columns=sample_columns,
         sample=[[1, "Alice", 42.0, "2024-01-01"]],
-        error=None
+        error=None,
     )
 
 
@@ -44,6 +46,7 @@ def sample_probe_result_ok(sample_columns):
 def sample_probe_result_error():
     """A failed ProbeResult."""
     from prober import ProbeResult
+
     return ProbeResult(
         url="https://example.com/blocked.csv",
         name="blocked-dataset",
@@ -51,7 +54,7 @@ def sample_probe_result_error():
         row_count=None,
         columns=[],
         sample=[],
-        error="HTTP Error: connection refused"
+        error="HTTP Error: connection refused",
     )
 
 
@@ -59,6 +62,7 @@ def sample_probe_result_error():
 def sample_probe_result_redirect():
     """A redirect-trap ProbeResult."""
     from prober import ProbeResult
+
     return ProbeResult(
         url="https://example.com/login.csv",
         name="redirect-dataset",
@@ -66,7 +70,7 @@ def sample_probe_result_redirect():
         row_count=None,
         columns=[],
         sample=[],
-        error="Expected CSV but got HTML"
+        error="Expected CSV but got HTML",
     )
 
 
@@ -74,8 +78,10 @@ def sample_probe_result_redirect():
 def sample_dataset_result_ok(sample_columns):
     """A successfully probed DatasetResult."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from tools.base import DatasetResult
+
     return DatasetResult(
         id="37789ksz",
         title="Sociale zekerheid; kerncijfers",
@@ -94,7 +100,7 @@ def sample_dataset_result_ok(sample_columns):
         sample=[[1, "2024-01", 1000.0, "2024-01-01"]],
         language="nl",
         tags=["social security", "benefits"],
-        status="probed"
+        status="probed",
     )
 
 
@@ -109,8 +115,10 @@ def sample_dataset_result_downloaded(sample_dataset_result_ok):
 def sample_dataset_result_failed():
     """A failed DatasetResult."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from tools.base import DatasetResult
+
     return DatasetResult(
         id="ssa-blocked",
         title="SSA Disability Data",
@@ -130,7 +138,7 @@ def sample_dataset_result_failed():
         language="en",
         tags=["social security", "disability"],
         status="failed",
-        error="HTTP Error: HTTP 0 Internal Server Error"
+        error="HTTP Error: HTTP 0 Internal Server Error",
     )
 
 
@@ -226,8 +234,10 @@ def profiles_dir(tmp_path):
 def test_profile(profiles_dir):
     """Load the minimal test profile."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from config_loader import ConfigLoader
+
     return ConfigLoader(profiles_dir).load("test_profile")
 
 
@@ -235,19 +245,24 @@ def test_profile(profiles_dir):
 def global_profile(profiles_dir):
     """Load the global test profile."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from config_loader import ConfigLoader
+
     return ConfigLoader(profiles_dir).load("global")
 
 
 # ─── Orchestrator fixtures ───────────────────────────────────────────────────
 
+
 @pytest.fixture
 def dutch_objective():
     """A ProfileObjective for Dutch government data."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from orchestrator import ProfileObjective
+
     return ProfileObjective(
         profile_name="dutch_government",
         display_name="Dutch Government",
@@ -256,7 +271,7 @@ def dutch_objective():
         topic="social security",
         freshness_rule="within 12 months",
         download_requested=True,
-        execution_order=1
+        execution_order=1,
     )
 
 
@@ -264,8 +279,10 @@ def dutch_objective():
 def us_objective():
     """A ProfileObjective for US government data."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from orchestrator import ProfileObjective
+
     return ProfileObjective(
         profile_name="us_government",
         display_name="US Government",
@@ -274,7 +291,7 @@ def us_objective():
         topic="social security",
         freshness_rule="within 12 months",
         download_requested=True,
-        execution_order=2
+        execution_order=2,
     )
 
 
@@ -282,12 +299,12 @@ def us_objective():
 def profile_result_met(dutch_objective, sample_dataset_result_downloaded):
     """A ProfileResult where the objective was fully met."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from orchestrator import ProfileResult
+
     pr = ProfileResult(
-        profile_name="dutch_government",
-        display_name="Dutch Government",
-        objective=dutch_objective
+        profile_name="dutch_government", display_name="Dutch Government", objective=dutch_objective
     )
     pr.datasets_found = [sample_dataset_result_downloaded]
     pr.datasets_downloaded = [sample_dataset_result_downloaded]
@@ -302,12 +319,12 @@ def profile_result_met(dutch_objective, sample_dataset_result_downloaded):
 def profile_result_partial(us_objective, sample_dataset_result_failed):
     """A ProfileResult where dataset was found but not downloaded."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from orchestrator import ProfileResult
+
     pr = ProfileResult(
-        profile_name="us_government",
-        display_name="US Government",
-        objective=us_objective
+        profile_name="us_government", display_name="US Government", objective=us_objective
     )
     pr.datasets_found = [sample_dataset_result_failed]
     pr.datasets_downloaded = []
@@ -324,12 +341,12 @@ def profile_result_partial(us_objective, sample_dataset_result_failed):
 def profile_result_empty(us_objective):
     """A ProfileResult where nothing was found."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from orchestrator import ProfileResult
+
     pr = ProfileResult(
-        profile_name="us_government",
-        display_name="US Government",
-        objective=us_objective
+        profile_name="us_government", display_name="US Government", objective=us_objective
     )
     pr.datasets_found = []
     pr.datasets_downloaded = []
@@ -378,17 +395,14 @@ def malformed_csv():
 
 # ─── Mock Anthropic client ──────────────────────────────────────────────────
 
+
 @pytest.fixture
 def mock_anthropic_response():
     """A mock Anthropic API response with realistic structure."""
     mock = MagicMock()
     mock.content = [MagicMock(text="Mock analysis response", type="text")]
     mock.stop_reason = "end_turn"
-    mock.usage = MagicMock(
-        input_tokens=1000,
-        output_tokens=200,
-        cache_read_input_tokens=0
-    )
+    mock.usage = MagicMock(input_tokens=1000, output_tokens=200, cache_read_input_tokens=0)
     return mock
 
 
@@ -396,33 +410,35 @@ def mock_anthropic_response():
 def mock_interpreter_response():
     """A mock Anthropic response for prompt interpretation."""
     mock = MagicMock()
-    mock.content = [MagicMock(
-        text=json.dumps({
-            "profiles": [{
-                "profile_name": "dutch_government",
-                "display_name": "Dutch Government",
-                "confidence": "high",
-                "reason": "Prompt mentions Dutch government",
-                "execution_order": 1,
-                "keywords_detected": ["Dutch", "government"],
-                "language_detected": "en",
-                "objective": {
-                    "what_to_find": "Dutch social security dataset",
-                    "geographic_scope": "Netherlands only",
-                    "topic": "social security",
-                    "freshness_rule": "within 12 months",
-                    "download_requested": True
+    mock.content = [
+        MagicMock(
+            text=json.dumps(
+                {
+                    "profiles": [
+                        {
+                            "profile_name": "dutch_government",
+                            "display_name": "Dutch Government",
+                            "confidence": "high",
+                            "reason": "Prompt mentions Dutch government",
+                            "execution_order": 1,
+                            "keywords_detected": ["Dutch", "government"],
+                            "language_detected": "en",
+                            "objective": {
+                                "what_to_find": "Dutch social security dataset",
+                                "geographic_scope": "Netherlands only",
+                                "topic": "social security",
+                                "freshness_rule": "within 12 months",
+                                "download_requested": True,
+                            },
+                        }
+                    ],
+                    "is_global": False,
+                    "is_multi_profile": False,
+                    "interpreter_reasoning": "Clear Dutch government request",
                 }
-            }],
-            "is_global": False,
-            "is_multi_profile": False,
-            "interpreter_reasoning": "Clear Dutch government request"
-        }),
-        type="text"
-    )]
-    mock.usage = MagicMock(
-        input_tokens=500,
-        output_tokens=300,
-        cache_read_input_tokens=0
-    )
+            ),
+            type="text",
+        )
+    ]
+    mock.usage = MagicMock(input_tokens=500, output_tokens=300, cache_read_input_tokens=0)
     return mock

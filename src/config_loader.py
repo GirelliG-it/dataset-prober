@@ -20,10 +20,11 @@ DEFAULT_PROFILES_DIR = Path(__file__).parent.parent / "config" / "profiles"
 @dataclass
 class CatalogConfig:
     """Configuration for a single catalog source within a profile."""
+
     name: str
-    type: str                        # "cbs", "ckan", "opendatasoft", "eurostat", "tavily"
+    type: str  # "cbs", "ckan", "opendatasoft", "eurostat", "tavily"
     base_url: str
-    api_key_env: Optional[str]       # Environment variable name for API key
+    api_key_env: Optional[str]  # Environment variable name for API key
     timeout_seconds: int
     priority: int
 
@@ -44,6 +45,7 @@ class CatalogConfig:
 @dataclass
 class BudgetConfig:
     """User-controlled budget limits for an agent run."""
+
     max_searches: int
     max_crawls: int
     max_probes: int
@@ -73,21 +75,19 @@ class BudgetConfig:
 @dataclass
 class PricingConfig:
     """Claude API pricing for cost tracking."""
+
     input_per_million: float
     output_per_million: float
     cache_read_per_million: float
 
     def calculate_cost(
-        self,
-        input_tokens: int,
-        output_tokens: int,
-        cache_read_tokens: int = 0
+        self, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0
     ) -> float:
         """Calculate cost in USD for a set of token counts."""
         return (
-            (input_tokens / 1_000_000) * self.input_per_million +
-            (output_tokens / 1_000_000) * self.output_per_million +
-            (cache_read_tokens / 1_000_000) * self.cache_read_per_million
+            (input_tokens / 1_000_000) * self.input_per_million
+            + (output_tokens / 1_000_000) * self.output_per_million
+            + (cache_read_tokens / 1_000_000) * self.cache_read_per_million
         )
 
     def format_cost(self, cost_usd: float) -> str:
@@ -100,9 +100,10 @@ class PricingConfig:
 @dataclass
 class LicenseConfig:
     """License preferences and rules."""
-    preference: list     # Preferred licenses — flag if not found
-    warn: list           # Warn if dataset uses these
-    reject: list         # Skip datasets with these licenses
+
+    preference: list  # Preferred licenses — flag if not found
+    warn: list  # Warn if dataset uses these
+    reject: list  # Skip datasets with these licenses
 
 
 @dataclass
@@ -111,6 +112,7 @@ class Profile:
     Complete profile configuration for an agent run.
     Loaded from a YAML file and optionally overridden by CLI flags.
     """
+
     # Identity
     name: str
     description: str
@@ -229,10 +231,7 @@ class ConfigLoader:
         """Return list of available profile names (without .yaml extension)."""
         if not self.profiles_dir.exists():
             return []
-        return [
-            f.stem for f in self.profiles_dir.glob("*.yaml")
-            if not f.name.startswith("_")
-        ]
+        return [f.stem for f in self.profiles_dir.glob("*.yaml") if not f.name.startswith("_")]
 
     def load(self, profile_name: str) -> Profile:
         """
@@ -275,7 +274,7 @@ class ConfigLoader:
                 base_url=c["base_url"],
                 api_key_env=c.get("api_key_env"),
                 timeout_seconds=c["timeout_seconds"],
-                priority=c["priority"]
+                priority=c["priority"],
             )
             for c in raw.get("catalogs", [])
         ]
@@ -289,7 +288,7 @@ class ConfigLoader:
             max_tokens=b["max_tokens"],
             timeout_minutes=b["timeout_minutes"],
             sample_rows=b["sample_rows"],
-            download_timeout_seconds=b["download_timeout_seconds"]
+            download_timeout_seconds=b["download_timeout_seconds"],
         )
 
         # Pricing
@@ -297,14 +296,14 @@ class ConfigLoader:
         pricing = PricingConfig(
             input_per_million=p["input_per_million"],
             output_per_million=p["output_per_million"],
-            cache_read_per_million=p["cache_read_per_million"]
+            cache_read_per_million=p["cache_read_per_million"],
         )
 
         # License
         license_config = LicenseConfig(
             preference=raw.get("license_preference", []),
             warn=raw.get("license_warn", []),
-            reject=raw.get("license_reject", [])
+            reject=raw.get("license_reject", []),
         )
 
         # Scope
@@ -329,7 +328,7 @@ class ConfigLoader:
             opendatasoft_portals=raw.get("opendatasoft_portals", []),
             credibility_signals=raw.get("credibility_signals", {}),
             domain_keywords=raw.get("domain_keywords", {}),
-            raw=raw
+            raw=raw,
         )
 
 

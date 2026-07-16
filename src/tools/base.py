@@ -19,48 +19,50 @@ class DatasetResult:
     Every tool returns this structure — CBS, CKAN, OpenDataSoft, Tavily.
     The agent works exclusively with DatasetResult objects.
     """
+
     # Identity
-    id: str                              # Source-specific identifier (CBS table ID, CKAN package name, URL)
-    title: str                           # Human-readable dataset name
-    description: str                     # What the dataset contains
-    source: str                          # Tool that found this: "cbs", "ckan", "opendatasoft", "tavily"
-    source_name: str                     # Human-readable source name: "CBS", "Data.gov", "Den Haag Open Data"
+    id: str  # Source-specific identifier (CBS table ID, CKAN package name, URL)
+    title: str  # Human-readable dataset name
+    description: str  # What the dataset contains
+    source: str  # Tool that found this: "cbs", "ckan", "opendatasoft", "tavily"
+    source_name: str  # Human-readable source name: "CBS", "Data.gov", "Den Haag Open Data"
 
     # Access
-    url: str                             # Catalog or landing page URL
-    download_url: Optional[str]          # Direct file URL (CSV, parquet etc.) if known
-    format: Optional[str]               # "CSV", "JSON", "parquet", "OData" etc.
+    url: str  # Catalog or landing page URL
+    download_url: Optional[str]  # Direct file URL (CSV, parquet etc.) if known
+    format: Optional[str]  # "CSV", "JSON", "parquet", "OData" etc.
 
     # Freshness
-    modified: Optional[str]             # Last update date (ISO format preferred)
-    frequency: Optional[str]            # Update frequency: "monthly", "annual" etc.
+    modified: Optional[str]  # Last update date (ISO format preferred)
+    frequency: Optional[str]  # Update frequency: "monthly", "annual" etc.
 
     # License (CCREL/ODRL)
-    license: Optional[str]              # "CC0", "CC-BY", "CC-BY-SA", "CC-BY-NC", "other", "unknown"
-    license_url: Optional[str]          # Full license URL
+    license: Optional[str]  # "CC0", "CC-BY", "CC-BY-SA", "CC-BY-NC", "other", "unknown"
+    license_url: Optional[str]  # Full license URL
 
     # Schema (populated after probe/fetch)
-    row_count: Optional[int]            # Number of rows — None until probed
-    columns: Optional[list]             # Column definitions — None until probed
-    sample: Optional[list]              # Sample rows — None until probed
+    row_count: Optional[int]  # Number of rows — None until probed
+    columns: Optional[list]  # Column definitions — None until probed
+    sample: Optional[list]  # Sample rows — None until probed
 
     # Discovery metadata
-    language: Optional[str]             # Dataset language: "nl", "en" etc.
+    language: Optional[str]  # Dataset language: "nl", "en" etc.
     tags: list = field(default_factory=list)  # Keywords/topics
 
     # Pipeline status
-    status: str = "found"               # "found" → "probed" → "downloaded" → "failed" → "skipped"
-    error: Optional[str] = None         # Error message if status is "failed"
+    status: str = "found"  # "found" → "probed" → "downloaded" → "failed" → "skipped"
+    error: Optional[str] = None  # Error message if status is "failed"
 
     # Cost tracking
-    tokens_used: int = 0                # Tokens consumed discovering/fetching this dataset
-    cost_usd: float = 0.0               # Estimated cost in USD
+    tokens_used: int = 0  # Tokens consumed discovering/fetching this dataset
+    cost_usd: float = 0.0  # Estimated cost in USD
 
     def freshness_days(self) -> Optional[int]:
         """Return how many days ago this dataset was last modified. None if unknown."""
         if not self.modified:
             return None
         from datetime import datetime
+
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%Y"):
             try:
                 dt = datetime.strptime(self.modified.strip()[:19], fmt)
@@ -120,7 +122,7 @@ class DatasetResult:
             "status": self.status,
             "error": self.error,
             "tokens_used": self.tokens_used,
-            "cost_usd": round(self.cost_usd, 6)
+            "cost_usd": round(self.cost_usd, 6),
         }
 
 
@@ -222,6 +224,7 @@ class DataSourceTool(ABC):
 # Previously each path had its own copy of the CTAS statement, and a security
 # fix applied to one copy silently missed the other three.
 
+
 def safe_table_name(dataset_id: str, title: str = "") -> str:
     """
     Build a collision-resistant DuckDB table name.
@@ -234,6 +237,7 @@ def safe_table_name(dataset_id: str, title: str = "") -> str:
     The title, when supplied, is appended as a truncated readable suffix so
     tables stay browsable — but identity always rests on the ID.
     """
+
     def _clean(s: str) -> str:
         return "".join(c if c.isalnum() else "_" for c in s.lower()).strip("_")
 

@@ -101,7 +101,9 @@ if __name__ == "__main__":
         results = [probe_url(d["name"], d["url"]) for d in datasets]
 
         from run import display_results
+
         display_results(results)
 
         from prober import save_results
+
         save_results(results, "output/probe_results.json")

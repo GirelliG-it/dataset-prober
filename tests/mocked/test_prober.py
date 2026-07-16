@@ -30,7 +30,6 @@ HEADERS_ONLY_CSV = b"""id,name,value,date
 """
 
 
-
 class TestProbeResultStructure:
     """Tests that ProbeResult has the correct structure."""
 
@@ -52,6 +51,7 @@ class TestProbeResultStructure:
     def test_vars_serializable(self, sample_probe_result_ok):
         """ProbeResult must serialize cleanly for JSON output."""
         import json
+
         data = vars(sample_probe_result_ok)
         serialized = json.dumps(data, default=str)
         assert "test-dataset" in serialized
@@ -62,6 +62,7 @@ class TestProbeAll:
 
     def test_empty_sources_returns_empty(self):
         from prober import probe_all
+
         results = probe_all([])
         assert results == []
 
@@ -70,11 +71,14 @@ class TestProbeAll:
         from unittest.mock import patch
 
         from prober import probe_all
+
         with patch("prober.probe_url", return_value=sample_probe_result_ok):
-            results = probe_all([
-                {"name": "a", "url": "https://a.com"},
-                {"name": "b", "url": "https://b.com"},
-            ])
+            results = probe_all(
+                [
+                    {"name": "a", "url": "https://a.com"},
+                    {"name": "b", "url": "https://b.com"},
+                ]
+            )
         assert len(results) == 2
 
     def test_failed_probe_does_not_stop_batch(self, sample_probe_result_error):
@@ -82,11 +86,14 @@ class TestProbeAll:
         from unittest.mock import patch
 
         from prober import probe_all
+
         with patch("prober.probe_url", return_value=sample_probe_result_error):
-            results = probe_all([
-                {"name": "a", "url": "https://a.com"},
-                {"name": "b", "url": "https://b.com"},
-            ])
+            results = probe_all(
+                [
+                    {"name": "a", "url": "https://a.com"},
+                    {"name": "b", "url": "https://b.com"},
+                ]
+            )
         assert len(results) == 2
         assert all(r.status == "error" for r in results)
 
@@ -96,6 +103,7 @@ class TestSaveResults:
 
     def test_saves_to_file(self, tmp_path, sample_probe_result_ok):
         from prober import save_results
+
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
         assert output.exists()
@@ -104,6 +112,7 @@ class TestSaveResults:
         import json
 
         from prober import save_results
+
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
         with open(output) as f:
@@ -115,6 +124,7 @@ class TestSaveResults:
         import json
 
         from prober import save_results
+
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
         with open(output) as f:
@@ -126,10 +136,13 @@ class TestSaveResults:
         assert "row_count" in result
         assert "columns" in result
 
-    def test_multiple_results_saved(self, tmp_path, sample_probe_result_ok, sample_probe_result_error):
+    def test_multiple_results_saved(
+        self, tmp_path, sample_probe_result_ok, sample_probe_result_error
+    ):
         import json
 
         from prober import save_results
+
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok, sample_probe_result_error], str(output))
         with open(output) as f:
@@ -141,6 +154,7 @@ class TestSaveResults:
         import json
 
         from prober import save_results
+
         output = tmp_path / "results.json"
         save_results([sample_probe_result_error], str(output))
         with open(output) as f:

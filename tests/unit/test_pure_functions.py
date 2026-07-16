@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 # ─── SQL injection tests ─────────────────────────────────────────────────────
 
+
 class TestSqlInjection:
     """
     URLs reach DuckDB from untrusted places: CKAN catalogues, Tavily web search
@@ -78,35 +79,41 @@ class TestSqlInjection:
 
 # ─── Table naming tests ──────────────────────────────────────────────────────
 
+
 class TestSafeTableName:
     """Table identity must rest on the source ID, never the human title."""
 
     def test_distinct_ids_never_collide_despite_identical_titles(self):
         from tools.base import safe_table_name
+
         a = safe_table_name("83765NED", "Bevolking per gemeente, 2024")
         b = safe_table_name("85496NED", "Bevolking per gemeente (2024)")
         assert a != b, "two different datasets mapped to one table"
 
     def test_same_id_is_stable(self):
         from tools.base import safe_table_name
+
         assert safe_table_name("83765NED", "x") == safe_table_name("83765NED", "x")
 
     def test_empty_id_raises_rather_than_producing_junk(self):
         from tools.base import safe_table_name
+
         with pytest.raises(ValueError):
             safe_table_name("!!!", "title")
 
     def test_leading_digit_is_prefixed(self):
         from tools.base import safe_table_name
+
         assert not safe_table_name("2024data", "x")[0].isdigit()
 
     def test_respects_duckdb_identifier_length(self):
         from tools.base import safe_table_name
+
         assert len(safe_table_name("x" * 200, "y" * 200)) <= 63
 
 
-
 # ─── DatasetResult method tests ──────────────────────────────────────────────
+
 
 class TestDatasetResultFreshness:
     """Tests for DatasetResult.freshness_days() and passes_freshness()."""
@@ -115,42 +122,98 @@ class TestDatasetResultFreshness:
         from datetime import datetime, timedelta
 
         from tools.base import DatasetResult
+
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified=recent, download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified=recent,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.freshness_days() == pytest.approx(10, abs=1)
 
     def test_freshness_days_old(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified="2020-01-01", download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified="2020-01-01",
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.freshness_days() > 365 * 4
 
     def test_freshness_days_unknown(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified=None, download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.freshness_days() is None
 
     def test_freshness_days_unparseable(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified="not-a-date", download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified="not-a-date",
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.freshness_days() is None
 
@@ -158,32 +221,74 @@ class TestDatasetResultFreshness:
         from datetime import datetime, timedelta
 
         from tools.base import DatasetResult
+
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified=recent, download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified=recent,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.passes_freshness(365) is True
 
     def test_passes_freshness_too_old(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified="2020-01-01", download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified="2020-01-01",
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.passes_freshness(365) is False
 
     def test_passes_freshness_unknown_returns_none(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified=None, download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.passes_freshness(365) is None
 
@@ -197,10 +302,23 @@ class TestDatasetResultFreshness:
         # once it drifts past the threshold being asserted.
         five_days_ago = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S")
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", modified=five_days_ago, download_url=None, format=None,
-            frequency=None, license=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            modified=five_days_ago,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.freshness_days() == 5
 
@@ -210,76 +328,175 @@ class TestDatasetResultLicenseGrade:
 
     def test_cc0_is_grade_a(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license="CC0", modified=None, download_url=None, format=None,
-            frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license="CC0",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "A"
 
     def test_public_domain_is_grade_a(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license="Public Domain", modified=None, download_url=None,
-            format=None, frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license="Public Domain",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "A"
 
     def test_cc_by_is_grade_b(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license="CC-BY", modified=None, download_url=None,
-            format=None, frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license="CC-BY",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "B"
 
     def test_cc_by_sa_is_grade_b_minus(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license="CC-BY-SA", modified=None, download_url=None,
-            format=None, frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license="CC-BY-SA",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "B-"
 
     def test_cc_by_nc_is_grade_c(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license="CC-BY-NC", modified=None, download_url=None,
-            format=None, frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license="CC-BY-NC",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "C"
 
     def test_unknown_license_is_question_mark(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license=None, modified=None, download_url=None,
-            format=None, frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license=None,
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "?"
 
     def test_other_license_is_question_mark(self):
         from tools.base import DatasetResult
+
         d = DatasetResult(
-            id="x", title="x", description="", source="cbs", source_name="CBS",
-            url="", license="proprietary", modified=None, download_url=None,
-            format=None, frequency=None, license_url=None, row_count=None,
-            columns=None, sample=None, language=None, tags=[]
+            id="x",
+            title="x",
+            description="",
+            source="cbs",
+            source_name="CBS",
+            url="",
+            license="proprietary",
+            modified=None,
+            download_url=None,
+            format=None,
+            frequency=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
         )
         assert d.license_grade() == "?"
 
 
 # ─── PricingConfig tests ─────────────────────────────────────────────────────
+
 
 class TestPricingConfig:
     """Tests for cost calculation accuracy."""
@@ -302,7 +519,9 @@ class TestPricingConfig:
 
     def test_combined_cost(self, test_profile):
         cost = test_profile.pricing.calculate_cost(10_000, 2_000, 5_000)
-        expected = (10_000/1_000_000 * 3.00) + (2_000/1_000_000 * 15.00) + (5_000/1_000_000 * 0.30)
+        expected = (
+            (10_000 / 1_000_000 * 3.00) + (2_000 / 1_000_000 * 15.00) + (5_000 / 1_000_000 * 0.30)
+        )
         assert cost == pytest.approx(expected)
 
     def test_format_cost_small(self, test_profile):
@@ -316,6 +535,7 @@ class TestPricingConfig:
 
 # ─── BudgetConfig override tests ─────────────────────────────────────────────
 
+
 class TestBudgetOverride:
     """Tests for CLI flag override logic."""
 
@@ -323,7 +543,7 @@ class TestBudgetOverride:
         original = test_profile.budget.max_searches
         overridden = test_profile.budget.override(max_searches=99)
         assert overridden.max_searches == 99
-        assert test_profile.budget.max_searches == original # <- add: override must not mutate
+        assert test_profile.budget.max_searches == original  # <- add: override must not mutate
 
     def test_none_values_ignored(self, test_profile):
         original_timeout = test_profile.budget.timeout_minutes
@@ -338,11 +558,7 @@ class TestBudgetOverride:
 
     def test_override_all_fields(self, test_profile):
         overridden = test_profile.budget.override(
-            max_searches=10,
-            max_crawls=15,
-            max_probes=20,
-            max_tokens=8192,
-            timeout_minutes=30
+            max_searches=10, max_crawls=15, max_probes=20, max_tokens=8192, timeout_minutes=30
         )
         assert overridden.max_searches == 10
         assert overridden.max_crawls == 15

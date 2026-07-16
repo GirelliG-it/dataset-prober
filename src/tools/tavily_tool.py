@@ -47,6 +47,7 @@ class TavilyTool(DataSourceTool):
     def is_available(self) -> bool:
         try:
             from tavily import TavilyClient  # noqa
+
             key = os.environ.get("TAVILY_API_KEY")
             return bool(key)
         except ImportError:
@@ -55,11 +56,10 @@ class TavilyTool(DataSourceTool):
     def _client(self):
         """Lazily initialize Tavily client."""
         from tavily import TavilyClient
+
         key = os.environ.get("TAVILY_API_KEY")
         if not key:
-            raise EnvironmentError(
-                "TAVILY_API_KEY not set. Add it to your .env file."
-            )
+            raise EnvironmentError("TAVILY_API_KEY not set. Add it to your .env file.")
         return TavilyClient(api_key=key)
 
     def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
@@ -85,10 +85,7 @@ class TavilyTool(DataSourceTool):
             # Apply domain filter if trusted domains are specified
             if trusted_domains:
                 # Tavily include_domains expects full domain names
-                clean_domains = [
-                    d.lstrip(".") for d in trusted_domains
-                    if not d.startswith("http")
-                ]
+                clean_domains = [d.lstrip(".") for d in trusted_domains if not d.startswith("http")]
                 if clean_domains:
                     search_kwargs["include_domains"] = clean_domains[:5]  # Tavily limit
 
@@ -123,18 +120,20 @@ class TavilyTool(DataSourceTool):
                     sample=None,
                     language=None,
                     tags=[],
-                    status="found"
+                    status="found",
                 )
                 results.append(result)
 
             return results
 
         except Exception as e:
-            return [self._error_result(
-                id=f"tavily_search_{keyword}",
-                title=f"Web search failed: {keyword}",
-                error=str(e)
-            )]
+            return [
+                self._error_result(
+                    id=f"tavily_search_{keyword}",
+                    title=f"Web search failed: {keyword}",
+                    error=str(e),
+                )
+            ]
 
     def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
         """
@@ -148,9 +147,7 @@ class TavilyTool(DataSourceTool):
         # Check blocked
         if any(blocked in dataset_id for blocked in blocked_sources):
             return self._error_result(
-                id=dataset_id,
-                title=dataset_id,
-                error="Source is blocked in current profile"
+                id=dataset_id, title=dataset_id, error="Source is blocked in current profile"
             )
 
         # If it's already a direct dataset URL, probe it
@@ -165,9 +162,7 @@ class TavilyTool(DataSourceTool):
 
             if not extract_results:
                 return self._error_result(
-                    id=dataset_id,
-                    title=dataset_id,
-                    error="No content extracted from page"
+                    id=dataset_id, title=dataset_id, error="No content extracted from page"
                 )
 
             content = extract_results[0].get("raw_content", "")[:5000]
@@ -196,7 +191,7 @@ class TavilyTool(DataSourceTool):
                     language=None,
                     tags=[],
                     status="found",
-                    error=f"No direct dataset URLs found. Page content extracted ({len(content)} chars)."
+                    error=f"No direct dataset URLs found. Page content extracted ({len(content)} chars).",
                 )
 
             # Probe the first found CSV URL
@@ -208,15 +203,11 @@ class TavilyTool(DataSourceTool):
         except Exception as e:
             return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
 
-    def _probe_direct(
-        self,
-        url: str,
-        sample_rows: int,
-        timeout: int
-    ) -> DatasetResult:
+    def _probe_direct(self, url: str, sample_rows: int, timeout: int) -> DatasetResult:
         """Probe a direct CSV URL using DuckDB httpfs."""
         try:
             import duckdb
+
             con = duckdb.connect()
             con.execute("INSTALL httpfs; LOAD httpfs;")
 
@@ -230,9 +221,7 @@ class TavilyTool(DataSourceTool):
             ).fetchall()
 
             try:
-                count = con.execute(
-                    "SELECT COUNT(*) FROM read_csv_auto(?)", [url]
-                ).fetchone()[0]
+                count = con.execute("SELECT COUNT(*) FROM read_csv_auto(?)", [url]).fetchone()[0]
             except Exception:
                 count = None
 
@@ -259,7 +248,7 @@ class TavilyTool(DataSourceTool):
                 sample=[list(row) for row in sample_data[:3]],
                 language=None,
                 tags=[],
-                status="probed"
+                status="probed",
             )
 
         except Exception as e:
@@ -338,5 +327,5 @@ class TavilyTool(DataSourceTool):
             language=None,
             tags=[],
             status="failed",
-            error=error
+            error=error,
         )

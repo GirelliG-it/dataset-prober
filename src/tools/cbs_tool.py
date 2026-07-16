@@ -40,6 +40,7 @@ class CBSTool(DataSourceTool):
     def is_available(self) -> bool:
         try:
             import cbsodata  # noqa
+
             return True
         except ImportError:
             return False
@@ -54,18 +55,15 @@ class CBSTool(DataSourceTool):
         timeout = self.config.get("timeout_seconds", 30)
 
         try:
-            resp = requests.get(
-                f"{catalog}/Tables?$format=json",
-                timeout=timeout
-            )
+            resp = requests.get(f"{catalog}/Tables?$format=json", timeout=timeout)
             resp.raise_for_status()
             all_tables = resp.json().get("value", [])
         except Exception as e:
-            return [self._error_result(
-                id=f"cbs_search_{keyword}",
-                title=f"CBS search failed: {keyword}",
-                error=str(e)
-            )]
+            return [
+                self._error_result(
+                    id=f"cbs_search_{keyword}", title=f"CBS search failed: {keyword}", error=str(e)
+                )
+            ]
 
         keyword_lower = keyword.lower()
         scored = []
@@ -91,26 +89,31 @@ class CBSTool(DataSourceTool):
             modified = table.get("Modified", "")
             modified_display = modified[:10] if modified else None
 
-            scored.append((score, DatasetResult(
-                id=table.get("Identifier", ""),
-                title=table.get("Title", ""),
-                description=table.get("ShortDescription", "")[:300],
-                source=self.source_type,
-                source_name=self.source_name,
-                url=f"https://opendata.cbs.nl/statline/#/CBS/nl/dataset/{table.get('Identifier')}",
-                download_url=None,
-                format="OData/CSV",
-                modified=modified_display,
-                frequency=table.get("Frequency"),
-                license="CC-BY",
-                license_url="https://creativecommons.org/licenses/by/4.0/",
-                row_count=None,
-                columns=None,
-                sample=None,
-                language=table.get("Language", "nl"),
-                tags=[],
-                status="found"
-            )))
+            scored.append(
+                (
+                    score,
+                    DatasetResult(
+                        id=table.get("Identifier", ""),
+                        title=table.get("Title", ""),
+                        description=table.get("ShortDescription", "")[:300],
+                        source=self.source_type,
+                        source_name=self.source_name,
+                        url=f"https://opendata.cbs.nl/statline/#/CBS/nl/dataset/{table.get('Identifier')}",
+                        download_url=None,
+                        format="OData/CSV",
+                        modified=modified_display,
+                        frequency=table.get("Frequency"),
+                        license="CC-BY",
+                        license_url="https://creativecommons.org/licenses/by/4.0/",
+                        row_count=None,
+                        columns=None,
+                        sample=None,
+                        language=table.get("Language", "nl"),
+                        tags=[],
+                        status="found",
+                    ),
+                )
+            )
 
         # Sort by score desc, then modified desc
         scored.sort(key=lambda x: (x[0], x[1].modified or ""), reverse=True)
@@ -127,8 +130,7 @@ class CBSTool(DataSourceTool):
         try:
             # Step 1: Table metadata
             meta_resp = requests.get(
-                f"{base}/{dataset_id}/TableInfos?$format=json",
-                timeout=timeout
+                f"{base}/{dataset_id}/TableInfos?$format=json", timeout=timeout
             )
             meta_resp.raise_for_status()
             meta_values = meta_resp.json().get("value", [{}])
@@ -140,17 +142,14 @@ class CBSTool(DataSourceTool):
 
             # Step 2: Sample rows
             sample_resp = requests.get(
-                f"{base}/{dataset_id}/TypedDataSet?$top={sample_rows}&$format=json",
-                timeout=timeout
+                f"{base}/{dataset_id}/TypedDataSet?$top={sample_rows}&$format=json", timeout=timeout
             )
             sample_resp.raise_for_status()
             sample_data = sample_resp.json().get("value", [])
 
             if not sample_data:
                 return self._error_result(
-                    id=dataset_id,
-                    title=title,
-                    error=f"No sample data returned for {dataset_id}"
+                    id=dataset_id, title=title, error=f"No sample data returned for {dataset_id}"
                 )
 
             columns = [{"name": k, "type": "string"} for k in sample_data[0].keys()]
@@ -173,14 +172,14 @@ class CBSTool(DataSourceTool):
                 sample=sample_data[:3],
                 language="nl",
                 tags=[],
-                status="probed"
+                status="probed",
             )
 
         except requests.Timeout:
             return self._error_result(
                 id=dataset_id,
                 title=dataset_id,
-                error=f"Timed out after {timeout}s — table may be unavailable"
+                error=f"Timed out after {timeout}s — table may be unavailable",
             )
         except Exception as e:
             return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
@@ -228,12 +227,10 @@ class CBSTool(DataSourceTool):
         table_name = safe_table_name(dataset.id, dataset.title)
 
         try:
-            df = pd.DataFrame(data) # noqa: F841 -- DuckDB reads 'df' from local scope in the SQL below
+            df = pd.DataFrame(data)  # noqa: F841 -- DuckDB reads 'df' from local scope in the SQL below
             con = duckdb.connect(db_path)
             con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df')
-            actual_rows = con.execute(
-                f'SELECT COUNT(*) FROM "{table_name}"'
-            ).fetchone()[0]
+            actual_rows = con.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
             con.close()
 
             dataset.row_count = actual_rows
@@ -266,5 +263,5 @@ class CBSTool(DataSourceTool):
             language="nl",
             tags=[],
             status="failed",
-            error=error
+            error=error,
         )

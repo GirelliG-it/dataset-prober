@@ -44,10 +44,7 @@ def create_tool(catalog_type: str, config: dict) -> DataSourceTool:
     tool_class = TOOL_REGISTRY.get(catalog_type)
     if not tool_class:
         available = ", ".join(TOOL_REGISTRY.keys())
-        raise ValueError(
-            f"Unknown catalog type: '{catalog_type}'. "
-            f"Available types: {available}"
-        )
+        raise ValueError(f"Unknown catalog type: '{catalog_type}'. Available types: {available}")
     return tool_class(config)
 
 
@@ -81,12 +78,14 @@ def tools_for_profile(profile) -> list[DataSourceTool]:
                 tools.append(tool)
             else:
                 from rich.console import Console
+
                 Console().print(
                     f"[yellow]⚠️  Tool '{catalog.name}' is not available "
                     f"(missing dependencies or API key)[/yellow]"
                 )
         except Exception as e:
             from rich.console import Console
+
             Console().print(f"[red]Failed to initialize tool '{catalog.name}': {e}[/red]")
 
     # Always add Tavily as fallback if available

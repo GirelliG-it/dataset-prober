@@ -18,6 +18,7 @@ class TestConfigLoaderListProfiles:
 
     def test_lists_available_profiles(self, profiles_dir):
         from config_loader import ConfigLoader
+
         loader = ConfigLoader(profiles_dir)
         profiles = loader.list_profiles()
         assert "test_profile" in profiles
@@ -25,6 +26,7 @@ class TestConfigLoaderListProfiles:
 
     def test_empty_directory_returns_empty_list(self, tmp_path):
         from config_loader import ConfigLoader
+
         empty = tmp_path / "profiles"
         empty.mkdir()
         loader = ConfigLoader(empty)
@@ -32,6 +34,7 @@ class TestConfigLoaderListProfiles:
 
     def test_nonexistent_directory_returns_empty_list(self, tmp_path):
         from config_loader import ConfigLoader
+
         loader = ConfigLoader(tmp_path / "nonexistent")
         assert loader.list_profiles() == []
 
@@ -67,6 +70,7 @@ license_warn: []
 license_reject: []
 """)
         from config_loader import ConfigLoader
+
         loader = ConfigLoader(profiles)
         profiles_list = loader.list_profiles()
         assert "real_profile" in profiles_list
@@ -78,18 +82,21 @@ class TestConfigLoaderLoad:
 
     def test_loads_test_profile(self, profiles_dir):
         from config_loader import ConfigLoader
+
         loader = ConfigLoader(profiles_dir)
         profile = loader.load("test_profile")
         assert profile.name == "Test Profile"
 
     def test_missing_profile_raises_file_not_found(self, profiles_dir):
         from config_loader import ConfigLoader
+
         loader = ConfigLoader(profiles_dir)
         with pytest.raises(FileNotFoundError):
             loader.load("nonexistent_profile")
 
     def test_error_message_lists_available_profiles(self, profiles_dir):
         from config_loader import ConfigLoader
+
         loader = ConfigLoader(profiles_dir)
         with pytest.raises(FileNotFoundError, match="test_profile"):
             loader.load("nonexistent_profile")

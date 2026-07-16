@@ -16,7 +16,7 @@ from tools.base import ensure_httpfs, load_csv_to_table, safe_table_name
 class ProbeResult:
     url: str
     name: str
-    status: str                    # "ok", "error", "redirect_trap"
+    status: str  # "ok", "error", "redirect_trap"
     row_count: Optional[int] = None
     columns: list = field(default_factory=list)
     sample: list = field(default_factory=list)
@@ -26,6 +26,7 @@ class ProbeResult:
 def _url_identity(url: str) -> str:
     """Short stable identity for a URL — used to key its DuckDB table."""
     import hashlib
+
     stem = url.rstrip("/").split("/")[-1].split("?")[0] or "src"
     digest = hashlib.sha256(url.encode()).hexdigest()[:8]
     return f"{stem}_{digest}"
@@ -40,21 +41,15 @@ def probe_url(name: str, url: str) -> ProbeResult:
         # URLs are bound as parameters, never interpolated into SQL text.
         # DuckDB treats a bound value as a literal path, so an injection
         # payload fails as a bad filename rather than executing.
-        count_result = con.execute(
-            "SELECT COUNT(*) FROM read_csv_auto(?)", [url]
-        ).fetchone()
+        count_result = con.execute("SELECT COUNT(*) FROM read_csv_auto(?)", [url]).fetchone()
         row_count = count_result[0]
 
         # Get column names and types
-        describe = con.execute(
-            "DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]
-        ).fetchall()
+        describe = con.execute("DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]).fetchall()
         columns = [{"name": row[0], "type": row[1]} for row in describe]
 
         # Get sample rows
-        sample_rows = con.execute(
-            "SELECT * FROM read_csv_auto(?) LIMIT 3", [url]
-        ).fetchall()
+        sample_rows = con.execute("SELECT * FROM read_csv_auto(?) LIMIT 3", [url]).fetchall()
         sample = [list(row) for row in sample_rows]
 
         return ProbeResult(

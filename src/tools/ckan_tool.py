@@ -8,7 +8,6 @@ All catalog-specific settings come from the profile configuration.
 CKAN API reference: https://docs.ckan.org/en/latest/api/
 """
 
-
 import requests
 
 from tools.base import (
@@ -62,6 +61,7 @@ class CKANTool(DataSourceTool):
         api_key_env = self.config.get("api_key_env")
         if api_key_env:
             import os
+
             key = os.environ.get(api_key_env)
             if key:
                 headers["x-api-key"] = key
@@ -85,20 +85,22 @@ class CKANTool(DataSourceTool):
                     "q": keyword,
                     "rows": max_results * 2,  # Fetch extra, filter down
                     "fq": "res_format:CSV",
-                    "sort": "metadata_modified desc"
+                    "sort": "metadata_modified desc",
                 },
                 headers=self._headers(),
-                timeout=timeout
+                timeout=timeout,
             )
             resp.raise_for_status()
             data = resp.json()
 
             if not data.get("success"):
-                return [self._error_result(
-                    id=f"ckan_search_{keyword}",
-                    title=f"CKAN search failed: {keyword}",
-                    error=data.get("error", {}).get("message", "Unknown error")
-                )]
+                return [
+                    self._error_result(
+                        id=f"ckan_search_{keyword}",
+                        title=f"CKAN search failed: {keyword}",
+                        error=data.get("error", {}).get("message", "Unknown error"),
+                    )
+                ]
 
             results = []
             for pkg in data["result"]["results"][:max_results]:
@@ -109,17 +111,19 @@ class CKANTool(DataSourceTool):
             return results
 
         except requests.Timeout:
-            return [self._error_result(
-                id=f"ckan_search_{keyword}",
-                title=f"CKAN search timed out: {keyword}",
-                error=f"Request timed out after {timeout}s"
-            )]
+            return [
+                self._error_result(
+                    id=f"ckan_search_{keyword}",
+                    title=f"CKAN search timed out: {keyword}",
+                    error=f"Request timed out after {timeout}s",
+                )
+            ]
         except Exception as e:
-            return [self._error_result(
-                id=f"ckan_search_{keyword}",
-                title=f"CKAN search error: {keyword}",
-                error=str(e)
-            )]
+            return [
+                self._error_result(
+                    id=f"ckan_search_{keyword}", title=f"CKAN search error: {keyword}", error=str(e)
+                )
+            ]
 
     def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
         """
@@ -130,28 +134,21 @@ class CKANTool(DataSourceTool):
 
         try:
             resp = requests.get(
-                url,
-                params={"id": dataset_id},
-                headers=self._headers(),
-                timeout=timeout
+                url, params={"id": dataset_id}, headers=self._headers(), timeout=timeout
             )
             resp.raise_for_status()
             data = resp.json()
 
             if not data.get("success"):
                 return self._error_result(
-                    id=dataset_id,
-                    title=dataset_id,
-                    error="Package not found"
+                    id=dataset_id, title=dataset_id, error="Package not found"
                 )
 
             pkg = data["result"]
             result = self._package_to_result(pkg)
             if not result:
                 return self._error_result(
-                    id=dataset_id,
-                    title=dataset_id,
-                    error="No CSV resources found in package"
+                    id=dataset_id, title=dataset_id, error="No CSV resources found in package"
                 )
 
             # Probe the CSV if we have a direct URL
@@ -163,15 +160,11 @@ class CKANTool(DataSourceTool):
         except Exception as e:
             return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
 
-    def _probe_csv(
-        self,
-        result: DatasetResult,
-        sample_rows: int,
-        timeout: int
-    ) -> DatasetResult:
+    def _probe_csv(self, result: DatasetResult, sample_rows: int, timeout: int) -> DatasetResult:
         """Probe a CSV URL using DuckDB httpfs."""
         try:
             import duckdb
+
             con = duckdb.connect()
             con.execute("INSTALL httpfs; LOAD httpfs;")
 
@@ -285,7 +278,7 @@ class CKANTool(DataSourceTool):
             sample=None,
             language=pkg.get("language", "en"),
             tags=tags,
-            status="found"
+            status="found",
         )
 
     def _parse_frequency(self, pkg: dict) -> str | None:
@@ -329,5 +322,5 @@ class CKANTool(DataSourceTool):
             language="en",
             tags=[],
             status="failed",
-            error=error
+            error=error,
         )
