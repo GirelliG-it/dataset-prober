@@ -12,7 +12,7 @@ The project has two main entry points:
 Probe specific dataset URLs interactively or from a JSON file. DuckDB queries each URL directly via httpfs — no file is downloaded until you choose to. Optionally runs a Claude or local model analysis on the results.
 
 ### 2. `dataset_agent.py` — Agentic dataset discovery
-Give a natural language prompt and let the agent autonomously find, evaluate, and download datasets. Uses a profile-driven architecture to search the right sources for your geography and topic. Tracks cost per API call and enforces freshness, license, and budget rules.
+Give a natural language prompt and let the agent autonomously find, evaluate, and download datasets. Uses a profile-drive architecture to search the right sources for your geography and topic. Tracks cost per API call and enforces freshness, license, and budget rules.
 
 ---
 
@@ -84,7 +84,7 @@ dataset-prober/
 ├── tests/
 │   ├── conftest.py                           — shared fixtures
 │   ├── unit/
-│   │   ├── test_pure_functions.py            — _safe_url, freshness, license grade, pricing
+│   │   ├── test_pure_functions.py            — SQL-injection binding, table naming, freshness, license grade, pricing
 │   │   ├── test_orchestrator.py              — early stop, handoff, evaluate_result
 │   │   └── test_prompt_interpreter.py        — JSON parsing, fallback, objectives
 │   ├── integration_light/
@@ -95,7 +95,8 @@ dataset-prober/
 │   ├── datasets.duckdb       — Downloaded datasets
 │   ├── agent_results.json    — Last agent run results
 │   └── probe_results.json    — Last prober run results
-└── pyproject.toml            — Pinned dependencies, pytest config, ruff config
+├── .pre-commit-config.yaml   — lint/format hooks (ruff, whitespace, private-key check)
+└── pyproject.toml            — pinned dependencies, pytest config, ruff config
 ```
 
 ---
@@ -186,7 +187,7 @@ ollama pull gemma3:12b
 pytest tests/ -v
 ```
 
-115 tests across unit, integration-light, and mocked layers. No real API calls in the test suite — all external services are mocked.
+The full suite tests across unit, integration-light, and mocked layers. No real API calls in the test suite — all externa services are mocked.
 
 ---
 
