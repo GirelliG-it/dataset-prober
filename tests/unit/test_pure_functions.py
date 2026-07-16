@@ -6,8 +6,9 @@ These run in milliseconds and never touch the network or filesystem.
 """
 
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -27,6 +28,7 @@ class TestSqlInjection:
 
     def test_injection_payload_cannot_drop_a_table(self, tmp_path):
         import duckdb
+
         from tools.base import load_csv_to_table
 
         con = duckdb.connect(str(tmp_path / "victim.duckdb"))
@@ -44,6 +46,7 @@ class TestSqlInjection:
 
     def test_legitimate_url_still_loads(self, tmp_path):
         import duckdb
+
         from tools.base import load_csv_to_table
 
         csv = tmp_path / "data.csv"
@@ -61,6 +64,7 @@ class TestSqlInjection:
         back. Binding passes it through intact.
         """
         import duckdb
+
         from tools.base import load_csv_to_table
 
         csv = tmp_path / "it's.csv"
@@ -108,8 +112,9 @@ class TestDatasetResultFreshness:
     """Tests for DatasetResult.freshness_days() and passes_freshness()."""
 
     def test_freshness_days_recent(self):
-        from tools.base import DatasetResult
         from datetime import datetime, timedelta
+
+        from tools.base import DatasetResult
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         d = DatasetResult(
             id="x", title="x", description="", source="cbs", source_name="CBS",
@@ -150,8 +155,9 @@ class TestDatasetResultFreshness:
         assert d.freshness_days() is None
 
     def test_passes_freshness_recent(self):
-        from tools.base import DatasetResult
         from datetime import datetime, timedelta
+
+        from tools.base import DatasetResult
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         d = DatasetResult(
             id="x", title="x", description="", source="cbs", source_name="CBS",
@@ -184,6 +190,7 @@ class TestDatasetResultFreshness:
     def test_freshness_iso_datetime_format(self):
         """CBS returns ISO datetime with time component — must parse correctly."""
         from datetime import datetime, timedelta
+
         from tools.base import DatasetResult
 
         # Relative, not hardcoded: a literal date silently rots into a failure
@@ -316,7 +323,7 @@ class TestBudgetOverride:
         original = test_profile.budget.max_searches
         overridden = test_profile.budget.override(max_searches=99)
         assert overridden.max_searches == 99
-        assert overridden.max_crawls == test_profile.budget.max_crawls
+        assert test_profile.budget.max_searches == original # <- add: override must not mutate
 
     def test_none_values_ignored(self, test_profile):
         original_timeout = test_profile.budget.timeout_minutes

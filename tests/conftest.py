@@ -7,12 +7,11 @@ Shared fixtures for all test layers.
 - All fixtures are deterministic and fast
 """
 
-import pytest
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
-from dataclasses import dataclass
 
+import pytest
 
 # ─── Sample data fixtures ────────────────────────────────────────────────────
 

@@ -8,13 +8,16 @@ Uses cbsodata for full dataset downloads.
 All configuration comes from the profile — no hardcoded values.
 """
 
-import requests
-import threading
 import queue as queue_module
-from datetime import datetime
-from pathlib import Path
+import threading
 
-from tools.base import DataSourceTool, DatasetResult
+import requests
+
+from tools.base import (
+    DatasetResult,
+    DataSourceTool,
+    safe_table_name,
+)
 
 
 class CBSTool(DataSourceTool):
@@ -222,13 +225,10 @@ class CBSTool(DataSourceTool):
             dataset.error = "No data returned from CBS"
             return dataset
 
-        # Create safe table name
-        table_name = dataset.title.lower()
-        table_name = "".join(c if c.isalnum() else "_" for c in table_name)
-        table_name = table_name.strip("_")[:50]
+        table_name = safe_table_name(dataset.id, dataset.title)
 
         try:
-            df = pd.DataFrame(data)
+            df = pd.DataFrame(data) # noqa: F841 -- DuckDB reads 'df' from local scope in the SQL below
             con = duckdb.connect(db_path)
             con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df')
             actual_rows = con.execute(

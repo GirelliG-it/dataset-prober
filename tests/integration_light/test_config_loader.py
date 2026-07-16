@@ -6,8 +6,9 @@ No network calls — tests only the file loading and validation logic.
 """
 
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 

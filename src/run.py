@@ -1,9 +1,11 @@
-import json
 import argparse
+import json
 from pathlib import Path
-from prober import probe_all, save_results
+
 from rich.console import Console
 from rich.table import Table
+
+from prober import download_to_duckdb, probe_all, save_results
 
 console = Console()
 
@@ -114,13 +116,11 @@ if __name__ == "__main__":
                 to_download = [ok_results[i] for i in indices if i < len(ok_results)]
 
             if to_download:
-                from pathlib import Path
-                from prober import download_to_duckdb
                 db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
                 console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
                 download_to_duckdb(to_download, db_path)
 
-    
+
 
     # Save results
     output_path = Path(__file__).parent.parent / "output" / "probe_results.json"

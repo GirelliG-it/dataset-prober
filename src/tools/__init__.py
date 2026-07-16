@@ -13,7 +13,7 @@ Adding a new data source:
 That's it. The agent, config loader, and prompt interpreter need no changes.
 """
 
-from tools.base import DataSourceTool, DatasetResult
+from tools.base import DatasetResult, DataSourceTool
 from tools.cbs_tool import CBSTool
 from tools.ckan_tool import CKANTool
 from tools.tavily_tool import TavilyTool

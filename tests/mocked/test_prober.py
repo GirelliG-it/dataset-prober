@@ -1,29 +1,17 @@
 """
 tests/mocked/test_prober.py
 
-Tests for probe_url() with mocked HTTP responses.
+Tests for probe_url() and batch helpers using the two-line verify to close the file out.
 We mock at the HTTP level using responses library — DuckDB actually
 runs its CSV parser against our fake responses, giving realistic behavior.
 
-Install: pip install responses
 """
 
 import sys
-import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-try:
-    import responses as responses_lib
-    HAS_RESPONSES = True
-except ImportError:
-    HAS_RESPONSES = False
-
-pytestmark = pytest.mark.skipif(
-    not HAS_RESPONSES,
-    reason="responses library not installed — run: pip install responses"
-)
 
 SAMPLE_CSV = b"""id,name,value,date
 1,Alice,42.0,2024-01-01
@@ -79,8 +67,9 @@ class TestProbeAll:
 
     def test_returns_one_result_per_source(self, sample_probe_result_ok):
         """probe_all must return exactly one result per input source."""
-        from prober import probe_all
         from unittest.mock import patch
+
+        from prober import probe_all
         with patch("prober.probe_url", return_value=sample_probe_result_ok):
             results = probe_all([
                 {"name": "a", "url": "https://a.com"},
@@ -90,8 +79,9 @@ class TestProbeAll:
 
     def test_failed_probe_does_not_stop_batch(self, sample_probe_result_error):
         """One failure must not prevent probing the remaining sources."""
-        from prober import probe_all
         from unittest.mock import patch
+
+        from prober import probe_all
         with patch("prober.probe_url", return_value=sample_probe_result_error):
             results = probe_all([
                 {"name": "a", "url": "https://a.com"},
@@ -112,6 +102,7 @@ class TestSaveResults:
 
     def test_output_is_valid_json(self, tmp_path, sample_probe_result_ok):
         import json
+
         from prober import save_results
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
@@ -122,6 +113,7 @@ class TestSaveResults:
 
     def test_output_contains_expected_fields(self, tmp_path, sample_probe_result_ok):
         import json
+
         from prober import save_results
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
@@ -136,6 +128,7 @@ class TestSaveResults:
 
     def test_multiple_results_saved(self, tmp_path, sample_probe_result_ok, sample_probe_result_error):
         import json
+
         from prober import save_results
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok, sample_probe_result_error], str(output))
@@ -146,6 +139,7 @@ class TestSaveResults:
     def test_error_result_serialized_cleanly(self, tmp_path, sample_probe_result_error):
         """None values must serialize without crashing."""
         import json
+
         from prober import save_results
         output = tmp_path / "results.json"
         save_results([sample_probe_result_error], str(output))

@@ -1,13 +1,15 @@
-import duckdb
 import json
-import time
 import sys
+import time
 from pathlib import Path
 
+import duckdb
+
 sys.path.insert(0, str(Path(__file__).parent))
-from tools.base import load_csv_to_table, ensure_httpfs, safe_table_name
 from dataclasses import dataclass, field
 from typing import Optional
+
+from tools.base import ensure_httpfs, load_csv_to_table, safe_table_name
 
 
 @dataclass

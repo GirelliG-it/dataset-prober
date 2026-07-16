@@ -7,11 +7,11 @@ All agent configuration flows through here — no hardcoded values anywhere else
 """
 
 import os
-import yaml
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
+import yaml
 
 # Default profiles directory — relative to project root
 DEFAULT_PROFILES_DIR = Path(__file__).parent.parent / "config" / "profiles"
@@ -301,7 +301,6 @@ class ConfigLoader:
         )
 
         # License
-        lic = raw.get("license_preference", [])
         license_config = LicenseConfig(
             preference=raw.get("license_preference", []),
             warn=raw.get("license_warn", []),

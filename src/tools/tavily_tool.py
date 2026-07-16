@@ -11,10 +11,14 @@ without needing Playwright or a headless browser.
 
 import os
 import re
-from pathlib import Path
 
-from tools.base import DataSourceTool, DatasetResult
-from tools.base import safe_table_name, load_csv_to_table, ensure_httpfs
+from tools.base import (
+    DatasetResult,
+    DataSourceTool,
+    ensure_httpfs,
+    load_csv_to_table,
+    safe_table_name,
+)
 
 DATASET_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".parquet", ".geojson"}
 
@@ -74,7 +78,8 @@ class TavilyTool(DataSourceTool):
             search_kwargs = {
                 "query": keyword,
                 "search_depth": "advanced",
-                "max_results": max_results
+                "max_results": max_results,
+                "timeout": timeout,
             }
 
             # Apply domain filter if trusted domains are specified

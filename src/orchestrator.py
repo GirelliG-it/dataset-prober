@@ -21,14 +21,12 @@ Flow:
     AggregatedResult (all datasets, full cost breakdown)
 """
 
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
+
 from rich import box
+from rich.console import Console
+from rich.table import Table
 
 console = Console()
 
@@ -104,8 +102,8 @@ class ProfileResult:
 
         lines.append("")
         lines.append(
-            f"YOUR TASK: Focus only on your assigned scope. "
-            f"Do not re-search what was already handled above."
+            "YOUR TASK: Focus only on your assigned scope. "
+            "Do not re-search what was already handled above."
         )
 
         return "\n".join(lines)
@@ -164,7 +162,7 @@ class AggregatedResult:
                 f"${pr.cost_usd:.4f} | {pr.api_calls} calls"
             )
         lines.append(
-            f"  ─────────────────────────────────────────"
+            "  ─────────────────────────────────────────"
         )
         lines.append(
             f"  Total: {self.total_tokens:,} tokens | "
@@ -245,7 +243,7 @@ class Orchestrator:
         This replaces passing full conversation history between profiles.
         """
         lines = [f"User request: {user_prompt}", ""]
-        lines.append(f"YOUR OBJECTIVE FOR THIS RUN:")
+        lines.append("YOUR OBJECTIVE FOR THIS RUN:")
         lines.append(f"  {objective.what_to_find}")
         lines.append(f"  Geographic scope: {objective.geographic_scope}")
         lines.append(f"  Topic: {objective.topic}")

@@ -16,3 +16,5 @@ data/cache/
 .DS_Store
 output/datasets.duckdb
 output/agent_results.json
+output/
+CHANGES.log

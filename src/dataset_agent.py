@@ -22,32 +22,30 @@ Usage:
     python src/dataset_agent.py --download
 """
 
-import os
-import sys
-import json
-import time
 import argparse
-from pathlib import Path
+import json
+import sys
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-import anthropic
+import anthropic  # noqa: E402
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
-from config_loader import ConfigLoader, Profile, BudgetConfig, get_anthropic_api_key
-from prompt_interpreter import PromptInterpreter
-from orchestrator import Orchestrator, ProfileResult, AggregatedResult
-from tools import tools_for_profile, DatasetResult
-from prober import download_to_duckdb, ProbeResult
+from config_loader import BudgetConfig, ConfigLoader, Profile, get_anthropic_api_key  # noqa: E402
+from orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
+from prompt_interpreter import PromptInterpreter  # noqa: E402
+from tools import DatasetResult, tools_for_profile  # noqa: E402
 
 console = Console()
 

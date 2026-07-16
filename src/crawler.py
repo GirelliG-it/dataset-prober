@@ -1,10 +1,10 @@
+import os
+import sys
+from urllib.parse import urljoin, urlparse
+
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
 from rich.console import Console
-from rich.tree import Tree
-import sys
-import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 from prober import probe_url, save_results

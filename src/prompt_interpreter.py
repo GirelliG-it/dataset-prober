@@ -18,17 +18,16 @@ Flow:
     Agent runs with selected profiles
 """
 
-import os
 import json
-import anthropic
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+
+import anthropic
 from dotenv import load_dotenv
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 
 from config_loader import get_anthropic_api_key
 
@@ -112,13 +111,10 @@ Your job is to analyze a user's dataset request and determine which data source 
 AVAILABLE PROFILES:
 - dutch_government: Official Dutch government sources (CBS, overheid.nl, RIVM, RDW, Den Haag Open Data)
   → Use when: prompt mentions Netherlands, Dutch, NL, gemeente, provincie, CBS, overheid, or Dutch place names
-  
 - us_government: US federal government sources (data.gov, SSA, Census Bureau, BLS, CDC)
   → Use when: prompt mentions United States, US, USA, American, federal, SSA, Census, or US agencies
-  
 - eu_open_data: European Union sources (EU Open Data Portal, Eurostat)
   → Use when: prompt mentions EU, European Union, Eurostat, or cross-European data
-  
 - global: Unrestricted web search — no preset sources
   → Use when: prompt is truly international, mentions multiple non-EU/NL/US regions,
     or explicitly asks for global data
@@ -293,8 +289,6 @@ Classify this request and return JSON."""
         Returns:
             True if user confirms, False if user cancels
         """
-        # Build confirmation panel
-        lines = []
 
         # Profile table
         table = Table(box=box.SIMPLE, show_header=True, header_style="bold cyan")
@@ -332,7 +326,7 @@ Classify this request and return JSON."""
             )
 
         # Show interpreter cost
-        cost_str = f"${result.cost_usd:.4f}" if result.cost_usd >= 0.001 else f"<$0.001"
+        cost_str = f"${result.cost_usd:.4f}" if result.cost_usd >= 0.001 else "<$0.001"
         console.print(
             f"[dim]Interpretation: {result.input_tokens + result.output_tokens} tokens | "
             f"cost: {cost_str}[/dim]"
