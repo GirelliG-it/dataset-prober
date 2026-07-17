@@ -270,7 +270,71 @@ def load_csv_to_table(con, table_name: str, url: str) -> int:
         f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM read_csv_auto(?)',
         [url],
     )
+    _reject_if_html(con, table_name, url)
     return con.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+
+
+def response_is_html(url: str, timeout: float = 5.0) -> bool:
+    """
+    Best-effort pre-check: does `url` serve an HTML page rather than data?
+
+    Sends a HEAD (falling back to a streamed GET for servers that mishandle
+    HEAD) and inspects Content-Type. Returns True only when the server clearly
+    declares HTML. ANY failure — non-HTTP URL, timeout, connection error,
+    blocked host — returns False, so this never blocks a download on its own;
+    the post-load _reject_if_html guard remains the backstop.
+
+    Kept network-free for non-HTTP inputs (local paths, file://) so unit tests
+    that load fixture CSVs never touch the network.
+    """
+    if not url.lower().startswith(("http://", "https://")):
+        return False
+    try:
+        import requests
+
+        resp = requests.head(url, allow_redirects=True, timeout=timeout)
+        ctype = resp.headers.get("Content-Type", "")
+        if resp.status_code >= 400 or not ctype:
+            # Some data servers reject HEAD; confirm with a streamed GET that
+            # reads headers only (no body download).
+            resp = requests.get(url, stream=True, timeout=timeout)
+            ctype = resp.headers.get("Content-Type", "")
+            resp.close()
+        mime = ctype.split(";")[0].strip().lower()
+        return mime in ("text/html", "application/xhtml+xml")
+    except Exception:
+        return False
+
+
+_HTML_MARKERS = ("<!doctype html", "<html", "<head", "<body", "<a href", "<table")
+
+
+def _reject_if_html(con, table_name: str, url: str) -> None:
+    """
+    Raise ValueError if a freshly-loaded table looks like parsed HTML rather
+    than tabular data. Heuristic, but high-signal: HTML pages parse into a
+    single column whose NAME (the first physical line) or first row carries
+    an HTML tag. Real CSVs don't name a column `<!DOCTYPE html>`.
+    """
+    cols = con.execute(f'DESCRIBE "{table_name}"').fetchall()
+    header_blob = " ".join(str(c[0]).lower() for c in cols)
+
+    first_cell = ""
+    if cols:
+        row = con.execute(f'SELECT * FROM "{table_name}" LIMIT 1').fetchone()
+        if row and row[0] is not None:
+            first_cell = str(row[0]).lower()
+
+    looks_html = any(m in header_blob or m in first_cell for m in _HTML_MARKERS)
+    # A single column whose header is one long line is itself suspicious for a
+    # "CSV", but only flag it when combined with an HTML marker to avoid
+    # rejecting legitimate single-column data files.
+    if looks_html:
+        con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+        raise ValueError(
+            f"URL returned an HTML page, not tabular data (redirect trap?): {url}. "
+            f"This is often a landing/listing page — a direct CSV link is required."
+        )
 
 
 def ensure_httpfs(con) -> None:

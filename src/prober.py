@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dataclasses import dataclass, field
 from typing import Optional
 
-from tools.base import ensure_httpfs, load_csv_to_table, safe_table_name
+from tools.base import ensure_httpfs, load_csv_to_table, response_is_html, safe_table_name
 
 
 @dataclass
@@ -106,6 +106,10 @@ def download_to_duckdb(results: list[ProbeResult], db_path: str):
         # Identity comes from the URL (unique), not the display name (not unique).
         # Two sources both called "population" would otherwise clobber each other.
         table_name = safe_table_name(_url_identity(result.url), result.name)
+
+        if response_is_html(result.url):
+            print(f" Skipped: {result.url} serves HTML, not data (landing page?)")
+            continue
 
         print(f"  Downloading: {result.name} → table '{table_name}'...")
         try:

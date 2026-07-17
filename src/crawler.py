@@ -107,3 +107,95 @@ if __name__ == "__main__":
         from prober import save_results
 
         save_results(results, "output/probe_results.json")
+
+
+# ─── Directory descent (Apache/nginx autoindex listings) ─────────────────────
+# Resolves a directory-style URL (RIVM, INSPIRE folder portals, plain
+# autoindex pages) into its immediate children: subdirectories to descend into,
+# and concrete dataset files to download. One level at a time — the caller
+# (interactive prober, or the agent report) decides where to go next. This is
+# the seam that turns "found a folder, couldn't download" into "here are the
+# actual files."
+
+
+def _is_subdirectory(href: str, base_url: str) -> bool:
+    """
+    True if `href` points to a child directory of `base_url`.
+
+    Apache/nginx autoindex marks directories with a trailing slash. We also
+    require the resolved URL to sit *below* base_url's path, so parent links
+    and sort-header links (?C=N;O=D) don't masquerade as children.
+    """
+    full = urljoin(base_url, href)
+    if "?" in full or "?" in href:  # sort/nav links: ?C=N;O=D etc.
+        return False
+    if not full.rstrip("/").startswith(base_url.rstrip("/")):
+        return False  # not a descendant → parent/sibling
+    if full.rstrip("/") == base_url.rstrip("/"):
+        return False  # the folder itself
+    return full.endswith("/")
+
+
+def resolve_directory(url: str, timeout: int = 10) -> dict:
+    """
+    Fetch a directory-listing URL and split its links into subdirectories and
+    dataset files. Returns:
+
+        {
+          "url": <the listing url>,
+          "subdirs": [{"name": "Actueel-jaar/", "url": ".../Actueel-jaar/"}, ...],
+          "files":   [{"name": "2026.csv", "url": ".../2026.csv",
+                       "ext": ".csv", "modified": "2026-06-16"}, ...],
+        }
+
+    Does NOT recurse: one level per call, so the caller controls descent. File
+    entries carry the modified date parsed from the listing row when present,
+    so freshness can be shown per candidate without a second request.
+    Raises on fetch failure; empty result if the page has no usable links.
+    """
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    subdirs, files, seen = [], [], set()
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        full = urljoin(url, href)
+        if full in seen:
+            continue
+
+        if _is_subdirectory(href, url):
+            seen.add(full)
+            name = tag.get_text(strip=True) or full.rstrip("/").split("/")[-1] + "/"
+            subdirs.append({"name": name, "url": full})
+
+        elif is_dataset_link(full):
+            seen.add(full)
+            name = tag.get_text(strip=True) or full.split("/")[-1]
+            files.append(
+                {
+                    "name": name,
+                    "url": full,
+                    "ext": urlparse(full).path.lower().rsplit(".", 1)[-1],
+                    "modified": _parse_listing_date(tag),
+                }
+            )
+
+    return {"url": url, "subdirs": subdirs, "files": files}
+
+
+def _parse_listing_date(tag) -> str | None:
+    """
+    Best-effort: pull a YYYY-MM-DD date from the autoindex row containing this
+    link. Apache renders it as plain text after the <a>. Returns None if absent.
+    """
+    import re
+
+    # The date sits in the tail text of the row — walk siblings after the link.
+    tail = ""
+    for sib in tag.next_siblings:
+        tail += str(sib)
+        if len(tail) > 80:
+            break
+    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", tail)
+    return m.group(1) if m else None

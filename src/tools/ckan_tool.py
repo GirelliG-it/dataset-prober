@@ -15,6 +15,7 @@ from tools.base import (
     DataSourceTool,
     ensure_httpfs,
     load_csv_to_table,
+    response_is_html,
     safe_table_name,
 )
 
@@ -214,6 +215,12 @@ class CKANTool(DataSourceTool):
             import duckdb
 
             table_name = safe_table_name(dataset.id, dataset.title)
+
+            if response_is_html(dataset.download_url):
+                raise ValueError(
+                    f"URL serves an HTML page, not data: {dataset.download_url} "
+                    f"(landing/listing page - a direct file link is required)"
+                )
 
             con = duckdb.connect(db_path)
             ensure_httpfs(con)

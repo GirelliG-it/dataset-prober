@@ -565,3 +565,31 @@ class TestBudgetOverride:
         assert overridden.max_probes == 20
         assert overridden.max_tokens == 8192
         assert overridden.timeout_minutes == 30
+
+
+class TestRedirectTrapDetection:
+    """HTML pages must not be silently stored as data."""
+
+    def _html(self, tmp_path):
+        p = tmp_path / "landing.html"
+        p.write_text("<!DOCTYPE html>\n<html><body>hi</body></html>\n")
+        return str(p)
+
+    def test_html_page_is_rejected(self, tmp_path):
+        import duckdb
+
+        from tools.base import load_csv_to_table
+
+        con = duckdb.connect()
+        with pytest.raises(ValueError, match="HTML"):
+            load_csv_to_table(con, "trap", self._html(tmp_path))
+
+    def test_real_csv_still_loads(self, tmp_path):
+        import duckdb
+
+        from tools.base import load_csv_to_table
+
+        csv = tmp_path / "d.csv"
+        csv.write_text("station,no2\nDenHaag,28\nUtrecht,31\n")
+        con = duckdb.connect()
+        assert load_csv_to_table(con, "ok", str(csv)) == 2

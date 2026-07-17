@@ -161,3 +161,36 @@ class TestSaveResults:
             data = json.load(f)
         assert data[0]["status"] == "error"
         assert data[0]["row_count"] is None
+
+
+class TestResponseIsHtmlGuard:
+    """Content-type pre-check rejects HTML-serving URLs before loading."""
+
+    def test_non_http_url_skips_network(self):
+        from tools.base import response_is_html
+
+        assert response_is_html("/tmp/local.csv") is False
+
+    def test_html_content_type_detected(self):
+        import responses
+
+        from tools.base import response_is_html
+
+        @responses.activate
+        def run():
+            responses.add(responses.HEAD, "https://x.test/page", content_type="text/html")
+            return response_is_html("https://x.test/page")
+
+        assert run() is True
+
+    def test_csv_content_type_allowed(self):
+        import responses
+
+        from tools.base import response_is_html
+
+        @responses.activate
+        def run():
+            responses.add(responses.HEAD, "https://x.test/data.csv", content_type="text/csv")
+            return response_is_html("https://x.test/data.csv")
+
+        assert run() is False
