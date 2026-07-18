@@ -5,7 +5,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from crawler import resolve_directory
 from prober import download_to_duckdb, probe_all, save_results
+from tools.base import response_is_html
 
 console = Console()
 
@@ -49,6 +51,96 @@ def get_sources_from_file(filepath: str) -> list[dict]:
         f"\n[bold cyan]Dataset Prober[/bold cyan] — Loaded {len(sources)} sources from {filepath}\n"
     )
     return sources
+
+
+def expand_directories(sources: list[dict]) -> list[dict]:
+    """
+    Interactive pre-pass: any source URL that is a directory listing
+    (RIVM/INSPIRE autoindex) is walked so the user can descend into
+    subfolders and pick concrete files. Non-directory sources pass through
+    unchanged. Chosen files become normal probe sources.
+    """
+    expanded = []
+    for src in sources:
+        url = src["url"]
+        # Only directory URLs need expansion. A quick HTML check avoids
+        # fetching things that are plainly files.
+        if not response_is_html(url):
+            expanded.append(src)
+            continue
+
+        try:
+            listing = resolve_directory(url)
+        except Exception as e:
+            console.print(f"[yellow]Could not read directory {url}: {e}[/yellow]")
+            expanded.append(src)  # let it fall through and fail honestly downstream
+            continue
+
+        if not listing["subdirs"] and not listing["files"]:
+            expanded.append(src)  # not actually a listing — pass through
+            continue
+
+        picked = _walk_directory(url, listing)
+        expanded.extend(picked)
+
+    return expanded
+
+
+def _walk_directory(url: str, listing: dict | None = None) -> list[dict]:
+    """
+    Walk one directory interactively: show subdirs and files, let the user
+    descend or select files. Returns the chosen files as source dicts.
+    Loops until the user picks files or backs out.
+    """
+    while True:
+        if listing is None:
+            listing = resolve_directory(url)
+        subdirs, files = listing["subdirs"], listing["files"]
+
+        console.print(f"\n[bold cyan]Directory:[/bold cyan] {url}")
+        if subdirs:
+            console.print("[bold]Subfolders:[/bold]")
+            for i, d in enumerate(subdirs, 1):
+                console.print(f"  d{i}. {d['name']}")
+        if files:
+            console.print("[bold]Files:[/bold]")
+            for i, f in enumerate(files, 1):
+                date = f" [dim]({f['modified']})[/dim]" if f.get("modified") else ""
+                console.print(f"  f{i}. {f['name']}{date}")
+        if not subdirs and not files:
+            console.print("[yellow]Empty directory.[/yellow]")
+            return []
+
+        choice = (
+            console.input(
+                "\n[cyan]Enter d<N> to open a subfolder, f<N>/f1,f3/'fall' for files, "
+                "or 'skip':[/cyan] "
+            )
+            .strip()
+            .lower()
+        )
+
+        if choice in ("skip", ""):
+            return []
+        if choice == "fall":
+            return [{"name": f["name"], "url": f["url"]} for f in files]
+        if choice.startswith("d") and choice[1:].isdigit():
+            idx = int(choice[1:]) - 1
+            if 0 <= idx < len(subdirs):
+                url = subdirs[idx]["url"]  # descend, loop
+                listing = None  # new url -> force a fetch
+                continue
+        if choice.startswith("f"):
+            picks = [p.strip() for p in choice.split(",")]
+            chosen = []
+            for pk in picks:
+                if pk.startswith("f") and pk[1:].isdigit():
+                    i = int(pk[1:]) - 1
+                    if 0 <= i < len(files):
+                        chosen.append({"name": files[i]["name"], "url": files[i]["url"]})
+            if chosen:
+                return chosen
+        console.print("[red]Invalid choice — try again.[/red]")
 
 
 def display_results(results):
@@ -96,6 +188,11 @@ if __name__ == "__main__":
     if not sources:
         console.print("[red]No sources provided. Exiting.[/red]")
         exit(1)
+
+    sources = expand_directories(sources)
+    if not sources:
+        console.print("[yellow]No files selected. Exiting.[/yellow]")
+        exit(0)
 
     # Run prober
     console.print(f"\n[bold]Probing {len(sources)} dataset(s)...[/bold]\n")
