@@ -83,6 +83,20 @@ class TestSqlInjection:
 class TestSafeTableName:
     """Table identity must rest on the source ID, never the human title."""
 
+    def test_url_identity_does_not_duplicate_the_filename(self):
+        """
+        Identity is the hash; readability is the title suffix. Regression guard
+        for t_2026_05_no2_csv_00175841_2026_05_no2_csv, where the URL stem
+        appeared in both halves.
+        """
+        from prober import _url_identity
+        from tools.base import safe_table_name
+
+        url = "https://data.rivm.nl/data/luchtmeetnet/Actueel-jaar/2026_05_NO2.csv"
+        name = safe_table_name(_url_identity(url), "2026_05_NO2.csv")
+
+        assert name.count("2026_05_no2_csv") == 1
+
     def test_distinct_ids_never_collide_despite_identical_titles(self):
         from tools.base import safe_table_name
 

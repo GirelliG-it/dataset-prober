@@ -30,12 +30,20 @@ class ProbeResult:
 
 
 def _url_identity(url: str) -> str:
-    """Short stable identity for a URL — used to key its DuckDB table."""
+    """
+    Short stable identity for a URL -  used to key its DuckDB table.
+
+    Returns the hash ONLY. Readability is safe_table_nam's job, via the
+    title suffix; including the filename stem here duplicated it (a URL
+    ending in 2026_05_N02 produced
+    t_2026_05_N02.csv).
+
+    8 hex chars = 4.3e9 values; ~1% collisiob risk around 9000 URLs by the
+    birthday bound. Ample for local use -  widen if this ever ingests at scale.
+    """
     import hashlib
 
-    stem = url.rstrip("/").split("/")[-1].split("?")[0] or "src"
-    digest = hashlib.sha256(url.encode()).hexdigest()[:8]
-    return f"{stem}_{digest}"
+    return hashlib.sha256(url.encode()).hexdigest()[:8]
 
 
 def probe_url(name: str, url: str) -> ProbeResult:
