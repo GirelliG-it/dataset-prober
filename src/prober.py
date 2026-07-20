@@ -9,7 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dataclasses import dataclass, field
 from typing import Optional
 
-from tools.base import ensure_httpfs, load_csv_to_table, response_is_html, safe_table_name
+from tools.base import (
+    csv_scan_expr,
+    ensure_httpfs,
+    load_csv_to_table,
+    response_is_html,
+    safe_table_name,
+)
 
 
 @dataclass
@@ -41,15 +47,16 @@ def probe_url(name: str, url: str) -> ProbeResult:
         # URLs are bound as parameters, never interpolated into SQL text.
         # DuckDB treats a bound value as a literal path, so an injection
         # payload fails as a bad filename rather than executing.
-        count_result = con.execute("SELECT COUNT(*) FROM read_csv_auto(?)", [url]).fetchone()
+        expr = csv_scan_expr(con, url)
+        count_result = con.execute(f"SELECT COUNT(*) FROM {expr}", [url]).fetchone()
         row_count = count_result[0]
 
         # Get column names and types
-        describe = con.execute("DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]).fetchall()
+        describe = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 1", [url]).fetchall()
         columns = [{"name": row[0], "type": row[1]} for row in describe]
 
         # Get sample rows
-        sample_rows = con.execute("SELECT * FROM read_csv_auto(?) LIMIT 3", [url]).fetchall()
+        sample_rows = con.execute(f"SELECT * FROM {expr} LIMIT 3", [url]).fetchall()
         sample = [list(row) for row in sample_rows]
 
         return ProbeResult(

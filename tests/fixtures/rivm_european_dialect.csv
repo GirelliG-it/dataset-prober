@@ -1,0 +1,9 @@
+#N.B.: voorlopige meetdata, indicatief. Zie readme.pdf
+#export;EXP-2026-001 (2026-06-16T09:48:02+01:00)
+#periode;2026-05-01T00:00:00+01:00 - 2026-06-01T00:00:00+01:00
+#bron;https://data.rivm.nl/data/luchtmeetnet
+meetreeks_id;meetlocatie_id;bron_id;component;eenheid;begindatumtijd;waarde;opm_code
+NL10107_NO2_lucht;NL10107;LML;NO2;ug/m3;2026-05-01T00:00:00+01:00;11.29;
+NL10107_NO2_lucht;NL10107;LML;NO2;ug/m3;2026-05-01T01:00:00+01:00;9.84;
+meetreeks_id;meetlocatie_id;bron_id;component;eenheid;begindatumtijd;waarde;opm_code
+NL10108_NO2_lucht;NL10108;LML;NO2;ug/m3;2026-05-01T00:00:00+01:00;14.02;

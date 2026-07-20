@@ -255,6 +255,59 @@ def safe_table_name(dataset_id: str, title: str = "") -> str:
     return name[:63]
 
 
+EUROPEAN_CSV_ARGS = (
+    "delim=';', header=true, comment='#', strict_mode=false, null_padding=true, all_varchar=true"
+)
+
+
+def _is_degenerate(names: list[str]) -> bool:
+    """
+    True if a set of sniffed column names indicates read_csv_auto guessed the
+    dialect wrong WITHOUT raising. Two observed tells:
+
+      1. Generic 'column0', 'column1', ... — no header was found at all.
+      2. A single column whose name is a whole delimited line, e.g.
+         'datum;station;waarde' or '# RIVM Luchtmeetnet'. The file collapsed
+         into one field because the ';' delimiter was never detected.
+
+    Tell 2 is the common one for RIVM/EU files with ragged rows or a repeated
+    mid-file header; tell 1 alone misses them.
+    """
+    if not names:
+        return True
+    generic = sum(1 for n in names if n.startswith("column") and n[6:].isdigit())
+    if generic >= max(1, len(names) // 2):
+        return True
+    if len(names) == 1 and (";" in names[0] or names[0].lstrip().startswith("#")):
+        return True
+    return False
+
+
+def csv_scan_expr(con, url: str) -> str:
+    """
+    Decide ONCE how a CSV at `url` should be scanned, and return the DuckDB
+    table function as a string with a '?' placeholder the caller binds.
+
+    Returns either "read_csv_auto(?)" or the European-dialect fallback. The
+    decision is made BEFORE any table exists, so probe_url and
+    load_csv_to_table can share it — one decision, two callers, no drift.
+
+    The '?' is never substituted here; callers still bind [url] as a
+    parameter, so the SQL-injection defence is unchanged.
+
+    Asymmetric by design: clean comma-CSVs keep auto-typing; only files that
+    fail or mis-sniff fall back to all-VARCHAR, which loads losslessly and is
+    cast in SQL when analysing.
+    """
+    try:
+        cols = con.execute("DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]).fetchall()
+        if not _is_degenerate([str(c[0]) for c in cols]):
+            return "read_csv_auto(?)"
+    except Exception:
+        pass
+    return f"read_csv(?, {EUROPEAN_CSV_ARGS})"
+
+
 def load_csv_to_table(con, table_name: str, url: str) -> int:
     """
     Load a CSV at `url` into `table_name`, returning the row count.
@@ -265,9 +318,11 @@ def load_csv_to_table(con, table_name: str, url: str) -> int:
     payload fails as a bad filename instead of executing.
 
     `table_name` is ours, not the source's, and is identifier-quoted.
+    The scan dialect comes from csv_scan_expr, shared with probe_url.
     """
+    expr = csv_scan_expr(con, url)
     con.execute(
-        f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM read_csv_auto(?)',
+        f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM {expr}',
         [url],
     )
     _reject_if_html(con, table_name, url)
