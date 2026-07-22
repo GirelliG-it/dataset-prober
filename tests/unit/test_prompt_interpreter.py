@@ -34,8 +34,15 @@ def make_interpreter(available_profiles=None):
     from prompt_interpreter import PromptInterpreter
 
     if available_profiles is None:
-        available_profiles = ["dutch_government", "us_government", "eu_open_data", "global"]
-    return PromptInterpreter(available_profiles)
+        available_profiles = [
+            "dutch_government",
+            "us_government",
+            "eu_open_data",
+            "global",
+        ]
+
+    mock_client = MagicMock()
+    return PromptInterpreter(available_profiles, client=mock_client)
 
 
 VALID_DUTCH_RESPONSE = {

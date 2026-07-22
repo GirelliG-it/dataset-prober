@@ -166,13 +166,20 @@ class PromptInterpreter:
     Makes a single Claude API call per interpretation.
     """
 
-    def __init__(self, available_profiles: list[str]):
+    def __init__(
+        self,
+        available_profiles: list[str],
+        client: anthropic.Anthropic | None = None,
+    ):
         """
         Args:
             available_profiles: List of profile names available on disk
+            client: Optional Anthropic client supplied by the caller
         """
         self.available_profiles = available_profiles
-        self.client = anthropic.Anthropic(api_key=get_anthropic_api_key())
+        self.client = (
+            client if client is not None else anthropic.Anthropic(api_key=get_anthropic_api_key())
+        )
 
     def interpret(self, user_prompt: str) -> InterpretationResult:
         """
