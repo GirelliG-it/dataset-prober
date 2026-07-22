@@ -7,6 +7,7 @@ all abstract methods. All tools return DatasetResult objects — no tool-specifi
 data structures leak into the agent layer.
 """
 
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
@@ -246,13 +247,16 @@ def safe_table_name(dataset_id: str, title: str = "") -> str:
         raise ValueError("dataset_id must produce a non-empty table name")
 
     suffix = _clean(title)[:40]
-    name = f"{ident}_{suffix}".strip("_") if suffix else ident
+    readable = f"{ident}_{suffix}".strip("_") if suffix else ident
 
-    # DuckDB identifiers may not start with a digit unless quoted; we always
-    # quote, but a leading digit still confuses humans reading the catalogue.
-    if name[0].isdigit():
-        name = f"t_{name}"
-    return name[:63]
+    # Keep identifiers readable when the source ID begins with a digit.
+    if readable[0].isdigit():
+        readable = f"t_{readable}"
+
+    # Reserve 12 characters for a stable hash of the complete dataset ID.
+    digest = hashlib.sha256(dataset_id.encode("utf-8")).hexdigest()[:12]
+
+    return f"{readable[:50]}_{digest}"
 
 
 EUROPEAN_CSV_ARGS = (

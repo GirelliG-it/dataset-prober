@@ -83,6 +83,36 @@ class TestSqlInjection:
 class TestSafeTableName:
     """Table identity must rest on the source ID, never the human title."""
 
+    def test_long_distinct_ids_do_not_collide(self):
+        """Different long IDs must remain distinct table identities."""
+        from tools.base import safe_table_name
+
+        shared_prefix = "https://example.org/datasets/" + ("a" * 100)
+
+        first = safe_table_name(f"{shared_prefix}/first.csv", "Population data")
+        second = safe_table_name(f"{shared_prefix}/second.csv", "Population data")
+
+        assert first != second
+
+    def test_long_name_stays_within_duckdb_identifier_limit(self):
+        """Generated table names must not exceed 63 characters."""
+        from tools.base import safe_table_name
+
+        dataset_id = "https://example.org/" + ("a" * 200)
+        name = safe_table_name(dataset_id, "Population data")
+
+        assert len(name) <= 63
+
+    def test_long_id_produces_stable_table_name(self):
+        """The same identity must always produce the same table name."""
+        from tools.base import safe_table_name
+
+        dataset_id = "https://example.org/" + ("a" * 200)
+
+        assert safe_table_name(dataset_id, "Population data") == safe_table_name(
+            dataset_id, "Population data"
+        )
+
     def test_url_identity_does_not_duplicate_the_filename(self):
         """
         Identity is the hash; readability is the title suffix. Regression guard
