@@ -9,6 +9,11 @@ __pycache__/
 # Data cache (local only)
 data/cache/
 
+# DuckDB
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp/
+
 # Env
 .env
 
