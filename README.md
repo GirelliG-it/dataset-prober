@@ -55,6 +55,8 @@ Each tool implements a standard interface (`search`, `fetch`, `download`):
 - **CKANTool** — Generic CKAN API (data.gov, overheid.nl, EU portal); blocked sources checked before probing
 - **TavilyTool** — Web search + JS-rendered page extraction (fallback)
 
+CKAN and Tavily probe and download CSVs through the same `tools/base.py` helpers (dialect detection, HTML-landing-page guard, table naming), so a file behaves identically whichever tool found it.
+
 ---
 
 ## Components
@@ -67,14 +69,15 @@ dataset-prober/
 │   ├── orchestrator.py       — Multi-profile execution, handoff summaries, early stop
 │   ├── config_loader.py      — Profile YAML loader with scope enforcement
 │   ├── tools/
-│   │   ├── base.py           — DataSourceTool interface + DatasetResult
+│   │   ├── base.py           — DataSourceTool interface, DatasetResult, and the shared
+│   │   │                        CSV probe/download helpers every tool routes through
 │   │   ├── cbs_tool.py       — CBS Statistics Netherlands
 │   │   ├── ckan_tool.py      — Generic CKAN (data.gov, overheid.nl)
 │   │   └── tavily_tool.py    — Web search fallback
 │   ├── run.py                — Manual prober entry point
 │   ├── prober.py             — DuckDB httpfs prober + downloader
 │   ├── agent.py              — Claude/Ollama dataset analysis
-│   └── crawler.py            — Web crawler for dataset links
+│   └── crawler.py            — Web crawler + directory-listing (autoindex) descent
 ├── config/
 │   └── profiles/
 │       ├── dutch_government.yaml
@@ -86,7 +89,9 @@ dataset-prober/
 │   ├── unit/
 │   │   ├── test_pure_functions.py            — SQL-injection binding, table naming, freshness, license grade, pricing
 │   │   ├── test_orchestrator.py              — early stop, handoff, evaluate_result
-│   │   └── test_prompt_interpreter.py        — JSON parsing, fallback, objectives
+│   │   ├── test_prompt_interpreter.py        — JSON parsing, fallback, objectives
+│   │   ├── test_expand_directories.py        — autoindex pre-pass: pass-through, one fetch per level
+│   │   └── test_resolve_directory.py         — directory descent against real RIVM autoindex markup
 │   ├── integration_light/
 │   │   └── test_config_loader.py             — profile loading, scope, budget
 │   └── mocked/
@@ -187,7 +192,7 @@ ollama pull gemma3:12b
 pytest tests/ -v
 ```
 
-The full suite tests across unit, integration-light, and mocked layers. No real API calls in the test suite — all externa services are mocked.
+The full suite tests across unit, integration-light, and mocked layers. No real API calls in the test suite — all external services are mocked.
 
 ---
 

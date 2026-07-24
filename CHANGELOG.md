@@ -38,6 +38,16 @@ to the source. For the latter, read `git log`.
   found by the new scheme.** Drop and re-download them, or rename them with
   `ALTER TABLE ... RENAME TO ...`. Tables created by the CBS, CKAN, and Tavily
   adapters are unaffected — they key on catalogue IDs, not URLs.
+- Generated table names now always carry a 12-character hash of the full
+  dataset ID, not only when the ID happens to start with a digit. Two IDs
+  that share a long common prefix (same host, near-identical paths) used to
+  truncate to the same table name, and the second `CREATE OR REPLACE TABLE`
+  silently overwrote the first.
+
+  **This renames tables across every source** — manual URLs, CBS, CKAN, and
+  Tavily alike — not only the URL-keyed path affected by the entry above.
+  Existing tables won't be found under their old name; re-download or rename
+  them manually.
 
 ### Fixed
 
@@ -46,6 +56,14 @@ to the source. For the latter, read `git log`.
   collapsing into a single column named after its first physical line, which
   went undetected.
 - Directory listings are fetched once per level instead of twice.
+- CKAN and Tavily dataset probing now shares the same CSV-dialect detection
+  used by downloading. Both previously called `read_csv_auto` directly, so a
+  semicolon-delimited or comment-preamble file found via a CKAN catalogue or
+  a Tavily web search could probe with garbled columns even though the
+  identical file downloaded correctly afterwards.
+- Analysing probe results with `--local` (Ollama only) no longer requires
+  `ANTHROPIC_API_KEY` to be set. The Claude client used to be constructed at
+  import time regardless of which model you asked for.
 
 ## [0.1.0]
 
