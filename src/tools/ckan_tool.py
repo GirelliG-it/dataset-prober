@@ -13,10 +13,9 @@ import requests
 from tools.base import (
     DatasetResult,
     DataSourceTool,
+    download_csv_dataset,
     ensure_httpfs,
-    load_csv_to_table,
-    response_is_html,
-    safe_table_name,
+    probe_csv_url,
 )
 
 # Known license mappings from CKAN license_id to standardized names
@@ -167,32 +166,13 @@ class CKANTool(DataSourceTool):
             import duckdb
 
             con = duckdb.connect()
-            con.execute("INSTALL httpfs; LOAD httpfs;")
-
-            # Get column info
-            describe = con.execute(
-                "DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [result.download_url]
-            ).fetchall()
-            columns = [{"name": row[0], "type": row[1]} for row in describe]
-
-            # Get sample
-            sample_rows_data = con.execute(
-                f"SELECT * FROM read_csv_auto(?) LIMIT {int(sample_rows)}", [result.download_url]
-            ).fetchall()
-
-            # Get row count (may be slow for large files — use with care)
-            try:
-                count = con.execute(
-                    "SELECT COUNT(*) FROM read_csv_auto(?)", [result.download_url]
-                ).fetchone()[0]
-                result.row_count = count
-            except Exception:
-                pass  # Row count is optional
-
+            ensure_httpfs(con)
+            probe = probe_csv_url(con, result.download_url, sample_rows)
             con.close()
 
-            result.columns = columns
-            result.sample = [list(row) for row in sample_rows_data[:3]]
+            result.columns = probe["columns"]
+            result.sample = probe["sample"][:3]
+            result.row_count = probe["row_count"]
             result.status = "probed"
             return result
 
@@ -203,38 +183,8 @@ class CKANTool(DataSourceTool):
             return result
 
     def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
-        """
-        Download a CSV dataset into DuckDB using httpfs.
-        """
-        if not dataset.download_url:
-            dataset.status = "failed"
-            dataset.error = "No download URL available"
-            return dataset
-
-        try:
-            import duckdb
-
-            table_name = safe_table_name(dataset.id, dataset.title)
-
-            if response_is_html(dataset.download_url):
-                raise ValueError(
-                    f"URL serves an HTML page, not data: {dataset.download_url} "
-                    f"(landing/listing page - a direct file link is required)"
-                )
-
-            con = duckdb.connect(db_path)
-            ensure_httpfs(con)
-            actual_rows = load_csv_to_table(con, table_name, dataset.download_url)
-            con.close()
-
-            dataset.row_count = actual_rows
-            dataset.status = "downloaded"
-            return dataset
-
-        except Exception as e:
-            dataset.status = "failed"
-            dataset.error = str(e)
-            return dataset
+        """Download a CSV dataset into DuckDB using httpfs."""
+        return download_csv_dataset(dataset, db_path)
 
     def _package_to_result(self, pkg: dict) -> DatasetResult | None:
         """Convert a CKAN package dict to a DatasetResult."""
@@ -310,24 +260,11 @@ class CKANTool(DataSourceTool):
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""
-        return DatasetResult(
+        return DatasetResult.failed(
             id=id,
             title=title,
-            description="",
             source=self.source_type,
             source_name=self.source_name,
-            url="",
-            download_url=None,
-            format=None,
-            modified=None,
-            frequency=None,
-            license=None,
-            license_url=None,
-            row_count=None,
-            columns=None,
-            sample=None,
-            language="en",
-            tags=[],
-            status="failed",
             error=error,
+            language="en",
         )

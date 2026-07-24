@@ -1,10 +1,15 @@
 """
 src/tools/base.py
 
-Base interface and standardized data structures for all data source tools.
+Base interfaces, standardized data structures, and shared DuckDB loading
+helpers for all data-source tools.
+
 Every tool implementation must inherit from DataSourceTool and implement
-all abstract methods. All tools return DatasetResult objects — no tool-specific
-data structures leak into the agent layer.
+all abstract methods. Tools return DatasetResult objects so tool-specific
+structures do not leak into the agent layer.
+
+Shared loading helpers generate collision-resistant DuckDB table names and
+provide one consistent loading path across all tools.
 """
 
 import hashlib
@@ -99,6 +104,44 @@ class DatasetResult:
         if "NC" in lic:
             return "C"
         return "?"
+
+    @classmethod
+    def failed(
+        cls,
+        id: str,
+        title: str,
+        source: str,
+        source_name: str,
+        error: str,
+        language: Optional[str] = None,
+        url: str = "",
+    ) -> "DatasetResult":
+        """
+        Build a status='failed' result with every unknown field set to its
+        neutral default. Every tool's fetch/search error path needs exactly
+        this shape — this is the one place that spells it out.
+        """
+        return cls(
+            id=id,
+            title=title,
+            description="",
+            source=source,
+            source_name=source_name,
+            url=url,
+            download_url=None,
+            format=None,
+            modified=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=language,
+            tags=[],
+            status="failed",
+            error=error,
+        )
 
     def to_dict(self) -> dict:
         """Serialize to dictionary for JSON output."""
@@ -228,15 +271,18 @@ class DataSourceTool(ABC):
 
 def safe_table_name(dataset_id: str, title: str = "") -> str:
     """
-    Build a collision-resistant DuckDB table name.
+    Build a readable, collision-resistant DuckDB table name.
 
-    Uses the source's stable ID, NOT the human title: two datasets titled
-    "Bevolking per gemeente, 2024" and "Bevolking per gemeente (2024)" both
-    sanitise to the same identifier, and the second silently overwrites the
-    first. IDs are unique per source by construction.
+    Identity never rests on the human title, because two distinct
+    titles can sanitize to the same string ("Bevolking per gemeente, 2024"
+    and "Bevolking per gemeente (2024)" sanitize identically).
 
-    The title, when supplied, is appended as a truncated readable suffix so
-    tables stay browsable — but identity always rests on the ID.
+    Therefore uniqueness rests on the source's stable ID; the title, when
+    present, only makes the name legible to a human reading SHOW TABLES.
+
+    The resulting name is at most 63 characters (consciously chosen as a
+    limit). The digest prevents distinct long IDs that share the same
+    truncated prefix from producing the same table name.
     """
 
     def _clean(s: str) -> str:
@@ -310,6 +356,78 @@ def csv_scan_expr(con, url: str) -> str:
     except Exception:
         pass
     return f"read_csv(?, {EUROPEAN_CSV_ARGS})"
+
+
+def probe_csv_url(con, url: str, sample_rows: int) -> dict:
+    """
+    Probe a CSV at `url`: column definitions, a sample of rows, and the total
+    row count. Shared by every tool that probes a discovered URL directly
+    (CKANTool, TavilyTool) — they previously called read_csv_auto(?) on their
+    own, which skipped the European-dialect fallback that csv_scan_expr
+    provides and that load_csv_to_table / prober.probe_url already use. A
+    ';'-delimited file found via CKAN or Tavily search would probe as
+    garbage while the identical file loaded fine on download.
+
+    Row count failure is tolerated (returns None) since it's a nice-to-have,
+    not a correctness signal; describe/sample failures propagate to the
+    caller, same as before this was extracted.
+    """
+    expr = csv_scan_expr(con, url)
+    describe = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 1", [url]).fetchall()
+    columns = [{"name": row[0], "type": row[1]} for row in describe]
+
+    sample = con.execute(f"SELECT * FROM {expr} LIMIT {int(sample_rows)}", [url]).fetchall()
+
+    try:
+        row_count = con.execute(f"SELECT COUNT(*) FROM {expr}", [url]).fetchone()[0]
+    except Exception:
+        row_count = None
+
+    return {
+        "columns": columns,
+        "sample": [list(row) for row in sample],
+        "row_count": row_count,
+    }
+
+
+def download_csv_dataset(dataset: DatasetResult, db_path: str) -> DatasetResult:
+    """
+    Download dataset.download_url into DuckDB, updating `dataset` in place.
+
+    Shared by every tool whose download is "httpfs-load a CSV" — CKANTool
+    and TavilyTool previously carried byte-identical copies of this method,
+    which is exactly the drift risk this module's helpers exist to prevent
+    (see module docstring).
+    """
+    if not dataset.download_url:
+        dataset.status = "failed"
+        dataset.error = "No download URL available"
+        return dataset
+
+    try:
+        import duckdb
+
+        table_name = safe_table_name(dataset.id, dataset.title)
+
+        if response_is_html(dataset.download_url):
+            raise ValueError(
+                f"URL serves an HTML page, not data: {dataset.download_url} "
+                f"(landing/listing page - a direct file link is required)"
+            )
+
+        con = duckdb.connect(db_path)
+        ensure_httpfs(con)
+        actual_rows = load_csv_to_table(con, table_name, dataset.download_url)
+        con.close()
+
+        dataset.row_count = actual_rows
+        dataset.status = "downloaded"
+        return dataset
+
+    except Exception as e:
+        dataset.status = "failed"
+        dataset.error = str(e)
+        return dataset
 
 
 def load_csv_to_table(con, table_name: str, url: str) -> int:

@@ -15,10 +15,9 @@ import re
 from tools.base import (
     DatasetResult,
     DataSourceTool,
+    download_csv_dataset,
     ensure_httpfs,
-    load_csv_to_table,
-    response_is_html,
-    safe_table_name,
+    probe_csv_url,
 )
 
 DATASET_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".parquet", ".geojson"}
@@ -210,22 +209,8 @@ class TavilyTool(DataSourceTool):
             import duckdb
 
             con = duckdb.connect()
-            con.execute("INSTALL httpfs; LOAD httpfs;")
-
-            describe = con.execute(
-                "DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]
-            ).fetchall()
-            columns = [{"name": row[0], "type": row[1]} for row in describe]
-
-            sample_data = con.execute(
-                f"SELECT * FROM read_csv_auto(?) LIMIT {int(sample_rows)}", [url]
-            ).fetchall()
-
-            try:
-                count = con.execute("SELECT COUNT(*) FROM read_csv_auto(?)", [url]).fetchone()[0]
-            except Exception:
-                count = None
-
+            ensure_httpfs(con)
+            probe = probe_csv_url(con, url, sample_rows)
             con.close()
 
             # Extract filename as title
@@ -244,9 +229,9 @@ class TavilyTool(DataSourceTool):
                 frequency=None,
                 license=None,
                 license_url=None,
-                row_count=count,
-                columns=columns,
-                sample=[list(row) for row in sample_data[:3]],
+                row_count=probe["row_count"],
+                columns=probe["columns"],
+                sample=probe["sample"][:3],
                 language=None,
                 tags=[],
                 status="probed",
@@ -257,35 +242,7 @@ class TavilyTool(DataSourceTool):
 
     def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
         """Download a CSV dataset into DuckDB using httpfs."""
-        if not dataset.download_url:
-            dataset.status = "failed"
-            dataset.error = "No download URL available"
-            return dataset
-
-        try:
-            import duckdb
-
-            table_name = safe_table_name(dataset.id, dataset.title)
-
-            if response_is_html(dataset.download_url):
-                raise ValueError(
-                    f"URL serves an HTML page, not data: {dataset.download_url} "
-                    f"(landing/listing page - a direct file link is required)"
-                )
-
-            con = duckdb.connect(db_path)
-            ensure_httpfs(con)
-            actual_rows = load_csv_to_table(con, table_name, dataset.download_url)
-            con.close()
-
-            dataset.row_count = actual_rows
-            dataset.status = "downloaded"
-            return dataset
-
-        except Exception as e:
-            dataset.status = "failed"
-            dataset.error = str(e)
-            return dataset
+        return download_csv_dataset(dataset, db_path)
 
     def _is_dataset_url(self, url: str) -> bool:
         """Check if URL points directly to a dataset file."""
@@ -315,24 +272,11 @@ class TavilyTool(DataSourceTool):
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""
-        return DatasetResult(
+        return DatasetResult.failed(
             id=id,
             title=title,
-            description="",
             source=self.source_type,
             source_name=self.source_name,
-            url=id,
-            download_url=None,
-            format=None,
-            modified=None,
-            frequency=None,
-            license=None,
-            license_url=None,
-            row_count=None,
-            columns=None,
-            sample=None,
-            language=None,
-            tags=[],
-            status="failed",
             error=error,
+            url=id,
         )

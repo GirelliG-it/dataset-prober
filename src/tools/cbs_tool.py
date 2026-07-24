@@ -244,24 +244,11 @@ class CBSTool(DataSourceTool):
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""
-        return DatasetResult(
+        return DatasetResult.failed(
             id=id,
             title=title,
-            description="",
             source=self.source_type,
             source_name=self.source_name,
-            url="",
-            download_url=None,
-            format=None,
-            modified=None,
-            frequency=None,
-            license=None,
-            license_url=None,
-            row_count=None,
-            columns=None,
-            sample=None,
-            language="nl",
-            tags=[],
-            status="failed",
             error=error,
+            language="nl",
         )

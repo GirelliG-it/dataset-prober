@@ -10,9 +10,21 @@ from config_loader import get_anthropic_api_key
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-client = anthropic.Anthropic(api_key=get_anthropic_api_key(), max_retries=3)
-
 OLLAMA_URL = "http://localhost:11434/api/chat"
+
+_client: anthropic.Anthropic | None = None
+
+
+def _get_client() -> anthropic.Anthropic:
+    """
+    Lazily build the Anthropic client. Module-level instantiation used to
+    require ANTHROPIC_API_KEY even for --local (Ollama-only) runs, since it
+    raised on import before argparse ever got a chance to read --local.
+    """
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic(api_key=get_anthropic_api_key(), max_retries=3)
+    return _client
 
 
 def _build_prompt(results: list[dict]) -> str:
@@ -47,7 +59,7 @@ Be concise and practical. Write as if briefing a data team."""
 
 def summarize_probe_results(results: list[dict]) -> str:
     """Send probe results to Claude and get a dataset analysis summary."""
-    message = client.messages.create(
+    message = _get_client().messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=1024,
         messages=[{"role": "user", "content": _build_prompt(results)}],
