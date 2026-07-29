@@ -14,7 +14,7 @@ from typing import Optional
 import yaml
 
 # Default profiles directory — relative to project root
-DEFAULT_PROFILES_DIR = Path(__file__).parent.parent / "config" / "profiles"
+DEFAULT_PROFILES_DIR = Path(__file__).parent.parent.parent / "config" / "profiles"
 
 
 @dataclass

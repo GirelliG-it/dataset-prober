@@ -12,7 +12,7 @@ without needing Playwright or a headless browser.
 import os
 import re
 
-from tools.base import (
+from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     download_csv_dataset,

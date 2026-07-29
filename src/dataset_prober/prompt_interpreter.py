@@ -29,9 +29,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from config_loader import get_anthropic_api_key
+from dataset_prober.config_loader import get_anthropic_api_key
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 console = Console()
 
@@ -89,7 +89,7 @@ class InterpretationResult:
 
     def to_objectives(self) -> list:
         """Convert profile selections to ProfileObjective objects for the orchestrator."""
-        from orchestrator import ProfileObjective
+        from dataset_prober.orchestrator import ProfileObjective
 
         return [
             ProfileObjective(

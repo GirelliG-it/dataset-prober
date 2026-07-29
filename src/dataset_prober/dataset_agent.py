@@ -24,7 +24,6 @@ Usage:
 
 import argparse
 import json
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,16 +35,20 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 import anthropic  # noqa: E402
 
 # Local imports
-sys.path.insert(0, str(Path(__file__).parent))
-from config_loader import BudgetConfig, ConfigLoader, Profile, get_anthropic_api_key  # noqa: E402
-from orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
-from prompt_interpreter import PromptInterpreter  # noqa: E402
-from tools import DatasetResult, tools_for_profile  # noqa: E402
+from dataset_prober.config_loader import (  # noqa: E402
+    BudgetConfig,
+    ConfigLoader,
+    Profile,
+    get_anthropic_api_key,
+)
+from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
+from dataset_prober.prompt_interpreter import PromptInterpreter  # noqa: E402
+from dataset_prober.tools import DatasetResult, tools_for_profile  # noqa: E402
 
 console = Console()
 
@@ -326,7 +329,7 @@ def execute_tool(
     Updates budget and found_datasets in place.
     Returns JSON-serializable result dict.
     """
-    db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
+    db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
 
     if tool_name == "search_catalog":
         source = tool_input["source"]
@@ -503,7 +506,7 @@ def run_profile(
     Accepts optional initial_message from orchestrator (replaces full history).
     Returns ProfileResult with found/downloaded datasets and cost tracking.
     """
-    from orchestrator import ProfileResult as PR
+    from dataset_prober.orchestrator import ProfileResult as PR
 
     profile_result = PR(
         profile_name=profile.name,
@@ -681,7 +684,7 @@ def _handle_timeout(found_datasets: list, budget: Budget, tool_map: dict, allow_
         console.print("[green]Continuing...[/green]")
         budget.reset_timer()
     elif choice == "2" and found_datasets and allow_download:
-        db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
+        db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
         for dataset in found_datasets:
             tool = tool_map.get(dataset.source)
             if tool and dataset.status == "probed":
@@ -921,7 +924,7 @@ def main():
     # Save results
     all_datasets = aggregated.all_datasets
     if all_datasets:
-        output_path = Path(__file__).parent.parent / "output" / "agent_results.json"
+        output_path = Path(__file__).parent.parent.parent / "output" / "agent_results.json"
         with open(output_path, "w") as f:
             json.dump([r.to_dict() for r in all_datasets], f, indent=2, default=str)
         console.print(f"\n[green]Results saved to {output_path}[/green]")

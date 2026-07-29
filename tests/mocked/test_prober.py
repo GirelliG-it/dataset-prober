@@ -7,12 +7,6 @@ runs its CSV parser against our fake responses, giving realistic behavior.
 
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-
-
 SAMPLE_CSV = b"""id,name,value,date
 1,Alice,42.0,2024-01-01
 2,Bob,37.5,2024-01-02
@@ -61,7 +55,7 @@ class TestProbeAll:
     """Tests for probe_all() batch behavior."""
 
     def test_empty_sources_returns_empty(self):
-        from prober import probe_all
+        from dataset_prober.prober import probe_all
 
         results = probe_all([])
         assert results == []
@@ -70,9 +64,9 @@ class TestProbeAll:
         """probe_all must return exactly one result per input source."""
         from unittest.mock import patch
 
-        from prober import probe_all
+        from dataset_prober.prober import probe_all
 
-        with patch("prober.probe_url", return_value=sample_probe_result_ok):
+        with patch("dataset_prober.prober.probe_url", return_value=sample_probe_result_ok):
             results = probe_all(
                 [
                     {"name": "a", "url": "https://a.com"},
@@ -85,9 +79,9 @@ class TestProbeAll:
         """One failure must not prevent probing the remaining sources."""
         from unittest.mock import patch
 
-        from prober import probe_all
+        from dataset_prober.prober import probe_all
 
-        with patch("prober.probe_url", return_value=sample_probe_result_error):
+        with patch("dataset_prober.prober.probe_url", return_value=sample_probe_result_error):
             results = probe_all(
                 [
                     {"name": "a", "url": "https://a.com"},
@@ -102,7 +96,7 @@ class TestSaveResults:
     """Tests for save_results() JSON output."""
 
     def test_saves_to_file(self, tmp_path, sample_probe_result_ok):
-        from prober import save_results
+        from dataset_prober.prober import save_results
 
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
@@ -111,7 +105,7 @@ class TestSaveResults:
     def test_output_is_valid_json(self, tmp_path, sample_probe_result_ok):
         import json
 
-        from prober import save_results
+        from dataset_prober.prober import save_results
 
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
@@ -123,7 +117,7 @@ class TestSaveResults:
     def test_output_contains_expected_fields(self, tmp_path, sample_probe_result_ok):
         import json
 
-        from prober import save_results
+        from dataset_prober.prober import save_results
 
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok], str(output))
@@ -141,7 +135,7 @@ class TestSaveResults:
     ):
         import json
 
-        from prober import save_results
+        from dataset_prober.prober import save_results
 
         output = tmp_path / "results.json"
         save_results([sample_probe_result_ok, sample_probe_result_error], str(output))
@@ -153,7 +147,7 @@ class TestSaveResults:
         """None values must serialize without crashing."""
         import json
 
-        from prober import save_results
+        from dataset_prober.prober import save_results
 
         output = tmp_path / "results.json"
         save_results([sample_probe_result_error], str(output))
@@ -167,14 +161,14 @@ class TestResponseIsHtmlGuard:
     """Content-type pre-check rejects HTML-serving URLs before loading."""
 
     def test_non_http_url_skips_network(self):
-        from tools.base import response_is_html
+        from dataset_prober.tools.base import response_is_html
 
         assert response_is_html("/tmp/local.csv") is False
 
     def test_html_content_type_detected(self):
         import responses
 
-        from tools.base import response_is_html
+        from dataset_prober.tools.base import response_is_html
 
         @responses.activate
         def run():
@@ -186,7 +180,7 @@ class TestResponseIsHtmlGuard:
     def test_csv_content_type_allowed(self):
         import responses
 
-        from tools.base import response_is_html
+        from dataset_prober.tools.base import response_is_html
 
         @responses.activate
         def run():

@@ -7,15 +7,12 @@ the REAL RIVM Luchtmeetnet markup, so these prove behavior against the
 genuine page shape, not an idealized one.
 """
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-
-import crawler  # noqa: E402
+from dataset_prober import crawler  # noqa: E402
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 

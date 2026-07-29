@@ -1,13 +1,10 @@
-import os
-import sys
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from rich.console import Console
 
-sys.path.insert(0, os.path.dirname(__file__))
-from prober import probe_url, save_results
+from dataset_prober.prober import probe_url, save_results
 
 console = Console()
 
@@ -100,11 +97,11 @@ if __name__ == "__main__":
         console.print(f"\n[bold]Found {len(datasets)} dataset(s). Probing...[/bold]\n")
         results = [probe_url(d["name"], d["url"]) for d in datasets]
 
-        from run import display_results
+        from dataset_prober.run import display_results
 
         display_results(results)
 
-        from prober import save_results
+        from dataset_prober.prober import save_results
 
         save_results(results, "output/probe_results.json")
 

@@ -14,11 +14,7 @@ Key behaviors under test:
 """
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 
 def make_mock_response(json_payload: dict):
@@ -31,7 +27,7 @@ def make_mock_response(json_payload: dict):
 
 def make_interpreter(available_profiles=None):
     """Create a PromptInterpreter with mock Anthropic client."""
-    from prompt_interpreter import PromptInterpreter
+    from dataset_prober.prompt_interpreter import PromptInterpreter
 
     if available_profiles is None:
         available_profiles = [

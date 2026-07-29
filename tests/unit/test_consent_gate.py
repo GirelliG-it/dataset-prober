@@ -17,13 +17,9 @@ Design note on why the fake tool is "capable" of downloading:
     proves the setup can in fact reach a download.
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 
 class FakeDownloadResult:
@@ -79,7 +75,7 @@ def call_execute_tool(tool, tool_input, *, allow_download):
     is sufficient; if that changes, these tests should be updated rather than
     silently accommodating it.
     """
-    from dataset_agent import execute_tool
+    from dataset_prober.dataset_agent import execute_tool
 
     return execute_tool(
         tool_name="download_dataset",
@@ -126,7 +122,7 @@ class TestDownloadConsentGate:
         the permission error — not 'tool not available'. This pins the gate's
         POSITION: first statement in the branch, before any other check.
         """
-        from dataset_agent import execute_tool
+        from dataset_prober.dataset_agent import execute_tool
 
         result = execute_tool(
             tool_name="download_dataset",

@@ -8,7 +8,6 @@ Shared fixtures for all test layers.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,7 +28,7 @@ def sample_columns():
 @pytest.fixture
 def sample_probe_result_ok(sample_columns):
     """A successful ProbeResult."""
-    from prober import ProbeResult
+    from dataset_prober.prober import ProbeResult
 
     return ProbeResult(
         url="https://example.com/data.csv",
@@ -45,7 +44,7 @@ def sample_probe_result_ok(sample_columns):
 @pytest.fixture
 def sample_probe_result_error():
     """A failed ProbeResult."""
-    from prober import ProbeResult
+    from dataset_prober.prober import ProbeResult
 
     return ProbeResult(
         url="https://example.com/blocked.csv",
@@ -61,7 +60,7 @@ def sample_probe_result_error():
 @pytest.fixture
 def sample_probe_result_redirect():
     """A redirect-trap ProbeResult."""
-    from prober import ProbeResult
+    from dataset_prober.prober import ProbeResult
 
     return ProbeResult(
         url="https://example.com/login.csv",
@@ -77,10 +76,8 @@ def sample_probe_result_redirect():
 @pytest.fixture
 def sample_dataset_result_ok(sample_columns):
     """A successfully probed DatasetResult."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from tools.base import DatasetResult
+    from dataset_prober.tools.base import DatasetResult
 
     return DatasetResult(
         id="37789ksz",
@@ -114,10 +111,8 @@ def sample_dataset_result_downloaded(sample_dataset_result_ok):
 @pytest.fixture
 def sample_dataset_result_failed():
     """A failed DatasetResult."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from tools.base import DatasetResult
+    from dataset_prober.tools.base import DatasetResult
 
     return DatasetResult(
         id="ssa-blocked",
@@ -233,10 +228,8 @@ def profiles_dir(tmp_path):
 @pytest.fixture
 def test_profile(profiles_dir):
     """Load the minimal test profile."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from config_loader import ConfigLoader
+    from dataset_prober.config_loader import ConfigLoader
 
     return ConfigLoader(profiles_dir).load("test_profile")
 
@@ -244,10 +237,8 @@ def test_profile(profiles_dir):
 @pytest.fixture
 def global_profile(profiles_dir):
     """Load the global test profile."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from config_loader import ConfigLoader
+    from dataset_prober.config_loader import ConfigLoader
 
     return ConfigLoader(profiles_dir).load("global")
 
@@ -258,10 +249,8 @@ def global_profile(profiles_dir):
 @pytest.fixture
 def dutch_objective():
     """A ProfileObjective for Dutch government data."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from orchestrator import ProfileObjective
+    from dataset_prober.orchestrator import ProfileObjective
 
     return ProfileObjective(
         profile_name="dutch_government",
@@ -278,10 +267,8 @@ def dutch_objective():
 @pytest.fixture
 def us_objective():
     """A ProfileObjective for US government data."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from orchestrator import ProfileObjective
+    from dataset_prober.orchestrator import ProfileObjective
 
     return ProfileObjective(
         profile_name="us_government",
@@ -298,10 +285,8 @@ def us_objective():
 @pytest.fixture
 def profile_result_met(dutch_objective, sample_dataset_result_downloaded):
     """A ProfileResult where the objective was fully met."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from orchestrator import ProfileResult
+    from dataset_prober.orchestrator import ProfileResult
 
     pr = ProfileResult(
         profile_name="dutch_government", display_name="Dutch Government", objective=dutch_objective
@@ -318,10 +303,8 @@ def profile_result_met(dutch_objective, sample_dataset_result_downloaded):
 @pytest.fixture
 def profile_result_partial(us_objective, sample_dataset_result_failed):
     """A ProfileResult where dataset was found but not downloaded."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from orchestrator import ProfileResult
+    from dataset_prober.orchestrator import ProfileResult
 
     pr = ProfileResult(
         profile_name="us_government", display_name="US Government", objective=us_objective
@@ -340,10 +323,8 @@ def profile_result_partial(us_objective, sample_dataset_result_failed):
 @pytest.fixture
 def profile_result_empty(us_objective):
     """A ProfileResult where nothing was found."""
-    import sys
 
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from orchestrator import ProfileResult
+    from dataset_prober.orchestrator import ProfileResult
 
     pr = ProfileResult(
         profile_name="us_government", display_name="US Government", objective=us_objective
