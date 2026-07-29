@@ -5,9 +5,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from crawler import resolve_directory
-from prober import download_to_duckdb, probe_all, save_results
-from tools.base import response_is_html
+from dataset_prober.crawler import resolve_directory
+from dataset_prober.prober import download_to_duckdb, probe_all, save_results
+from dataset_prober.tools.base import response_is_html
 
 console = Console()
 
@@ -222,12 +222,12 @@ if __name__ == "__main__":
                 to_download = [ok_results[i] for i in indices if i < len(ok_results)]
 
             if to_download:
-                db_path = str(Path(__file__).parent.parent / "output" / "datasets.duckdb")
+                db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
                 console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
                 download_to_duckdb(to_download, db_path)
 
     # Save results
-    output_path = Path(__file__).parent.parent / "output" / "probe_results.json"
+    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
     save_results(results, str(output_path))
 
     # Optionally run analysis
@@ -238,16 +238,16 @@ if __name__ == "__main__":
             saved = json.load(f)
         if args.local:
             console.print(f"\n[bold]Running local analysis ({args.model})...[/bold]\n")
-            from agent import summarize_probe_results_local
+            from dataset_prober.agent import summarize_probe_results_local
 
             summary = summarize_probe_results_local(saved, model=args.model)
         else:
             console.print("\n[bold]Running Claude analysis...[/bold]\n")
-            from agent import summarize_probe_results
+            from dataset_prober.agent import summarize_probe_results
 
             summary = summarize_probe_results(saved)
         console.print(summary)
-        summary_path = Path(__file__).parent.parent / "output" / "analysis_summary.txt"
+        summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
         with open(summary_path, "w") as f:
             f.write(summary)
         console.print(f"\n[green]Summary saved to {summary_path}[/green]")

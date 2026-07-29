@@ -5,13 +5,7 @@ Tests for pure functions with no external dependencies.
 These run in milliseconds and never touch the network or filesystem.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-
 
 # ─── SQL injection tests ─────────────────────────────────────────────────────
 
@@ -30,7 +24,7 @@ class TestSqlInjection:
     def test_injection_payload_cannot_drop_a_table(self, tmp_path):
         import duckdb
 
-        from tools.base import load_csv_to_table
+        from dataset_prober.tools.base import load_csv_to_table
 
         con = duckdb.connect(str(tmp_path / "victim.duckdb"))
         con.execute("CREATE TABLE canary AS SELECT 1 AS x")
@@ -48,7 +42,7 @@ class TestSqlInjection:
     def test_legitimate_url_still_loads(self, tmp_path):
         import duckdb
 
-        from tools.base import load_csv_to_table
+        from dataset_prober.tools.base import load_csv_to_table
 
         csv = tmp_path / "data.csv"
         csv.write_text("a,b\n1,x\n2,y\n")
@@ -66,7 +60,7 @@ class TestSqlInjection:
         """
         import duckdb
 
-        from tools.base import load_csv_to_table
+        from dataset_prober.tools.base import load_csv_to_table
 
         csv = tmp_path / "it's.csv"
         csv.write_text("a\n1\n")
@@ -85,7 +79,7 @@ class TestSafeTableName:
 
     def test_long_distinct_ids_do_not_collide(self):
         """Different long IDs must remain distinct table identities."""
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         shared_prefix = "https://example.org/datasets/" + ("a" * 100)
 
@@ -96,7 +90,7 @@ class TestSafeTableName:
 
     def test_long_name_stays_within_duckdb_identifier_limit(self):
         """Generated table names must not exceed 63 characters."""
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         dataset_id = "https://example.org/" + ("a" * 200)
         name = safe_table_name(dataset_id, "Population data")
@@ -105,7 +99,7 @@ class TestSafeTableName:
 
     def test_long_id_produces_stable_table_name(self):
         """The same identity must always produce the same table name."""
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         dataset_id = "https://example.org/" + ("a" * 200)
 
@@ -119,8 +113,8 @@ class TestSafeTableName:
         for t_2026_05_no2_csv_00175841_2026_05_no2_csv, where the URL stem
         appeared in both halves.
         """
-        from prober import _url_identity
-        from tools.base import safe_table_name
+        from dataset_prober.prober import _url_identity
+        from dataset_prober.tools.base import safe_table_name
 
         url = "https://data.rivm.nl/data/luchtmeetnet/Actueel-jaar/2026_05_NO2.csv"
         name = safe_table_name(_url_identity(url), "2026_05_NO2.csv")
@@ -128,30 +122,30 @@ class TestSafeTableName:
         assert name.count("2026_05_no2_csv") == 1
 
     def test_distinct_ids_never_collide_despite_identical_titles(self):
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         a = safe_table_name("83765NED", "Bevolking per gemeente, 2024")
         b = safe_table_name("85496NED", "Bevolking per gemeente (2024)")
         assert a != b, "two different datasets mapped to one table"
 
     def test_same_id_is_stable(self):
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         assert safe_table_name("83765NED", "x") == safe_table_name("83765NED", "x")
 
     def test_empty_id_raises_rather_than_producing_junk(self):
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         with pytest.raises(ValueError):
             safe_table_name("!!!", "title")
 
     def test_leading_digit_is_prefixed(self):
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         assert not safe_table_name("2024data", "x")[0].isdigit()
 
     def test_respects_duckdb_identifier_length(self):
-        from tools.base import safe_table_name
+        from dataset_prober.tools.base import safe_table_name
 
         assert len(safe_table_name("x" * 200, "y" * 200)) <= 63
 
@@ -165,7 +159,7 @@ class TestDatasetResultFreshness:
     def test_freshness_days_recent(self):
         from datetime import datetime, timedelta
 
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         d = DatasetResult(
@@ -190,7 +184,7 @@ class TestDatasetResultFreshness:
         assert d.freshness_days() == pytest.approx(10, abs=1)
 
     def test_freshness_days_old(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -214,7 +208,7 @@ class TestDatasetResultFreshness:
         assert d.freshness_days() > 365 * 4
 
     def test_freshness_days_unknown(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -238,7 +232,7 @@ class TestDatasetResultFreshness:
         assert d.freshness_days() is None
 
     def test_freshness_days_unparseable(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -264,7 +258,7 @@ class TestDatasetResultFreshness:
     def test_passes_freshness_recent(self):
         from datetime import datetime, timedelta
 
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         recent = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
         d = DatasetResult(
@@ -289,7 +283,7 @@ class TestDatasetResultFreshness:
         assert d.passes_freshness(365) is True
 
     def test_passes_freshness_too_old(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -313,7 +307,7 @@ class TestDatasetResultFreshness:
         assert d.passes_freshness(365) is False
 
     def test_passes_freshness_unknown_returns_none(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -340,7 +334,7 @@ class TestDatasetResultFreshness:
         """CBS returns ISO datetime with time component — must parse correctly."""
         from datetime import datetime, timedelta
 
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         # Relative, not hardcoded: a literal date silently rots into a failure
         # once it drifts past the threshold being asserted.
@@ -371,7 +365,7 @@ class TestDatasetResultLicenseGrade:
     """Tests for DatasetResult.license_grade()."""
 
     def test_cc0_is_grade_a(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -395,7 +389,7 @@ class TestDatasetResultLicenseGrade:
         assert d.license_grade() == "A"
 
     def test_public_domain_is_grade_a(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -419,7 +413,7 @@ class TestDatasetResultLicenseGrade:
         assert d.license_grade() == "A"
 
     def test_cc_by_is_grade_b(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -443,7 +437,7 @@ class TestDatasetResultLicenseGrade:
         assert d.license_grade() == "B"
 
     def test_cc_by_sa_is_grade_b_minus(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -467,7 +461,7 @@ class TestDatasetResultLicenseGrade:
         assert d.license_grade() == "B-"
 
     def test_cc_by_nc_is_grade_c(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -491,7 +485,7 @@ class TestDatasetResultLicenseGrade:
         assert d.license_grade() == "C"
 
     def test_unknown_license_is_question_mark(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -515,7 +509,7 @@ class TestDatasetResultLicenseGrade:
         assert d.license_grade() == "?"
 
     def test_other_license_is_question_mark(self):
-        from tools.base import DatasetResult
+        from dataset_prober.tools.base import DatasetResult
 
         d = DatasetResult(
             id="x",
@@ -622,7 +616,7 @@ class TestRedirectTrapDetection:
     def test_html_page_is_rejected(self, tmp_path):
         import duckdb
 
-        from tools.base import load_csv_to_table
+        from dataset_prober.tools.base import load_csv_to_table
 
         con = duckdb.connect()
         with pytest.raises(ValueError, match="HTML"):
@@ -631,7 +625,7 @@ class TestRedirectTrapDetection:
     def test_real_csv_still_loads(self, tmp_path):
         import duckdb
 
-        from tools.base import load_csv_to_table
+        from dataset_prober.tools.base import load_csv_to_table
 
         csv = tmp_path / "d.csv"
         csv.write_text("station,no2\nDenHaag,28\nUtrecht,31\n")
@@ -670,30 +664,30 @@ class TestCsvScanExprSharedByProbeAndLoad:
     # ── _is_degenerate: the two tells ────────────────────────────────────
 
     def test_healthy_header_is_not_degenerate(self):
-        from tools.base import _is_degenerate
+        from dataset_prober.tools.base import _is_degenerate
 
         assert _is_degenerate(["datum", "station", "waarde"]) is False
 
     def test_generic_column_names_are_degenerate(self):
         """DuckDB names columns column0..N when it finds no header at all."""
-        from tools.base import _is_degenerate
+        from dataset_prober.tools.base import _is_degenerate
 
         assert _is_degenerate(["column0", "column1", "column2"]) is True
 
     def test_single_column_holding_a_delimited_line_is_degenerate(self):
         """The common RIVM failure: the whole line lands in one field."""
-        from tools.base import _is_degenerate
+        from dataset_prober.tools.base import _is_degenerate
 
         assert _is_degenerate(["datum;station;waarde"]) is True
 
     def test_single_column_named_after_a_comment_line_is_degenerate(self):
         """A '#' preamble line mistaken for the header."""
-        from tools.base import _is_degenerate
+        from dataset_prober.tools.base import _is_degenerate
 
         assert _is_degenerate(["# RIVM Luchtmeetnet"]) is True
 
     def test_no_columns_is_degenerate(self):
-        from tools.base import _is_degenerate
+        from dataset_prober.tools.base import _is_degenerate
 
         assert _is_degenerate([]) is True
 
@@ -703,7 +697,7 @@ class TestCsvScanExprSharedByProbeAndLoad:
         """Asymmetry by design: comma files keep their inferred types."""
         import duckdb
 
-        from tools.base import csv_scan_expr
+        from dataset_prober.tools.base import csv_scan_expr
 
         path = self._write(tmp_path, "clean.csv", self.CLEAN)
         con = duckdb.connect()
@@ -712,7 +706,7 @@ class TestCsvScanExprSharedByProbeAndLoad:
     def test_european_csv_falls_back(self, tmp_path):
         import duckdb
 
-        from tools.base import EUROPEAN_CSV_ARGS, csv_scan_expr
+        from dataset_prober.tools.base import EUROPEAN_CSV_ARGS, csv_scan_expr
 
         path = self._write(tmp_path, "euro.csv", self.EUROPEAN)
         con = duckdb.connect()
@@ -727,7 +721,7 @@ class TestCsvScanExprSharedByProbeAndLoad:
         """
         import duckdb
 
-        from tools.base import csv_scan_expr
+        from dataset_prober.tools.base import csv_scan_expr
 
         path = self._write(tmp_path, "euro.csv", self.EUROPEAN)
         con = duckdb.connect()
@@ -747,8 +741,8 @@ class TestCsvScanExprSharedByProbeAndLoad:
 
         import duckdb
 
-        import prober
-        from tools.base import load_csv_to_table
+        from dataset_prober import prober
+        from dataset_prober.tools.base import load_csv_to_table
 
         path = self._write(tmp_path, "euro.csv", self.EUROPEAN)
 
@@ -766,8 +760,8 @@ class TestCsvScanExprSharedByProbeAndLoad:
 
         import duckdb
 
-        import prober
-        from tools.base import load_csv_to_table
+        from dataset_prober import prober
+        from dataset_prober.tools.base import load_csv_to_table
 
         path = self._write(tmp_path, "clean.csv", self.CLEAN)
 

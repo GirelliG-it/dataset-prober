@@ -5,19 +5,14 @@ Tests for ConfigLoader using real YAML parsing but temporary directories.
 No network calls — tests only the file loading and validation logic.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 
 class TestConfigLoaderListProfiles:
     """Tests for ConfigLoader.list_profiles()."""
 
     def test_lists_available_profiles(self, profiles_dir):
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles_dir)
         profiles = loader.list_profiles()
@@ -25,7 +20,7 @@ class TestConfigLoaderListProfiles:
         assert "global" in profiles
 
     def test_empty_directory_returns_empty_list(self, tmp_path):
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         empty = tmp_path / "profiles"
         empty.mkdir()
@@ -33,7 +28,7 @@ class TestConfigLoaderListProfiles:
         assert loader.list_profiles() == []
 
     def test_nonexistent_directory_returns_empty_list(self, tmp_path):
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(tmp_path / "nonexistent")
         assert loader.list_profiles() == []
@@ -69,7 +64,7 @@ license_preference: [CC0]
 license_warn: []
 license_reject: []
 """)
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles)
         profiles_list = loader.list_profiles()
@@ -81,21 +76,21 @@ class TestConfigLoaderLoad:
     """Tests for ConfigLoader.load()."""
 
     def test_loads_test_profile(self, profiles_dir):
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles_dir)
         profile = loader.load("test_profile")
         assert profile.name == "Test Profile"
 
     def test_missing_profile_raises_file_not_found(self, profiles_dir):
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles_dir)
         with pytest.raises(FileNotFoundError):
             loader.load("nonexistent_profile")
 
     def test_error_message_lists_available_profiles(self, profiles_dir):
-        from config_loader import ConfigLoader
+        from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles_dir)
         with pytest.raises(FileNotFoundError, match="test_profile"):

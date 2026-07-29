@@ -11,11 +11,6 @@ Key behaviors under test:
 4. build_initial_message() — handoff injected correctly for subsequent profiles
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-
 
 class TestAllObjectivesMet:
     """
@@ -27,7 +22,7 @@ class TestAllObjectivesMet:
     """
 
     def test_single_met_returns_true(self, dutch_objective):
-        from orchestrator import Orchestrator, ProfileResult
+        from dataset_prober.orchestrator import Orchestrator, ProfileResult
 
         o = Orchestrator([dutch_objective])
         pr = ProfileResult("dutch_government", "Dutch Government", dutch_objective)
@@ -35,7 +30,7 @@ class TestAllObjectivesMet:
         assert o.all_objectives_met([pr]) is True
 
     def test_single_not_met_returns_false(self, dutch_objective):
-        from orchestrator import Orchestrator, ProfileResult
+        from dataset_prober.orchestrator import Orchestrator, ProfileResult
 
         o = Orchestrator([dutch_objective])
         pr = ProfileResult("dutch_government", "Dutch Government", dutch_objective)
@@ -43,7 +38,7 @@ class TestAllObjectivesMet:
         assert o.all_objectives_met([pr]) is False
 
     def test_both_met_returns_true(self, dutch_objective, us_objective, profile_result_met):
-        from orchestrator import Orchestrator, ProfileResult
+        from dataset_prober.orchestrator import Orchestrator, ProfileResult
 
         o = Orchestrator([dutch_objective, us_objective])
         us_met = ProfileResult("us_government", "US Government", us_objective)
@@ -57,25 +52,25 @@ class TestAllObjectivesMet:
         Critical: Profile 1 met objective but Profile 2 hasn't run.
         This is the early stop bug we identified — must return False.
         """
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective, us_objective])
         assert o.all_objectives_met([profile_result_met]) is False
 
     def test_partial_success_is_not_met(self, dutch_objective, profile_result_partial):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         assert o.all_objectives_met([profile_result_partial]) is False
 
     def test_empty_results_returns_false(self, dutch_objective):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         assert o.all_objectives_met([]) is False
 
     def test_failed_result_is_not_met(self, dutch_objective, profile_result_empty):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         assert o.all_objectives_met([profile_result_empty]) is False
@@ -83,7 +78,7 @@ class TestAllObjectivesMet:
     def test_mixed_met_and_partial_returns_false(
         self, dutch_objective, us_objective, profile_result_met, profile_result_partial
     ):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective, us_objective])
         assert o.all_objectives_met([profile_result_met, profile_result_partial]) is False
@@ -152,7 +147,7 @@ class TestEvaluateResult:
     """
 
     def test_downloaded_sets_objective_met(self, dutch_objective, profile_result_met):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         profile_result_met.objective_met = False  # reset
@@ -160,7 +155,7 @@ class TestEvaluateResult:
         assert result.objective_met is True
 
     def test_found_not_downloaded_sets_partial(self, us_objective, profile_result_partial):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([us_objective])
         profile_result_partial.objective_met = False  # reset
@@ -170,7 +165,7 @@ class TestEvaluateResult:
         assert result.objective_met is False
 
     def test_nothing_found_sets_failed(self, us_objective, profile_result_empty):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([us_objective])
         result = o.evaluate_result(profile_result_empty, us_objective)
@@ -179,7 +174,7 @@ class TestEvaluateResult:
         assert result.failure_reason is not None
 
     def test_partial_has_failure_reason(self, us_objective, profile_result_partial):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([us_objective])
         profile_result_partial.partial_success = False  # reset
@@ -197,7 +192,7 @@ class TestBuildInitialMessage:
     """
 
     def test_first_profile_no_handoff(self, dutch_objective):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         msg = o.build_initial_message(
@@ -209,7 +204,7 @@ class TestBuildInitialMessage:
         assert "Find Dutch social security data" in msg
 
     def test_second_profile_gets_handoff(self, dutch_objective, us_objective, profile_result_met):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective, us_objective])
         msg = o.build_initial_message(
@@ -220,7 +215,7 @@ class TestBuildInitialMessage:
         assert "HANDOFF FROM PREVIOUS PROFILE" in msg
 
     def test_message_contains_objective(self, dutch_objective):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         msg = o.build_initial_message(
@@ -232,7 +227,7 @@ class TestBuildInitialMessage:
         assert dutch_objective.geographic_scope in msg
 
     def test_message_contains_freshness_rule(self, dutch_objective):
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective])
         msg = o.build_initial_message(
@@ -249,7 +244,7 @@ class TestBuildInitialMessage:
         The handoff summary must be compact.
         The full conversation history of Profile 1 must NOT appear.
         """
-        from orchestrator import Orchestrator
+        from dataset_prober.orchestrator import Orchestrator
 
         o = Orchestrator([dutch_objective, us_objective])
         msg = o.build_initial_message(

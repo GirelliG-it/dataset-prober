@@ -15,13 +15,9 @@ Nothing touches the network: `response_is_html`, `resolve_directory` and
 are looked up, since run.py imports them by name).
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-
-import run  # noqa: E402
+from dataset_prober import run
 
 TOP_URL = "https://data.rivm.nl/data/luchtmeetnet/"
 SUB_URL = "https://data.rivm.nl/data/luchtmeetnet/Actueel-jaar/"

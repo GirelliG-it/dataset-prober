@@ -13,7 +13,7 @@ import threading
 
 import requests
 
-from tools.base import (
+from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     safe_table_name,

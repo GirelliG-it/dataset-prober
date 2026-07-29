@@ -13,10 +13,10 @@ Adding a new data source:
 That's it. The agent, config loader, and prompt interpreter need no changes.
 """
 
-from tools.base import DatasetResult, DataSourceTool
-from tools.cbs_tool import CBSTool
-from tools.ckan_tool import CKANTool
-from tools.tavily_tool import TavilyTool
+from dataset_prober.tools.base import DatasetResult, DataSourceTool
+from dataset_prober.tools.cbs_tool import CBSTool
+from dataset_prober.tools.ckan_tool import CKANTool
+from dataset_prober.tools.tavily_tool import TavilyTool
 
 # Registry mapping catalog type → tool class
 # Add new tool types here as new sources are implemented

@@ -29,11 +29,11 @@ dev = [
     "ruff==0.15.21",
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

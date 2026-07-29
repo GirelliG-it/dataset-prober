@@ -10,7 +10,7 @@ CKAN API reference: https://docs.ckan.org/en/latest/api/
 
 import requests
 
-from tools.base import (
+from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     download_csv_dataset,

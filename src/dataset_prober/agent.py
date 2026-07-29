@@ -5,10 +5,10 @@ import anthropic
 import requests
 from dotenv import load_dotenv
 
-from config_loader import get_anthropic_api_key
+from dataset_prober.config_loader import get_anthropic_api_key
 
 # Load API key from .env
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    output_path = Path(__file__).parent.parent / "output" / "probe_results.json"
+    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
 
     if not output_path.exists():
         print("No probe results found. Run run.py first.")
@@ -116,7 +116,7 @@ if __name__ == "__main__":
 
     print(summary)
 
-    summary_path = Path(__file__).parent.parent / "output" / "analysis_summary.txt"
+    summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
     with open(summary_path, "w") as f:
         f.write(summary)
     print(f"\nSummary saved to {summary_path}")
