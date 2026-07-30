@@ -19,6 +19,7 @@ dependencies = [
     "requests>=2.32,<3",
     "rich>=14,<15",
     "tavily-python>=0.7,<1",
+    "pandas>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +42,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+pythonpath = ["src"]
 markers = [
     "integration: marks tests that require real API calls",
     "slow: marks tests that take more than 5 seconds",
