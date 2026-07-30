@@ -13,8 +13,9 @@ from typing import Optional
 
 import yaml
 
-# Default profiles directory — relative to project root
-DEFAULT_PROFILES_DIR = Path(__file__).parent.parent.parent / "config" / "profiles"
+# Profiles are package data - resolved relative to this module, not the
+# project root, so the path holds inside an installed wheel.
+DEFAULT_PROFILES_DIR = Path(__file__).parent / "profiles"
 
 
 @dataclass

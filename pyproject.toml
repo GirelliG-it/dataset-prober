@@ -28,6 +28,7 @@ dev = [
     "pytest-mock>=3",
     "responses>=0.25",
     "ruff==0.15.21",
+    "build",
 ]
 
 [tool.setuptools]
@@ -35,6 +36,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dataset_prober = ["profiles/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

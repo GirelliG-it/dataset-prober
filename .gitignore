@@ -24,3 +24,6 @@ output/agent_results.json
 output/
 CHANGES.log
 agent_results.json
+
+dist/
+build/
