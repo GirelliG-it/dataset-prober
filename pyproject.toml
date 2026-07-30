@@ -31,6 +31,11 @@ dev = [
     "build",
 ]
 
+[project.scripts]
+dataset-prober = "dataset_prober.dataset_agent:main"
+dataset-prober-probe = "dataset_prober.run:main"
+dataset-prober-crawl = "dataset_prober.crawler:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
