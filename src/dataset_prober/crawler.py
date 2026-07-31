@@ -79,33 +79,6 @@ def crawl(base_url: str, max_depth: int = 3) -> list[dict]:
     return found_datasets
 
 
-if __name__ == "__main__":
-    console.print("\n[bold cyan]Dataset Crawler[/bold cyan]\n")
-
-    url = console.input("[cyan]URL to crawl:[/cyan] ").strip()
-
-    depth_input = console.input("[cyan]Max depth (default 3, max 5):[/cyan] ").strip()
-    max_depth = int(depth_input) if depth_input.isdigit() else 3
-    max_depth = min(max_depth, MAX_DEPTH)
-
-    console.print(f"\nCrawling [bold]{url}[/bold] to depth {max_depth}...\n")
-    datasets = crawl(url, max_depth)
-
-    if not datasets:
-        console.print("[yellow]No datasets found.[/yellow]")
-    else:
-        console.print(f"\n[bold]Found {len(datasets)} dataset(s). Probing...[/bold]\n")
-        results = [probe_url(d["name"], d["url"]) for d in datasets]
-
-        from dataset_prober.run import display_results
-
-        display_results(results)
-
-        from dataset_prober.prober import save_results
-
-        save_results(results, "output/probe_results.json")
-
-
 # ─── Directory descent (Apache/nginx autoindex listings) ─────────────────────
 # Resolves a directory-style URL (RIVM, INSPIRE folder portals, plain
 # autoindex pages) into its immediate children: subdirectories to descend into,
@@ -196,3 +169,32 @@ def _parse_listing_date(tag) -> str | None:
             break
     m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", tail)
     return m.group(1) if m else None
+
+
+def main() -> None:
+    console.print("\n[bold cyan]Dataset Crawler[/bold cyan]\n")
+
+    url = console.input("[cyan]URL to crawl:[/cyan] ").strip()
+
+    depth_input = console.input("[cyan]Max depth (default 3, max 5):[/cyan] ").strip()
+    max_depth = int(depth_input) if depth_input.isdigit() else 3
+    max_depth = min(max_depth, MAX_DEPTH)
+
+    console.print(f"\nCrawling [bold]{url}[/bold] to depth {max_depth}...\n")
+    datasets = crawl(url, max_depth)
+
+    if not datasets:
+        console.print("[yellow]No datasets found.[/yellow]")
+    else:
+        console.print(f"\n[bold]Found {len(datasets)} dataset(s). Probing...[/bold]\n")
+        results = [probe_url(d["name"], d["url"]) for d in datasets]
+
+        from dataset_prober.run import display_results
+
+        display_results(results)
+
+        save_results(results, "output/probe_results.json")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -165,7 +166,7 @@ def display_results(results):
     console.print(table)
 
 
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser(description="Probe open datasets via DuckDB httpfs")
     parser.add_argument("--file", help="Path to a JSON file with dataset sources")
     parser.add_argument("--analyze", action="store_true", help="Run Claude analysis after probing")
@@ -187,12 +188,12 @@ if __name__ == "__main__":
 
     if not sources:
         console.print("[red]No sources provided. Exiting.[/red]")
-        exit(1)
+        sys.exit(1)
 
     sources = expand_directories(sources)
     if not sources:
         console.print("[yellow]No files selected. Exiting.[/yellow]")
-        exit(0)
+        sys.exit(0)
 
     # Run prober
     console.print(f"\n[bold]Probing {len(sources)} dataset(s)...[/bold]\n")
@@ -251,3 +252,7 @@ if __name__ == "__main__":
         with open(summary_path, "w") as f:
             f.write(summary)
         console.print(f"\n[green]Summary saved to {summary_path}[/green]")
+
+
+if __name__ == "__main__":
+    main()

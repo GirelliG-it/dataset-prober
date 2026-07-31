@@ -19,6 +19,7 @@ dependencies = [
     "requests>=2.32,<3",
     "rich>=14,<15",
     "tavily-python>=0.7,<1",
+    "pandas>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +28,13 @@ dev = [
     "pytest-mock>=3",
     "responses>=0.25",
     "ruff==0.15.21",
+    "build",
 ]
+
+[project.scripts]
+dataset-prober = "dataset_prober.dataset_agent:main"
+dataset-prober-probe = "dataset_prober.run:main"
+dataset-prober-crawl = "dataset_prober.crawler:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -35,12 +42,16 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+dataset_prober = ["profiles/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+pythonpath = ["src"]
 markers = [
     "integration: marks tests that require real API calls",
     "slow: marks tests that take more than 5 seconds",

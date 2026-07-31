@@ -13,7 +13,7 @@ Architecture:
     4. Results aggregated and saved
 
 No hardcoded URLs, sources, or limits anywhere in this file.
-Everything comes from profiles in config/profiles/*.yaml.
+Everything comes from profiles in dataset_prober/profiles/*.yaml.
 
 Usage:
     python src/dataset_agent.py
