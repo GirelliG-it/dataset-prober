@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import anthropic
@@ -82,7 +83,7 @@ def summarize_probe_results_local(results: list[dict], model: str = "qwen2.5-cod
     return response.json()["message"]["content"]
 
 
-if __name__ == "__main__":
+def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -102,7 +103,7 @@ if __name__ == "__main__":
 
     if not output_path.exists():
         print("No probe results found. Run run.py first.")
-        exit(1)
+        sys.exit(1)
 
     with open(output_path) as f:
         results = json.load(f)
@@ -120,3 +121,7 @@ if __name__ == "__main__":
     with open(summary_path, "w") as f:
         f.write(summary)
     print(f"\nSummary saved to {summary_path}")
+
+
+if __name__ == "__main__":
+    main()
