@@ -196,6 +196,7 @@ def main() -> None:
 
         display_results(results)
 
+        paths.ensure_output_dir()
         save_results(results, str(paths.probe_results_path))
 
 

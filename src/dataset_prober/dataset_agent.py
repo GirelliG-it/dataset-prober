@@ -478,6 +478,7 @@ def execute_tool(
         if table_id:
             dataset.id = table_id
 
+        paths.ensure_output_dir()
         result = tool.download(dataset, db_path)
 
         if result.status == "downloaded":
@@ -691,6 +692,7 @@ def _handle_timeout(
         budget.reset_timer()
     elif choice == "2" and found_datasets and allow_download:
         db_path = str(paths.duckdb_path)
+        paths.ensure_output_dir()
         for dataset in found_datasets:
             tool = tool_map.get(dataset.source)
             if tool and dataset.status == "probed":
@@ -933,7 +935,8 @@ def main():
     # Save results
     all_datasets = aggregated.all_datasets
     if all_datasets:
-        output_path = Path(__file__).parent.parent.parent / "output" / "agent_results.json"
+        output_path = paths.agent_results_path
+        paths.ensure_output_dir()
         with open(output_path, "w") as f:
             json.dump([r.to_dict() for r in all_datasets], f, indent=2, default=str)
         console.print(f"\n[green]Results saved to {output_path}[/green]")

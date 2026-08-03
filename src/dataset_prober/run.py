@@ -227,10 +227,12 @@ def main() -> None:
             if to_download:
                 db_path = str(paths.duckdb_path)
                 console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
+                paths.ensure_output_dir()
                 download_to_duckdb(to_download, db_path)
 
     # Save results
     output_path = paths.probe_results_path
+    paths.ensure_output_dir()
     save_results(results, str(output_path))
 
     # Optionally run analysis
@@ -251,6 +253,7 @@ def main() -> None:
             summary = summarize_probe_results(saved)
         console.print(summary)
         summary_path = paths.analysis_summary_path
+        paths.ensure_output_dir()
         with open(summary_path, "w") as f:
             f.write(summary)
         console.print(f"\n[green]Summary saved to {summary_path}[/green]")

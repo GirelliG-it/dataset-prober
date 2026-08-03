@@ -145,3 +145,15 @@ class TestDownloadConsentGate:
         )
 
         assert "not permitted" in result["error"].lower()
+
+    def test_download_creates_output_dir(self, tool, download_input, tmp_path):
+        """The output directory is created before a download is handed a path to it."""
+        fresh = tmp_path / "not-yet-created"
+        paths = AppPaths(output_dir=fresh)
+        assert not fresh.exists()
+
+        call_execute_tool(tool, download_input, allow_download=True, paths=paths)
+
+        assert fresh.exists(), (
+            "execute_tool handed a db_path to the tool without creating its directory"
+        )

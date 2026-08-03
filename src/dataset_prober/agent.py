@@ -120,6 +120,7 @@ def main() -> None:
     print(summary)
 
     summary_path = paths.analysis_summary_path
+    paths.ensure_output_dir()
     with open(summary_path, "w") as f:
         f.write(summary)
     print(f"\nSummary saved to {summary_path}")
