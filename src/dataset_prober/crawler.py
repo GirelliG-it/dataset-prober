@@ -1,9 +1,11 @@
+import re
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from rich.console import Console
 
+from dataset_prober.paths import AppPaths
 from dataset_prober.prober import probe_url, save_results
 
 console = Console()
@@ -159,7 +161,6 @@ def _parse_listing_date(tag) -> str | None:
     Best-effort: pull a YYYY-MM-DD date from the autoindex row containing this
     link. Apache renders it as plain text after the <a>. Returns None if absent.
     """
-    import re
 
     # The date sits in the tail text of the row — walk siblings after the link.
     tail = ""
@@ -172,6 +173,8 @@ def _parse_listing_date(tag) -> str | None:
 
 
 def main() -> None:
+    paths = AppPaths.resolve()
+
     console.print("\n[bold cyan]Dataset Crawler[/bold cyan]\n")
 
     url = console.input("[cyan]URL to crawl:[/cyan] ").strip()
@@ -193,7 +196,7 @@ def main() -> None:
 
         display_results(results)
 
-        save_results(results, "output/probe_results.json")
+        save_results(results, str(paths.probe_results_path))
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ from dataset_prober.config_loader import (  # noqa: E402
     get_anthropic_api_key,
 )
 from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
+from dataset_prober.paths import AppPaths  # noqa: E402
 from dataset_prober.prompt_interpreter import PromptInterpreter  # noqa: E402
 from dataset_prober.tools import DatasetResult, tools_for_profile  # noqa: E402
 
@@ -323,13 +324,14 @@ def execute_tool(
     allow_download: bool,
     found_datasets: list,
     session_cost: SessionCost,
+    paths: AppPaths,
 ) -> dict:
     """
     Route a Claude tool call to the correct tool implementation.
     Updates budget and found_datasets in place.
     Returns JSON-serializable result dict.
     """
-    db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
+    db_path = str(paths.duckdb_path)
 
     if tool_name == "search_catalog":
         source = tool_input["source"]
@@ -499,6 +501,7 @@ def run_profile(
     allow_download: bool,
     session_cost: SessionCost,
     cli_overrides: dict,
+    paths: AppPaths,
     initial_message: Optional[str] = None,
 ) -> ProfileResult:
     """
@@ -588,7 +591,7 @@ When done, present a structured summary table with:
                 f"{budget.elapsed_minutes():.1f} minutes.[/yellow]"
             )
             console.print(f"[yellow]Found {len(found_datasets)} dataset(s) so far.[/yellow]\n")
-            _handle_timeout(found_datasets, budget, tool_map, allow_download)
+            _handle_timeout(found_datasets, budget, tool_map, allow_download, paths)
             break
 
         # Status every 3 iterations
@@ -646,6 +649,7 @@ When done, present a structured summary table with:
                 tool_input=block.input,
                 tool_map=tool_map,
                 budget=budget,
+                paths=paths,
                 profile=profile,
                 allow_download=allow_download,
                 found_datasets=found_datasets,
@@ -671,7 +675,9 @@ When done, present a structured summary table with:
     return profile_result
 
 
-def _handle_timeout(found_datasets: list, budget: Budget, tool_map: dict, allow_download: bool):
+def _handle_timeout(
+    found_datasets: list, budget: Budget, tool_map: dict, allow_download: bool, paths: AppPaths
+):
     """Handle timeout — ask user what to do with partial results."""
     console.print("\n[bold yellow]What would you like to do?[/bold yellow]")
     console.print("  1. Continue searching (resets timer)")
@@ -684,7 +690,7 @@ def _handle_timeout(found_datasets: list, budget: Budget, tool_map: dict, allow_
         console.print("[green]Continuing...[/green]")
         budget.reset_timer()
     elif choice == "2" and found_datasets and allow_download:
-        db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
+        db_path = str(paths.duckdb_path)
         for dataset in found_datasets:
             tool = tool_map.get(dataset.source)
             if tool and dataset.status == "probed":
@@ -797,6 +803,8 @@ def main():
         console.print()
         return
 
+    paths = AppPaths.resolve()
+
     # Get user prompt
     console.print("\n[bold cyan]Dataset Discovery Agent[/bold cyan]")
     console.print("[dim]Describe the datasets you are looking for.[/dim]\n")
@@ -901,6 +909,7 @@ def main():
             allow_download=allow_download,
             session_cost=profile_session_cost,
             cli_overrides={k: v for k, v in cli_overrides.items() if v is not None},
+            paths=paths,
             initial_message=initial_message,
         )
 

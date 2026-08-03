@@ -7,6 +7,7 @@ import requests
 from dotenv import load_dotenv
 
 from dataset_prober.config_loader import get_anthropic_api_key
+from dataset_prober.paths import AppPaths
 
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -98,8 +99,9 @@ def main() -> None:
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
     args = parser.parse_args()
+    paths = AppPaths.resolve()
 
-    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
+    output_path = paths.probe_results_path
 
     if not output_path.exists():
         print("No probe results found. Run run.py first.")
@@ -117,7 +119,7 @@ def main() -> None:
 
     print(summary)
 
-    summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
+    summary_path = paths.analysis_summary_path
     with open(summary_path, "w") as f:
         f.write(summary)
     print(f"\nSummary saved to {summary_path}")
