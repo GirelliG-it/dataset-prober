@@ -98,8 +98,14 @@ def main() -> None:
         default="qwen2.5-coder:3b",
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
+    parser.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        help="Directory for results, database, and summaries",
+    )
     args = parser.parse_args()
-    paths = AppPaths.resolve()
+    paths = AppPaths.resolve(args.output_dir)
 
     output_path = paths.probe_results_path
 
