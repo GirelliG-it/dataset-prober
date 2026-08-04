@@ -7,7 +7,6 @@ from rich.console import Console
 from rich.table import Table
 
 from dataset_prober.crawler import resolve_directory
-from dataset_prober.paths import AppPaths
 from dataset_prober.prober import download_to_duckdb, probe_all, save_results
 from dataset_prober.tools.base import response_is_html
 
@@ -180,7 +179,6 @@ def main() -> None:
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
     args = parser.parse_args()
-    paths = AppPaths.resolve()
 
     # Get sources
     if args.file:
@@ -225,14 +223,12 @@ def main() -> None:
                 to_download = [ok_results[i] for i in indices if i < len(ok_results)]
 
             if to_download:
-                db_path = str(paths.duckdb_path)
+                db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
                 console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
-                paths.ensure_output_dir()
                 download_to_duckdb(to_download, db_path)
 
     # Save results
-    output_path = paths.probe_results_path
-    paths.ensure_output_dir()
+    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
     save_results(results, str(output_path))
 
     # Optionally run analysis
@@ -252,8 +248,7 @@ def main() -> None:
 
             summary = summarize_probe_results(saved)
         console.print(summary)
-        summary_path = paths.analysis_summary_path
-        paths.ensure_output_dir()
+        summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
         with open(summary_path, "w") as f:
             f.write(summary)
         console.print(f"\n[green]Summary saved to {summary_path}[/green]")
