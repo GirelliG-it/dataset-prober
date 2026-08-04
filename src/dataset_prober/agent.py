@@ -1,5 +1,4 @@
 import json
-import sys
 from pathlib import Path
 
 import anthropic
@@ -7,7 +6,6 @@ import requests
 from dotenv import load_dotenv
 
 from dataset_prober.config_loader import get_anthropic_api_key
-from dataset_prober.paths import AppPaths
 
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -84,7 +82,7 @@ def summarize_probe_results_local(results: list[dict], model: str = "qwen2.5-cod
     return response.json()["message"]["content"]
 
 
-def main() -> None:
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -98,20 +96,13 @@ def main() -> None:
         default="qwen2.5-coder:3b",
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
-    parser.add_argument(
-        "--output-dir",
-        dest="output_dir",
-        default=None,
-        help="Directory for results, database, and summaries",
-    )
     args = parser.parse_args()
-    paths = AppPaths.resolve(args.output_dir)
 
-    output_path = paths.probe_results_path
+    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
 
     if not output_path.exists():
         print("No probe results found. Run run.py first.")
-        sys.exit(1)
+        exit(1)
 
     with open(output_path) as f:
         results = json.load(f)
@@ -125,12 +116,7 @@ def main() -> None:
 
     print(summary)
 
-    summary_path = paths.analysis_summary_path
-    paths.ensure_output_dir()
+    summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
     with open(summary_path, "w") as f:
         f.write(summary)
     print(f"\nSummary saved to {summary_path}")
-
-
-if __name__ == "__main__":
-    main()
