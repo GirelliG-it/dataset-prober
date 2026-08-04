@@ -21,6 +21,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from dataset_prober.paths import AppPaths
+
 
 class FakeDownloadResult:
     """Stand-in for whatever tool.download() returns."""
@@ -67,7 +69,12 @@ def download_input():
     }
 
 
-def call_execute_tool(tool, tool_input, *, allow_download):
+@pytest.fixture
+def paths(tmp_path):
+    return AppPaths(output_dir=tmp_path)
+
+
+def call_execute_tool(tool, tool_input, *, allow_download, paths):
     """
     Invoke execute_tool for a download_dataset call.
 
@@ -86,37 +93,38 @@ def call_execute_tool(tool, tool_input, *, allow_download):
         allow_download=allow_download,
         found_datasets=[],
         session_cost=Mock(),
+        paths=paths,
     )
 
 
 class TestDownloadConsentGate:
-    def test_download_blocked_without_permission(self, tool, download_input):
+    def test_download_blocked_without_permission(self, tool, download_input, paths):
         """The hard contract: allow_download=False means no download happens."""
-        result = call_execute_tool(tool, download_input, allow_download=False)
+        result = call_execute_tool(tool, download_input, allow_download=False, paths=paths)
 
         assert tool.download_calls == [], (
             "Consent gate failed open — tool.download() was called with allow_download=False"
         )
         assert "error" in result
 
-    def test_blocked_result_explains_why(self, tool, download_input):
+    def test_blocked_result_explains_why(self, tool, download_input, paths):
         """The refusal is reported back to the model, not silently swallowed."""
-        result = call_execute_tool(tool, download_input, allow_download=False)
+        result = call_execute_tool(tool, download_input, allow_download=False, paths=paths)
 
         assert "not permitted" in result["error"].lower()
 
-    def test_download_proceeds_when_permitted(self, tool, download_input):
+    def test_download_proceeds_when_permitted(self, tool, download_input, paths):
         """
         Control test. Without this, the test above could pass for the wrong
         reason — this proves the fixture setup CAN reach a download, so a
         blocked download is a real signal.
         """
-        result = call_execute_tool(tool, download_input, allow_download=True)
+        result = call_execute_tool(tool, download_input, allow_download=True, paths=paths)
 
         assert len(tool.download_calls) == 1
         assert result["status"] == "downloaded"
 
-    def test_gate_precedes_tool_lookup(self, download_input):
+    def test_gate_precedes_tool_lookup(self, download_input, paths):
         """
         With no tools registered at all, a blocked download must still report
         the permission error — not 'tool not available'. This pins the gate's
@@ -133,6 +141,19 @@ class TestDownloadConsentGate:
             allow_download=False,
             found_datasets=[],
             session_cost=Mock(),
+            paths=paths,
         )
 
         assert "not permitted" in result["error"].lower()
+
+    def test_download_creates_output_dir(self, tool, download_input, tmp_path):
+        """The output directory is created before a download is handed a path to it."""
+        fresh = tmp_path / "not-yet-created"
+        paths = AppPaths(output_dir=fresh)
+        assert not fresh.exists()
+
+        call_execute_tool(tool, download_input, allow_download=True, paths=paths)
+
+        assert fresh.exists(), (
+            "execute_tool handed a db_path to the tool without creating its directory"
+        )
