@@ -17,11 +17,13 @@ Design note on why the fake tool is "capable" of downloading:
     proves the setup can in fact reach a download.
 """
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
+from dataset_prober.loading_policy import AuthorizedLoad, LoadingPolicySession
 from dataset_prober.paths import AppPaths
+from dataset_prober.tools.base import DatasetResult
 
 
 class FakeDownloadResult:
@@ -45,12 +47,14 @@ class RecordingTool:
     """
 
     source_name = "fake source"
+    adapter_identity = "configured fake CKAN"
 
     def __init__(self):
         self.download_calls = []
 
-    def download(self, dataset, db_path):
-        self.download_calls.append((dataset, db_path))
+    def download(self, dataset, destination, authorization):
+        assert isinstance(authorization, AuthorizedLoad)
+        self.download_calls.append((dataset, destination, authorization))
         return FakeDownloadResult()
 
 
@@ -62,7 +66,7 @@ def tool():
 @pytest.fixture
 def download_input():
     return {
-        "source": "fake",
+        "source": "ckan",
         "dataset_id": "some-dataset",
         "title": "Some Dataset",
         "download_url": "https://example.com/data.csv",
@@ -74,7 +78,7 @@ def paths(tmp_path):
     return AppPaths(output_dir=tmp_path)
 
 
-def call_execute_tool(tool, tool_input, *, allow_download, paths):
+def call_execute_tool(tool, tool_input, *, download_enabled, paths):
     """
     Invoke execute_tool for a download_dataset call.
 
@@ -84,23 +88,46 @@ def call_execute_tool(tool, tool_input, *, allow_download, paths):
     """
     from dataset_prober.dataset_agent import execute_tool
 
-    return execute_tool(
-        tool_name="download_dataset",
-        tool_input=tool_input,
-        tool_map={"fake": tool},
-        budget=Mock(),
-        profile=Mock(),
-        allow_download=allow_download,
-        found_datasets=[],
-        session_cost=Mock(),
-        paths=paths,
+    inspected = DatasetResult(
+        id=tool_input["dataset_id"],
+        title=tool_input["title"],
+        description="",
+        source=tool_input["source"],
+        source_name=tool.source_name,
+        url=tool_input["download_url"],
+        download_url=tool_input["download_url"],
+        format="CSV",
+        modified=None,
+        frequency=None,
+        license=None,
+        license_url=None,
+        row_count=42,
+        columns=[{"name": "value", "type": "INTEGER"}],
+        sample=[[42]],
+        language=None,
+        tags=[],
+        status="probed",
     )
+    loading_session = LoadingPolicySession(download_enabled=download_enabled)
+    loading_session.register_dataset_result(inspected, tool.adapter_identity)
+    with patch("dataset_prober.dataset_agent.console.input", return_value="yes"):
+        return execute_tool(
+            tool_name="download_dataset",
+            tool_input=tool_input,
+            tool_map={"ckan": tool},
+            budget=Mock(),
+            profile=Mock(),
+            loading_session=loading_session,
+            found_datasets=[inspected],
+            session_cost=Mock(),
+            paths=paths,
+        )
 
 
 class TestDownloadConsentGate:
     def test_download_blocked_without_permission(self, tool, download_input, paths):
-        """The hard contract: allow_download=False means no download happens."""
-        result = call_execute_tool(tool, download_input, allow_download=False, paths=paths)
+        """The hard contract: a disabled policy session means no download happens."""
+        result = call_execute_tool(tool, download_input, download_enabled=False, paths=paths)
 
         assert tool.download_calls == [], (
             "Consent gate failed open — tool.download() was called with allow_download=False"
@@ -109,17 +136,16 @@ class TestDownloadConsentGate:
 
     def test_blocked_result_explains_why(self, tool, download_input, paths):
         """The refusal is reported back to the model, not silently swallowed."""
-        result = call_execute_tool(tool, download_input, allow_download=False, paths=paths)
+        result = call_execute_tool(tool, download_input, download_enabled=False, paths=paths)
 
         assert "not permitted" in result["error"].lower()
 
     def test_download_proceeds_when_permitted(self, tool, download_input, paths):
         """
-        Control test. Without this, the test above could pass for the wrong
-        reason — this proves the fixture setup CAN reach a download, so a
-        blocked download is a real signal.
+        Control test. The Boolean offer gate plus exact affirmative consent
+        can reach a supported, inspected resource's loader.
         """
-        result = call_execute_tool(tool, download_input, allow_download=True, paths=paths)
+        result = call_execute_tool(tool, download_input, download_enabled=True, paths=paths)
 
         assert len(tool.download_calls) == 1
         assert result["status"] == "downloaded"
@@ -132,13 +158,15 @@ class TestDownloadConsentGate:
         """
         from dataset_prober.dataset_agent import execute_tool
 
+        loading_session = LoadingPolicySession(download_enabled=False)
+
         result = execute_tool(
             tool_name="download_dataset",
             tool_input=download_input,
             tool_map={},
             budget=Mock(),
             profile=Mock(),
-            allow_download=False,
+            loading_session=loading_session,
             found_datasets=[],
             session_cost=Mock(),
             paths=paths,
@@ -146,14 +174,14 @@ class TestDownloadConsentGate:
 
         assert "not permitted" in result["error"].lower()
 
-    def test_download_creates_output_dir(self, tool, download_input, tmp_path):
-        """The output directory is created before a download is handed a path to it."""
+    def test_application_does_not_create_destination_before_writer_activation(
+        self, tool, download_input, tmp_path
+    ):
+        """Only the authorized persistent wrapper may create the destination directory."""
         fresh = tmp_path / "not-yet-created"
         paths = AppPaths(output_dir=fresh)
         assert not fresh.exists()
 
-        call_execute_tool(tool, download_input, allow_download=True, paths=paths)
+        call_execute_tool(tool, download_input, download_enabled=True, paths=paths)
 
-        assert fresh.exists(), (
-            "execute_tool handed a db_path to the tool without creating its directory"
-        )
+        assert not fresh.exists()

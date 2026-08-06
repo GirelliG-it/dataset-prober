@@ -12,10 +12,19 @@ Shared loading helpers generate collision-resistant DuckDB table names and
 provide one consistent loading path across all tools.
 """
 
-import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+from dataset_prober.loading_policy import (
+    AuthorizedLoad,
+    LoaderKind,
+    _ActivePermit,
+    canonicalize_destination,
+    claims_for_dataset,
+    configured_adapter_identity,
+)
 
 
 @dataclass
@@ -177,7 +186,7 @@ class DataSourceTool(ABC):
     Every tool must implement:
       - search(keyword, max_results) → list[DatasetResult]
       - fetch(dataset_id, sample_rows) → DatasetResult
-      - download(dataset, db_path) → DatasetResult
+      - download(dataset, destination, authorization) → DatasetResult
 
     Tools receive all configuration from the profile at instantiation.
     No default values are hardcoded — all limits come from config.
@@ -223,19 +232,30 @@ class DataSourceTool(ABC):
         pass
 
     @abstractmethod
-    def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
+    def download(
+        self,
+        dataset: DatasetResult,
+        destination: str | Path,
+        authorization: AuthorizedLoad,
+    ) -> DatasetResult:
         """
         Download the full dataset into a local DuckDB database.
 
         Args:
             dataset: A DatasetResult with status="probed"
-            db_path: Path to the DuckDB file
+            destination: Exact persistent DuckDB destination shown during consent
+            authorization: One-shot authorization for this resource and destination
 
         Returns:
             DatasetResult with status="downloaded" and row_count updated,
             or status="failed" with error populated
         """
         pass
+
+    @property
+    def adapter_identity(self) -> str:
+        """Configured identity bound into inspection and writer claims."""
+        return configured_adapter_identity(self.source_type, self.config)
 
     @property
     @abstractmethod
@@ -267,43 +287,6 @@ class DataSourceTool(ABC):
 # CBSTool, CKANTool, TavilyTool — goes through ONE implementation.
 # Previously each path had its own copy of the CTAS statement, and a security
 # fix applied to one copy silently missed the other three.
-
-
-def safe_table_name(dataset_id: str, title: str = "") -> str:
-    """
-    Build a readable, collision-resistant DuckDB table name.
-
-    Identity never rests on the human title, because two distinct
-    titles can sanitize to the same string ("Bevolking per gemeente, 2024"
-    and "Bevolking per gemeente (2024)" sanitize identically).
-
-    Therefore uniqueness rests on the source's stable ID; the title, when
-    present, only makes the name legible to a human reading SHOW TABLES.
-
-    The resulting name is at most 63 characters (consciously chosen as a
-    limit). The digest prevents distinct long IDs that share the same
-    truncated prefix from producing the same table name.
-    """
-
-    def _clean(s: str) -> str:
-        return "".join(c if c.isalnum() else "_" for c in s.lower()).strip("_")
-
-    ident = _clean(dataset_id)
-    if not ident:
-        raise ValueError("dataset_id must produce a non-empty table name")
-
-    suffix = _clean(title)[:40]
-    readable = f"{ident}_{suffix}".strip("_") if suffix else ident
-
-    # Keep identifiers readable when the source ID begins with a digit.
-    if readable[0].isdigit():
-        readable = f"t_{readable}"
-
-    # Reserve 12 characters for a stable hash of the complete dataset ID.
-    digest = hashlib.sha256(dataset_id.encode("utf-8")).hexdigest()[:12]
-
-    return f"{readable[:50]}_{digest}"
-
 
 EUROPEAN_CSV_ARGS = (
     "delim=';', header=true, comment='#', strict_mode=false, null_padding=true, all_varchar=true"
@@ -390,7 +373,12 @@ def probe_csv_url(con, url: str, sample_rows: int) -> dict:
     }
 
 
-def download_csv_dataset(dataset: DatasetResult, db_path: str) -> DatasetResult:
+def download_csv_dataset(
+    dataset: DatasetResult,
+    adapter_identity: str,
+    destination: str | Path,
+    permit: _ActivePermit,
+) -> DatasetResult:
     """
     Download dataset.download_url into DuckDB, updating `dataset` in place.
 
@@ -399,26 +387,21 @@ def download_csv_dataset(dataset: DatasetResult, db_path: str) -> DatasetResult:
     which is exactly the drift risk this module's helpers exist to prevent
     (see module docstring).
     """
-    if not dataset.download_url:
-        dataset.status = "failed"
-        dataset.error = "No download URL available"
-        return dataset
+    if not isinstance(permit, _ActivePermit):
+        raise TypeError("Persistent CSV loading requires a live active permit")
+
+    actual_claims = claims_for_dataset(dataset, adapter_identity, destination)
+    permit._assert_claims(actual_claims)
 
     try:
-        import duckdb
-
-        table_name = safe_table_name(dataset.id, dataset.title)
-
-        if response_is_html(dataset.download_url):
+        if response_is_html(actual_claims.retrieval_url):
             raise ValueError(
-                f"URL serves an HTML page, not data: {dataset.download_url} "
+                f"URL serves an HTML page, not data: {actual_claims.retrieval_url} "
                 f"(landing/listing page - a direct file link is required)"
             )
 
-        con = duckdb.connect(db_path)
-        ensure_httpfs(con)
-        actual_rows = load_csv_to_table(con, table_name, dataset.download_url)
-        con.close()
+        with AuthorizedDuckDBConnection(permit, destination) as connection:
+            actual_rows = load_csv_to_table(connection)
 
         dataset.row_count = actual_rows
         dataset.status = "downloaded"
@@ -430,25 +413,135 @@ def download_csv_dataset(dataset: DatasetResult, db_path: str) -> DatasetResult:
         return dataset
 
 
-def load_csv_to_table(con, table_name: str, url: str) -> int:
-    """
-    Load a CSV at `url` into `table_name`, returning the row count.
+class AuthorizedDuckDBConnection:
+    """Own one persistent connection while a matching active permit is live."""
 
-    `url` is ALWAYS bound as a parameter, never interpolated. It arrives from
+    __slots__ = ("__permit", "__destination", "__connection")
+
+    def __init__(self, permit: _ActivePermit, destination: str | Path) -> None:
+        if not isinstance(permit, _ActivePermit):
+            raise TypeError("Persistent DuckDB access requires a live active permit")
+        self.__permit = permit
+        self.__destination = destination
+        self.__connection = None
+
+    def __enter__(self) -> "AuthorizedDuckDBConnection":
+        self.__permit._assert_destination(self.__destination)
+        self.__permit._current_claims()
+        destination = canonicalize_destination(self.__destination)
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+
+        import duckdb
+
+        self.__connection = duckdb.connect(destination)
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> bool:
+        connection = self.__connection
+        self.__connection = None
+        if connection is not None:
+            connection.close()
+        return False
+
+    def __active_claims(self, loader_kind: LoaderKind):
+        claims = self.__permit._current_claims()
+        self.__permit._assert_destination(self.__destination)
+        if self.__connection is None:
+            raise RuntimeError("Authorized DuckDB connection is not open")
+        if claims.loader_kind is not loader_kind:
+            raise TypeError(f"Persistent operation requires loader {loader_kind.value}")
+        return claims
+
+    def _create_csv_table(self) -> None:
+        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+        ensure_httpfs(self.__connection)
+        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+        expr = csv_scan_expr(self.__connection, claims.retrieval_url)
+        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+        self.__connection.execute(
+            f'CREATE OR REPLACE TABLE "{claims.planned_table_name}" AS SELECT * FROM {expr}',
+            [claims.retrieval_url],
+        )
+
+    def _csv_row_count(self) -> int:
+        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+        result = self.__connection.execute(
+            f'SELECT COUNT(*) FROM "{claims.planned_table_name}"'
+        ).fetchone()
+        return result[0]
+
+    def _reject_html_csv_table(self) -> None:
+        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+        cols = self.__connection.execute(f'DESCRIBE "{claims.planned_table_name}"').fetchall()
+        header_blob = " ".join(str(column[0]).lower() for column in cols)
+
+        first_cell = ""
+        if cols:
+            claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+            row = self.__connection.execute(
+                f'SELECT * FROM "{claims.planned_table_name}" LIMIT 1'
+            ).fetchone()
+            if row and row[0] is not None:
+                first_cell = str(row[0]).lower()
+
+        if any(marker in header_blob or marker in first_cell for marker in _HTML_MARKERS):
+            self._drop_csv_table()
+            raise ValueError(
+                "URL returned an HTML page, not tabular data (redirect trap?): "
+                f"{claims.retrieval_url}. "
+                "This is often a landing/listing page — a direct CSV link is required."
+            )
+
+    def _drop_csv_table(self) -> None:
+        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
+        self.__connection.execute(f'DROP TABLE IF EXISTS "{claims.planned_table_name}"')
+
+    def _create_dataframe_table(self, dataframe) -> None:
+        claims = self.__active_claims(LoaderKind.CBS_ODATA)
+        frame_name = "_dataset_prober_authorized_frame"
+        self.__connection.register(frame_name, dataframe)
+        claims = self.__active_claims(LoaderKind.CBS_ODATA)
+        self.__connection.execute(
+            f'CREATE OR REPLACE TABLE "{claims.planned_table_name}" AS SELECT * FROM {frame_name}'
+        )
+
+    def _dataframe_row_count(self) -> int:
+        claims = self.__active_claims(LoaderKind.CBS_ODATA)
+        result = self.__connection.execute(
+            f'SELECT COUNT(*) FROM "{claims.planned_table_name}"'
+        ).fetchone()
+        return result[0]
+
+
+def _authorized_connection(connection) -> AuthorizedDuckDBConnection:
+    if not isinstance(connection, AuthorizedDuckDBConnection):
+        raise TypeError("Persistent SQL requires an authorization-aware DuckDB connection")
+    return connection
+
+
+def load_csv_to_table(connection: AuthorizedDuckDBConnection) -> int:
+    """
+    Load the authorized CSV into its planned table, returning the row count.
+
+    The claimed URL is ALWAYS bound as a parameter, never interpolated. It arrives from
     third-party catalogues and web search results and must be treated as
     hostile. DuckDB resolves a bound value as a literal path, so an injection
     payload fails as a bad filename instead of executing.
 
-    `table_name` is ours, not the source's, and is identifier-quoted.
+    The planned table name is ours, not the source's, and is identifier-quoted.
     The scan dialect comes from csv_scan_expr, shared with probe_url.
     """
-    expr = csv_scan_expr(con, url)
-    con.execute(
-        f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM {expr}',
-        [url],
-    )
-    _reject_if_html(con, table_name, url)
-    return con.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+    authorized = _authorized_connection(connection)
+    authorized._create_csv_table()
+    _reject_if_html(authorized)
+    return authorized._csv_row_count()
+
+
+def load_dataframe_to_table(connection: AuthorizedDuckDBConnection, dataframe) -> int:
+    """Persist one CBS dataframe through the authorized CBS CTAS boundary."""
+    authorized = _authorized_connection(connection)
+    authorized._create_dataframe_table(dataframe)
+    return authorized._dataframe_row_count()
 
 
 def response_is_html(url: str, timeout: float = 5.0) -> bool:
@@ -486,32 +579,14 @@ def response_is_html(url: str, timeout: float = 5.0) -> bool:
 _HTML_MARKERS = ("<!doctype html", "<html", "<head", "<body", "<a href", "<table")
 
 
-def _reject_if_html(con, table_name: str, url: str) -> None:
+def _reject_if_html(connection: AuthorizedDuckDBConnection) -> None:
     """
     Raise ValueError if a freshly-loaded table looks like parsed HTML rather
     than tabular data. Heuristic, but high-signal: HTML pages parse into a
     single column whose NAME (the first physical line) or first row carries
     an HTML tag. Real CSVs don't name a column `<!DOCTYPE html>`.
     """
-    cols = con.execute(f'DESCRIBE "{table_name}"').fetchall()
-    header_blob = " ".join(str(c[0]).lower() for c in cols)
-
-    first_cell = ""
-    if cols:
-        row = con.execute(f'SELECT * FROM "{table_name}" LIMIT 1').fetchone()
-        if row and row[0] is not None:
-            first_cell = str(row[0]).lower()
-
-    looks_html = any(m in header_blob or m in first_cell for m in _HTML_MARKERS)
-    # A single column whose header is one long line is itself suspicious for a
-    # "CSV", but only flag it when combined with an HTML marker to avoid
-    # rejecting legitimate single-column data files.
-    if looks_html:
-        con.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-        raise ValueError(
-            f"URL returned an HTML page, not tabular data (redirect trap?): {url}. "
-            f"This is often a landing/listing page — a direct CSV link is required."
-        )
+    _authorized_connection(connection)._reject_html_csv_table()
 
 
 def ensure_httpfs(con) -> None:

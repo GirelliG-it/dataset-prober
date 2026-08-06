@@ -7,6 +7,12 @@ from rich.console import Console
 from rich.table import Table
 
 from dataset_prober.crawler import resolve_directory
+from dataset_prober.loading_policy import (
+    InspectedResourceError,
+    LoadingPolicySession,
+    configured_adapter_identity,
+    parse_exact_selection,
+)
 from dataset_prober.paths import AppPaths
 from dataset_prober.prober import download_to_duckdb, probe_all, save_results
 from dataset_prober.tools.base import response_is_html
@@ -179,8 +185,14 @@ def main() -> None:
         default="qwen2.5-coder:3b",
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Offer exact per-resource loading choices after probing",
+    )
     args = parser.parse_args()
     paths = AppPaths.resolve()
+    loading_session = LoadingPolicySession(download_enabled=args.download)
 
     # Get sources
     if args.file:
@@ -205,30 +217,45 @@ def main() -> None:
     display_results(results)
 
     # Ask user which datasets to download
-    ok_results = [r for r in results if r.status == "ok"]
-    if ok_results:
+    loadable_results = []
+    for result in results:
+        if result.status != "ok":
+            continue
+        try:
+            loading_session.register_probe_result(result)
+        except InspectedResourceError:
+            continue
+        loadable_results.append(result)
+
+    if loading_session.download_enabled and loadable_results:
+        manual_adapter = configured_adapter_identity("manual", {})
         console.print("\n[bold]Available for download:[/bold]")
-        for i, r in enumerate(ok_results, 1):
+        for i, r in enumerate(loadable_results, 1):
             console.print(f"  {i}. {r.name} ({r.row_count} rows)")
 
-        selection = (
-            console.input("\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] ")
-            .strip()
-            .lower()
-        )
+        try:
+            selection = console.input(
+                "\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] "
+            )
+            indices = parse_exact_selection(selection, len(loadable_results))
+        except (EOFError, KeyboardInterrupt, ValueError):
+            indices = []
+            console.print("[yellow]Selection denied — no datasets will be loaded.[/yellow]")
 
-        if selection != "none" and selection != "":
-            if selection == "all":
-                to_download = ok_results
-            else:
-                indices = [int(x.strip()) - 1 for x in selection.split(",") if x.strip().isdigit()]
-                to_download = [ok_results[i] for i in indices if i < len(ok_results)]
-
-            if to_download:
-                db_path = str(paths.duckdb_path)
-                console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
-                paths.ensure_output_dir()
-                download_to_duckdb(to_download, db_path)
+        for index in indices:
+            result = loadable_results[index]
+            authorization = loading_session.request_authorization(
+                source_key="manual",
+                adapter_identity=manual_adapter,
+                resource_id=result.url,
+                destination=paths.duckdb_path,
+                input_func=console.input,
+            )
+            if authorization is None:
+                console.print(f"[yellow]Not approved: {result.name}[/yellow]")
+                continue
+            console.print(f"\n[bold]Downloading {result.name}...[/bold]\n")
+            download_to_duckdb(result, str(paths.duckdb_path), authorization)
 
     # Save results
     output_path = paths.probe_results_path

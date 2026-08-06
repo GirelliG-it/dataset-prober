@@ -5,12 +5,18 @@ from typing import Optional
 
 import duckdb
 
+from dataset_prober.loading_policy import (
+    AuthorizedLoad,
+    claims_for_probe,
+    detect_resource_format,
+    is_supported_format,
+)
 from dataset_prober.tools.base import (
+    AuthorizedDuckDBConnection,
     csv_scan_expr,
     ensure_httpfs,
     load_csv_to_table,
     response_is_html,
-    safe_table_name,
 )
 
 
@@ -23,27 +29,22 @@ class ProbeResult:
     columns: list = field(default_factory=list)
     sample: list = field(default_factory=list)
     error: Optional[str] = None
-
-
-def _url_identity(url: str) -> str:
-    """
-    Short stable identity for a URL -  used to key its DuckDB table.
-
-    Returns the hash ONLY. Readability is safe_table_nam's job, via the
-    title suffix; including the filename stem here duplicated it (a URL
-    ending in 2026_05_N02 produced
-    t_2026_05_N02.csv).
-
-    8 hex chars = 4.3e9 values; ~1% collisiob risk around 9000 URLs by the
-    birthday bound. Ample for local use -  widen if this ever ingests at scale.
-    """
-    import hashlib
-
-    return hashlib.sha256(url.encode()).hexdigest()[:8]
+    format: Optional[str] = None
 
 
 def probe_url(name: str, url: str) -> ProbeResult:
     """Probe a single URL with DuckDB and return a structured result."""
+    resource_format = detect_resource_format(url)
+    if not is_supported_format("manual", resource_format):
+        detail = resource_format or "unknown"
+        return ProbeResult(
+            url=url,
+            name=name,
+            status="error",
+            error=f"Unsupported or unproven manual resource format: {detail}",
+            format=resource_format,
+        )
+
     con = duckdb.connect()
     ensure_httpfs(con)
 
@@ -70,6 +71,7 @@ def probe_url(name: str, url: str) -> ProbeResult:
             row_count=row_count,
             columns=columns,
             sample=sample,
+            format=resource_format,
         )
 
     except Exception as e:
@@ -79,7 +81,13 @@ def probe_url(name: str, url: str) -> ProbeResult:
             status = "redirect_trap"
         else:
             status = "error"
-        return ProbeResult(url=url, name=name, status=status, error=error_msg)
+        return ProbeResult(
+            url=url,
+            name=name,
+            status=status,
+            error=error_msg,
+            format=resource_format,
+        )
 
     finally:
         con.close()
@@ -104,30 +112,26 @@ def save_results(results: list[ProbeResult], path: str):
     print(f"  Results saved to {path}")
 
 
-def download_to_duckdb(results: list[ProbeResult], db_path: str):
-    """Download selected datasets into a shared DuckDB database file."""
-    con = duckdb.connect(db_path)
-    ensure_httpfs(con)
+def download_to_duckdb(
+    result: ProbeResult, destination: str, authorization: AuthorizedLoad
+) -> ProbeResult:
+    """Perform one exact manual CSV load through a one-shot authorization."""
+    if not isinstance(authorization, AuthorizedLoad):
+        raise TypeError("Manual persistent loading requires an AuthorizedLoad")
 
-    for result in results:
-        if result.status != "ok":
-            print(f"  Skipping {result.name} — status: {result.status}")
-            continue
-
-        # Identity comes from the URL (unique), not the display name (not unique).
-        # Two sources both called "population" would otherwise clobber each other.
-        table_name = safe_table_name(_url_identity(result.url), result.name)
-
-        if response_is_html(result.url):
-            print(f" Skipped: {result.url} serves HTML, not data (landing page?)")
-            continue
-
-        print(f"  Downloading: {result.name} → table '{table_name}'...")
+    actual_claims = claims_for_probe(result, destination)
+    with authorization.activate(actual_claims) as permit:
         try:
-            rows = load_csv_to_table(con, table_name, result.url)
-            print(f"  Done — {rows} rows loaded.")
-        except Exception as e:
-            print(f"  Failed: {e}")
+            if response_is_html(actual_claims.retrieval_url):
+                raise ValueError(
+                    f"{actual_claims.retrieval_url} serves HTML, not data (landing page?)"
+                )
 
-    con.close()
-    print(f"\n  Database saved to {db_path}")
+            print(f"  Downloading: {result.name} → table '{actual_claims.planned_table_name}'...")
+            with AuthorizedDuckDBConnection(permit, destination) as connection:
+                rows = load_csv_to_table(connection)
+            result.row_count = rows
+            print(f"  Done — {rows} rows loaded.")
+        except Exception as exc:
+            print(f"  Failed: {exc}")
+    return result

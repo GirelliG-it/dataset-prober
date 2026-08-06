@@ -11,7 +11,15 @@ without needing Playwright or a headless browser.
 
 import os
 import re
+from pathlib import Path
 
+from dataset_prober.loading_policy import (
+    AuthorizedLoad,
+    LoaderKind,
+    claims_for_dataset,
+    detect_resource_format,
+    loader_for_resource,
+)
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
@@ -19,8 +27,6 @@ from dataset_prober.tools.base import (
     ensure_httpfs,
     probe_csv_url,
 )
-
-DATASET_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".parquet", ".geojson"}
 
 
 class TavilyTool(DataSourceTool):
@@ -205,13 +211,17 @@ class TavilyTool(DataSourceTool):
 
     def _probe_direct(self, url: str, sample_rows: int, timeout: int) -> DatasetResult:
         """Probe a direct CSV URL using DuckDB httpfs."""
+        resource_format = detect_resource_format(url)
+        if loader_for_resource(self.source_type, resource_format, url) is not LoaderKind.DUCKDB_CSV:
+            return self._unsupported_direct_result(url, resource_format)
+
+        con = None
         try:
             import duckdb
 
             con = duckdb.connect()
             ensure_httpfs(con)
             probe = probe_csv_url(con, url, sample_rows)
-            con.close()
 
             # Extract filename as title
             title = url.split("/")[-1].split("?")[0] or url
@@ -224,7 +234,7 @@ class TavilyTool(DataSourceTool):
                 source_name=self.source_name,
                 url=url,
                 download_url=url,
-                format="CSV",
+                format=resource_format,
                 modified=None,
                 frequency=None,
                 license=None,
@@ -239,23 +249,30 @@ class TavilyTool(DataSourceTool):
 
         except Exception as e:
             return self._error_result(id=url, title=url, error=f"Probe failed: {str(e)}")
+        finally:
+            if con is not None:
+                con.close()
 
-    def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
+    def download(
+        self,
+        dataset: DatasetResult,
+        destination: str | Path,
+        authorization: AuthorizedLoad,
+    ) -> DatasetResult:
         """Download a CSV dataset into DuckDB using httpfs."""
-        return download_csv_dataset(dataset, db_path)
+        if not isinstance(authorization, AuthorizedLoad):
+            raise TypeError("Tavily persistent loading requires an AuthorizedLoad")
+        actual_claims = claims_for_dataset(dataset, self.adapter_identity, destination)
+        with authorization.activate(actual_claims) as permit:
+            return download_csv_dataset(dataset, self.adapter_identity, destination, permit)
 
     def _is_dataset_url(self, url: str) -> bool:
         """Check if URL points directly to a dataset file."""
-        path = url.split("?")[0].lower()
-        return any(path.endswith(ext) for ext in DATASET_EXTENSIONS)
+        return detect_resource_format(url) is not None
 
     def _detect_format(self, url: str) -> str | None:
         """Detect file format from URL extension."""
-        path = url.split("?")[0].lower()
-        for ext in DATASET_EXTENSIONS:
-            if path.endswith(ext):
-                return ext.lstrip(".").upper()
-        return None
+        return detect_resource_format(url)
 
     def _find_dataset_urls(self, content: str) -> list[str]:
         """Extract direct dataset file URLs from page content."""
@@ -279,4 +296,31 @@ class TavilyTool(DataSourceTool):
             source_name=self.source_name,
             error=error,
             url=id,
+        )
+
+    def _unsupported_direct_result(self, url: str, resource_format: str | None) -> DatasetResult:
+        """Retain truthful metadata while refusing an unsupported CSV probe."""
+        title = url.split("/")[-1].split("?")[0] or url
+        return DatasetResult(
+            id=url,
+            title=title,
+            description="",
+            source=self.source_type,
+            source_name=self.source_name,
+            url=url,
+            download_url=url,
+            format=resource_format,
+            modified=None,
+            frequency=None,
+            license=None,
+            license_url=None,
+            row_count=None,
+            columns=None,
+            sample=None,
+            language=None,
+            tags=[],
+            status="failed",
+            error=(
+                f"Unsupported or unproven Tavily resource format: {resource_format or 'unknown'}"
+            ),
         )

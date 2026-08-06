@@ -8,8 +8,17 @@ All catalog-specific settings come from the profile configuration.
 CKAN API reference: https://docs.ckan.org/en/latest/api/
 """
 
+from pathlib import Path
+
 import requests
 
+from dataset_prober.loading_policy import (
+    AuthorizedLoad,
+    LoaderKind,
+    claims_for_dataset,
+    detect_resource_format,
+    loader_for_resource,
+)
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
@@ -162,13 +171,19 @@ class CKANTool(DataSourceTool):
 
     def _probe_csv(self, result: DatasetResult, sample_rows: int, timeout: int) -> DatasetResult:
         """Probe a CSV URL using DuckDB httpfs."""
+        admission_error = self._csv_admission_error(result)
+        if admission_error:
+            result.status = "found"
+            result.error = admission_error
+            return result
+
+        con = None
         try:
             import duckdb
 
             con = duckdb.connect()
             ensure_httpfs(con)
             probe = probe_csv_url(con, result.download_url, sample_rows)
-            con.close()
 
             result.columns = probe["columns"]
             result.sample = probe["sample"][:3]
@@ -181,10 +196,22 @@ class CKANTool(DataSourceTool):
             result.status = "found"
             result.error = f"Probe failed: {str(e)[:100]}"
             return result
+        finally:
+            if con is not None:
+                con.close()
 
-    def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
+    def download(
+        self,
+        dataset: DatasetResult,
+        destination: str | Path,
+        authorization: AuthorizedLoad,
+    ) -> DatasetResult:
         """Download a CSV dataset into DuckDB using httpfs."""
-        return download_csv_dataset(dataset, db_path)
+        if not isinstance(authorization, AuthorizedLoad):
+            raise TypeError("CKAN persistent loading requires an AuthorizedLoad")
+        actual_claims = claims_for_dataset(dataset, self.adapter_identity, destination)
+        with authorization.activate(actual_claims) as permit:
+            return download_csv_dataset(dataset, self.adapter_identity, destination, permit)
 
     def _package_to_result(self, pkg: dict) -> DatasetResult | None:
         """Convert a CKAN package dict to a DatasetResult."""
@@ -217,6 +244,11 @@ class CKANTool(DataSourceTool):
         notes = pkg.get("notes", "") or ""
         description = notes[:300]
 
+        resource_format = None
+        if csv_resource:
+            catalog_format = csv_resource.get("format", "").upper()
+            resource_format = "CSV" if catalog_format in ("CSV", "TEXT/CSV") else catalog_format
+
         return DatasetResult(
             id=pkg.get("name", pkg.get("id", "")),
             title=pkg.get("title", ""),
@@ -225,7 +257,7 @@ class CKANTool(DataSourceTool):
             source_name=f"{self.source_name} ({org_name})" if org_name else self.source_name,
             url=f"https://catalog.data.gov/dataset/{pkg.get('name', '')}",
             download_url=csv_resource.get("url") if csv_resource else None,
-            format="CSV" if csv_resource else None,
+            format=resource_format,
             modified=modified_display,
             frequency=self._parse_frequency(pkg),
             license=license_name,
@@ -257,6 +289,18 @@ class CKANTool(DataSourceTool):
                 }
                 return freq_map.get(freq, freq)
         return None
+
+    def _csv_admission_error(self, dataset: DatasetResult) -> str | None:
+        """Reject catalog labels that contradict or cannot prove the resource format."""
+        loader = loader_for_resource(self.source_type, dataset.format, dataset.download_url or "")
+        if loader is LoaderKind.DUCKDB_CSV:
+            return None
+        detected_format = detect_resource_format(dataset.download_url or "")
+        declared_format = dataset.format.strip().upper() if dataset.format else None
+        return (
+            "Unsupported or unproven CKAN resource format: "
+            f"{detected_format or declared_format or 'unknown'}"
+        )
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""

@@ -7,6 +7,34 @@ These run in milliseconds and never touch the network or filesystem.
 
 import pytest
 
+
+def _authorized_manual_load(monkeypatch, url, destination, *, name="dataset"):
+    """Exercise the real manual policy and persistent writer without networking."""
+    from dataset_prober import prober
+    from dataset_prober.loading_policy import LoadingPolicySession
+    from dataset_prober.prober import ProbeResult
+    from dataset_prober.tools import base
+
+    result = ProbeResult(
+        url=str(url),
+        name=name,
+        status="ok",
+        columns=[{"name": "value", "type": "INTEGER"}],
+        format="CSV",
+    )
+    session = LoadingPolicySession(download_enabled=True)
+    session.register_probe_result(result)
+    authorization = session.request_authorization(
+        source_key="manual",
+        adapter_identity="Manual URL",
+        resource_id=result.url,
+        destination=destination,
+        input_func=lambda _prompt: "yes",
+    )
+    monkeypatch.setattr(base, "ensure_httpfs", lambda _connection: None)
+    return prober.download_to_duckdb(result, str(destination), authorization)
+
+
 # ─── SQL injection tests ─────────────────────────────────────────────────────
 
 
@@ -21,133 +49,43 @@ class TestSqlInjection:
     ckan_tool and tavily_tool never called _safe_url at all.
     """
 
-    def test_injection_payload_cannot_drop_a_table(self, tmp_path):
+    def test_injection_payload_cannot_drop_a_table(self, monkeypatch, tmp_path):
         import duckdb
 
-        from dataset_prober.tools.base import load_csv_to_table
-
-        con = duckdb.connect(str(tmp_path / "victim.duckdb"))
+        destination = tmp_path / "victim.duckdb"
+        con = duckdb.connect(str(destination))
         con.execute("CREATE TABLE canary AS SELECT 1 AS x")
+        con.close()
 
-        payload = "http://x/a.csv'); DROP TABLE canary; --"
-        with pytest.raises(Exception):
-            load_csv_to_table(con, "loot", payload)
+        payload = "http://x/a.csv?value='); DROP TABLE canary; --"
+        monkeypatch.setattr("dataset_prober.prober.response_is_html", lambda _url: False)
+        _authorized_manual_load(monkeypatch, payload, destination, name="loot")
 
+        con = duckdb.connect(str(destination))
         survived = con.execute(
             "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'canary'"
         ).fetchone()[0]
         con.close()
         assert survived == 1, "injection payload executed and dropped the canary"
 
-    def test_legitimate_url_still_loads(self, tmp_path):
-        import duckdb
-
-        from dataset_prober.tools.base import load_csv_to_table
-
+    def test_legitimate_url_still_loads(self, monkeypatch, tmp_path):
         csv = tmp_path / "data.csv"
         csv.write_text("a,b\n1,x\n2,y\n")
 
-        con = duckdb.connect()
-        rows = load_csv_to_table(con, "ok", str(csv))
-        con.close()
-        assert rows == 2
+        result = _authorized_manual_load(monkeypatch, csv, tmp_path / "data.duckdb")
+        assert result.row_count == 2
 
-    def test_quote_in_path_is_not_silently_mangled(self, tmp_path):
+    def test_quote_in_path_is_not_silently_mangled(self, monkeypatch, tmp_path):
         """
         A legitimate path containing a quote used to be corrupted by stripping
         the character — the old blocklist rewrote the user's URL behind their
         back. Binding passes it through intact.
         """
-        import duckdb
-
-        from dataset_prober.tools.base import load_csv_to_table
-
         csv = tmp_path / "it's.csv"
         csv.write_text("a\n1\n")
 
-        con = duckdb.connect()
-        rows = load_csv_to_table(con, "quoted", str(csv))
-        con.close()
-        assert rows == 1
-
-
-# ─── Table naming tests ──────────────────────────────────────────────────────
-
-
-class TestSafeTableName:
-    """Table identity must rest on the source ID, never the human title."""
-
-    def test_long_distinct_ids_do_not_collide(self):
-        """Different long IDs must remain distinct table identities."""
-        from dataset_prober.tools.base import safe_table_name
-
-        shared_prefix = "https://example.org/datasets/" + ("a" * 100)
-
-        first = safe_table_name(f"{shared_prefix}/first.csv", "Population data")
-        second = safe_table_name(f"{shared_prefix}/second.csv", "Population data")
-
-        assert first != second
-
-    def test_long_name_stays_within_duckdb_identifier_limit(self):
-        """Generated table names must not exceed 63 characters."""
-        from dataset_prober.tools.base import safe_table_name
-
-        dataset_id = "https://example.org/" + ("a" * 200)
-        name = safe_table_name(dataset_id, "Population data")
-
-        assert len(name) <= 63
-
-    def test_long_id_produces_stable_table_name(self):
-        """The same identity must always produce the same table name."""
-        from dataset_prober.tools.base import safe_table_name
-
-        dataset_id = "https://example.org/" + ("a" * 200)
-
-        assert safe_table_name(dataset_id, "Population data") == safe_table_name(
-            dataset_id, "Population data"
-        )
-
-    def test_url_identity_does_not_duplicate_the_filename(self):
-        """
-        Identity is the hash; readability is the title suffix. Regression guard
-        for t_2026_05_no2_csv_00175841_2026_05_no2_csv, where the URL stem
-        appeared in both halves.
-        """
-        from dataset_prober.prober import _url_identity
-        from dataset_prober.tools.base import safe_table_name
-
-        url = "https://data.rivm.nl/data/luchtmeetnet/Actueel-jaar/2026_05_NO2.csv"
-        name = safe_table_name(_url_identity(url), "2026_05_NO2.csv")
-
-        assert name.count("2026_05_no2_csv") == 1
-
-    def test_distinct_ids_never_collide_despite_identical_titles(self):
-        from dataset_prober.tools.base import safe_table_name
-
-        a = safe_table_name("83765NED", "Bevolking per gemeente, 2024")
-        b = safe_table_name("85496NED", "Bevolking per gemeente (2024)")
-        assert a != b, "two different datasets mapped to one table"
-
-    def test_same_id_is_stable(self):
-        from dataset_prober.tools.base import safe_table_name
-
-        assert safe_table_name("83765NED", "x") == safe_table_name("83765NED", "x")
-
-    def test_empty_id_raises_rather_than_producing_junk(self):
-        from dataset_prober.tools.base import safe_table_name
-
-        with pytest.raises(ValueError):
-            safe_table_name("!!!", "title")
-
-    def test_leading_digit_is_prefixed(self):
-        from dataset_prober.tools.base import safe_table_name
-
-        assert not safe_table_name("2024data", "x")[0].isdigit()
-
-    def test_respects_duckdb_identifier_length(self):
-        from dataset_prober.tools.base import safe_table_name
-
-        assert len(safe_table_name("x" * 200, "y" * 200)) <= 63
+        result = _authorized_manual_load(monkeypatch, csv, tmp_path / "quoted.duckdb")
+        assert result.row_count == 1
 
 
 # ─── DatasetResult method tests ──────────────────────────────────────────────
@@ -609,28 +547,29 @@ class TestRedirectTrapDetection:
     """HTML pages must not be silently stored as data."""
 
     def _html(self, tmp_path):
-        p = tmp_path / "landing.html"
+        p = tmp_path / "landing.csv"
         p.write_text("<!DOCTYPE html>\n<html><body>hi</body></html>\n")
         return str(p)
 
-    def test_html_page_is_rejected(self, tmp_path):
+    def test_html_page_is_rejected(self, monkeypatch, tmp_path):
         import duckdb
 
-        from dataset_prober.tools.base import load_csv_to_table
+        destination = tmp_path / "html.duckdb"
+        _authorized_manual_load(
+            monkeypatch,
+            self._html(tmp_path),
+            destination,
+            name="trap",
+        )
+        connection = duckdb.connect(str(destination))
+        assert connection.execute("SELECT count(*) FROM duckdb_tables()").fetchone()[0] == 0
+        connection.close()
 
-        con = duckdb.connect()
-        with pytest.raises(ValueError, match="HTML"):
-            load_csv_to_table(con, "trap", self._html(tmp_path))
-
-    def test_real_csv_still_loads(self, tmp_path):
-        import duckdb
-
-        from dataset_prober.tools.base import load_csv_to_table
-
+    def test_real_csv_still_loads(self, monkeypatch, tmp_path):
         csv = tmp_path / "d.csv"
         csv.write_text("station,no2\nDenHaag,28\nUtrecht,31\n")
-        con = duckdb.connect()
-        assert load_csv_to_table(con, "ok", str(csv)) == 2
+        result = _authorized_manual_load(monkeypatch, csv, tmp_path / "real.duckdb")
+        assert result.row_count == 2
 
 
 class TestCsvScanExprSharedByProbeAndLoad:
@@ -731,7 +670,7 @@ class TestCsvScanExprSharedByProbeAndLoad:
 
     # ── the shared-decision property ─────────────────────────────────────
 
-    def test_probe_and_load_agree_on_the_european_file(self, tmp_path):
+    def test_probe_and_load_agree_on_the_european_file(self, monkeypatch, tmp_path):
         """
         The regression this whole change exists to prevent: probe_url used to
         have no fallback, so a European file errored at probe and never
@@ -739,37 +678,29 @@ class TestCsvScanExprSharedByProbeAndLoad:
         """
         from unittest.mock import patch
 
-        import duckdb
-
         from dataset_prober import prober
-        from dataset_prober.tools.base import load_csv_to_table
 
         path = self._write(tmp_path, "euro.csv", self.EUROPEAN)
 
         with patch.object(prober, "ensure_httpfs", lambda con: None):
             result = prober.probe_url("euro", path)
 
-        con = duckdb.connect()
-        loaded = load_csv_to_table(con, "euro_tbl", path)
+        loaded = _authorized_manual_load(monkeypatch, path, tmp_path / "euro.duckdb", name="euro")
 
         assert result.status == "ok"
-        assert result.row_count == loaded
+        assert result.row_count == loaded.row_count
 
-    def test_probe_and_load_agree_on_the_clean_file(self, tmp_path):
+    def test_probe_and_load_agree_on_the_clean_file(self, monkeypatch, tmp_path):
         from unittest.mock import patch
 
-        import duckdb
-
         from dataset_prober import prober
-        from dataset_prober.tools.base import load_csv_to_table
 
         path = self._write(tmp_path, "clean.csv", self.CLEAN)
 
         with patch.object(prober, "ensure_httpfs", lambda con: None):
             result = prober.probe_url("clean", path)
 
-        con = duckdb.connect()
-        loaded = load_csv_to_table(con, "clean_tbl", path)
+        loaded = _authorized_manual_load(monkeypatch, path, tmp_path / "clean.duckdb", name="clean")
 
         assert result.status == "ok"
-        assert result.row_count == loaded == 2
+        assert result.row_count == loaded.row_count == 2

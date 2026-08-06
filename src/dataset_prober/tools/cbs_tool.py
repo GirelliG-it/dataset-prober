@@ -8,15 +8,16 @@ Uses cbsodata for full dataset downloads.
 All configuration comes from the profile — no hardcoded values.
 """
 
-import queue as queue_module
-import threading
+from pathlib import Path
 
 import requests
 
+from dataset_prober.loading_policy import AuthorizedLoad, claims_for_dataset
 from dataset_prober.tools.base import (
+    AuthorizedDuckDBConnection,
     DatasetResult,
     DataSourceTool,
-    safe_table_name,
+    load_dataframe_to_table,
 )
 
 
@@ -184,63 +185,44 @@ class CBSTool(DataSourceTool):
         except Exception as e:
             return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
 
-    def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
+    def download(
+        self,
+        dataset: DatasetResult,
+        destination: str | Path,
+        authorization: AuthorizedLoad,
+    ) -> DatasetResult:
         """
-        Download full CBS table using cbsodata in a daemon thread with timeout.
-        Saves to DuckDB via pandas.
+        Retrieve one full CBS table synchronously and persist it via pandas.
+
+        Synchronous retrieval keeps the load attempt inside the authorization
+        lifetime because cbsodata does not expose a cancellable timeout.
         """
         import cbsodata
-        import duckdb
         import pandas as pd
 
-        timeout = self.config.get("download_timeout_seconds", 300)
-        result_queue = queue_module.Queue()
-
-        def _fetch():
+        if not isinstance(authorization, AuthorizedLoad):
+            raise TypeError("CBS persistent loading requires an AuthorizedLoad")
+        actual_claims = claims_for_dataset(dataset, self.adapter_identity, destination)
+        with authorization.activate(actual_claims) as permit:
             try:
-                data = cbsodata.get_data(dataset.id)
-                result_queue.put(("ok", data))
-            except Exception as e:
-                result_queue.put(("error", str(e)))
+                # cbsodata exposes no cancellable timeout. Keeping this call
+                # synchronous ensures retrieval cannot outlive its active permit.
+                data = cbsodata.get_data(actual_claims.resource_id)
+                if not data:
+                    raise ValueError("No data returned from CBS")
 
-        thread = threading.Thread(target=_fetch, daemon=True)
-        thread.start()
-        thread.join(timeout=timeout)
+                dataframe = pd.DataFrame(data)
+                with AuthorizedDuckDBConnection(permit, destination) as connection:
+                    actual_rows = load_dataframe_to_table(connection, dataframe)
 
-        if thread.is_alive():
-            dataset.status = "failed"
-            dataset.error = f"Download timed out after {timeout}s"
-            return dataset
+                dataset.row_count = actual_rows
+                dataset.status = "downloaded"
+                return dataset
 
-        status, payload = result_queue.get()
-        if status == "error":
-            dataset.status = "failed"
-            dataset.error = payload
-            return dataset
-
-        data = payload
-        if not data:
-            dataset.status = "failed"
-            dataset.error = "No data returned from CBS"
-            return dataset
-
-        table_name = safe_table_name(dataset.id, dataset.title)
-
-        try:
-            df = pd.DataFrame(data)  # noqa: F841 -- DuckDB reads 'df' from local scope in the SQL below
-            con = duckdb.connect(db_path)
-            con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df')
-            actual_rows = con.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
-            con.close()
-
-            dataset.row_count = actual_rows
-            dataset.status = "downloaded"
-            return dataset
-
-        except Exception as e:
-            dataset.status = "failed"
-            dataset.error = str(e)
-            return dataset
+            except Exception as exc:
+                dataset.status = "failed"
+                dataset.error = str(exc)
+                return dataset
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""
