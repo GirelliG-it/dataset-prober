@@ -7,6 +7,15 @@ from rich.console import Console
 from rich.table import Table
 
 from dataset_prober.crawler import resolve_directory
+from dataset_prober.loading_policy import (
+    InspectedResourceError,
+    LoadingPolicySession,
+    configured_adapter_identity,
+    parse_exact_selection,
+    safe_url_identity,
+    sanitize_url_text,
+)
+from dataset_prober.paths import AppPaths
 from dataset_prober.prober import download_to_duckdb, probe_all, save_results
 from dataset_prober.tools.base import response_is_html
 
@@ -73,7 +82,10 @@ def expand_directories(sources: list[dict]) -> list[dict]:
         try:
             listing = resolve_directory(url)
         except Exception as e:
-            console.print(f"[yellow]Could not read directory {url}: {e}[/yellow]")
+            console.print(
+                f"[yellow]Could not read directory {safe_url_identity(url)}: "
+                f"{sanitize_url_text(str(e))}[/yellow]"
+            )
             expanded.append(src)  # let it fall through and fail honestly downstream
             continue
 
@@ -98,16 +110,16 @@ def _walk_directory(url: str, listing: dict | None = None) -> list[dict]:
             listing = resolve_directory(url)
         subdirs, files = listing["subdirs"], listing["files"]
 
-        console.print(f"\n[bold cyan]Directory:[/bold cyan] {url}")
+        console.print(f"\n[bold cyan]Directory:[/bold cyan] {safe_url_identity(url)}")
         if subdirs:
             console.print("[bold]Subfolders:[/bold]")
             for i, d in enumerate(subdirs, 1):
-                console.print(f"  d{i}. {d['name']}")
+                console.print(f"  d{i}. {sanitize_url_text(str(d['name']))}")
         if files:
             console.print("[bold]Files:[/bold]")
             for i, f in enumerate(files, 1):
                 date = f" [dim]({f['modified']})[/dim]" if f.get("modified") else ""
-                console.print(f"  f{i}. {f['name']}{date}")
+                console.print(f"  f{i}. {sanitize_url_text(str(f['name']))}{date}")
         if not subdirs and not files:
             console.print("[yellow]Empty directory.[/yellow]")
             return []
@@ -156,18 +168,18 @@ def display_results(results):
     for r in results:
         status_color = "green" if r.status == "ok" else "red"
         table.add_row(
-            r.name,
+            sanitize_url_text(r.name),
             f"[{status_color}]{r.status}[/{status_color}]",
             str(r.row_count) if r.row_count else "-",
             str(len(r.columns)) if r.columns else "-",
-            r.error[:60] if r.error else "",
+            sanitize_url_text(r.error[:60]) if r.error else "",
         )
 
     console.print(table)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Probe open datasets via DuckDB httpfs")
+    parser = argparse.ArgumentParser(description="Safely retrieve and probe open datasets")
     parser.add_argument("--file", help="Path to a JSON file with dataset sources")
     parser.add_argument("--analyze", action="store_true", help="Run Claude analysis after probing")
     parser.add_argument(
@@ -178,7 +190,14 @@ def main() -> None:
         default="qwen2.5-coder:3b",
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Offer exact per-resource loading choices after probing",
+    )
     args = parser.parse_args()
+    paths = AppPaths.resolve()
+    loading_session = LoadingPolicySession(download_enabled=args.download)
 
     # Get sources
     if args.file:
@@ -203,32 +222,49 @@ def main() -> None:
     display_results(results)
 
     # Ask user which datasets to download
-    ok_results = [r for r in results if r.status == "ok"]
-    if ok_results:
+    loadable_results = []
+    for result in results:
+        if result.status != "ok":
+            continue
+        try:
+            loading_session.register_probe_result(result)
+        except InspectedResourceError:
+            continue
+        loadable_results.append(result)
+
+    if loading_session.download_enabled and loadable_results:
+        manual_adapter = configured_adapter_identity("manual", {})
         console.print("\n[bold]Available for download:[/bold]")
-        for i, r in enumerate(ok_results, 1):
-            console.print(f"  {i}. {r.name} ({r.row_count} rows)")
+        for i, r in enumerate(loadable_results, 1):
+            console.print(f"  {i}. {sanitize_url_text(r.name)} ({r.row_count} rows)")
 
-        selection = (
-            console.input("\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] ")
-            .strip()
-            .lower()
-        )
+        try:
+            selection = console.input(
+                "\n[cyan]Download which datasets? (e.g. 1,3 or 'all' or 'none'):[/cyan] "
+            )
+            indices = parse_exact_selection(selection, len(loadable_results))
+        except (EOFError, KeyboardInterrupt, ValueError):
+            indices = []
+            console.print("[yellow]Selection denied — no datasets will be loaded.[/yellow]")
 
-        if selection != "none" and selection != "":
-            if selection == "all":
-                to_download = ok_results
-            else:
-                indices = [int(x.strip()) - 1 for x in selection.split(",") if x.strip().isdigit()]
-                to_download = [ok_results[i] for i in indices if i < len(ok_results)]
-
-            if to_download:
-                db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
-                console.print(f"\n[bold]Downloading {len(to_download)} dataset(s)...[/bold]\n")
-                download_to_duckdb(to_download, db_path)
+        for index in indices:
+            result = loadable_results[index]
+            authorization = loading_session.request_authorization(
+                source_key="manual",
+                adapter_identity=manual_adapter,
+                resource_id=result.url,
+                destination=paths.duckdb_path,
+                input_func=console.input,
+            )
+            if authorization is None:
+                console.print(f"[yellow]Not approved: {sanitize_url_text(result.name)}[/yellow]")
+                continue
+            console.print(f"\n[bold]Downloading {sanitize_url_text(result.name)}...[/bold]\n")
+            download_to_duckdb(result, str(paths.duckdb_path), authorization)
 
     # Save results
-    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
+    output_path = paths.probe_results_path
+    paths.ensure_output_dir()
     save_results(results, str(output_path))
 
     # Optionally run analysis
@@ -247,8 +283,10 @@ def main() -> None:
             from dataset_prober.agent import summarize_probe_results
 
             summary = summarize_probe_results(saved)
+        summary = sanitize_url_text(summary)
         console.print(summary)
-        summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
+        summary_path = paths.analysis_summary_path
+        paths.ensure_output_dir()
         with open(summary_path, "w") as f:
             f.write(summary)
         console.print(f"\n[green]Summary saved to {summary_path}[/green]")

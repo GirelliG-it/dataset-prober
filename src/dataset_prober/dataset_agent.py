@@ -46,7 +46,16 @@ from dataset_prober.config_loader import (  # noqa: E402
     Profile,
     get_anthropic_api_key,
 )
+from dataset_prober.loading_policy import (  # noqa: E402
+    InspectedResourceError,
+    LoaderKind,
+    LoadingPolicySession,
+    loader_for_resource,
+    parse_exact_selection,
+    sanitize_url_text,
+)
 from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
+from dataset_prober.paths import AppPaths  # noqa: E402
 from dataset_prober.prompt_interpreter import PromptInterpreter  # noqa: E402
 from dataset_prober.tools import DatasetResult, tools_for_profile  # noqa: E402
 
@@ -162,7 +171,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
     Build Claude tool definitions dynamically from profile.
     No hardcoded tool descriptions — profile context is injected at runtime.
     """
-    catalog_types = [c.type for c in profile.catalogs]
+    catalog_types = list(dict.fromkeys(c.type for c in profile.catalogs if c.type != "tavily"))
     has_cbs = "cbs" in catalog_types
     has_ckan = "ckan" in catalog_types
 
@@ -174,7 +183,9 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
         catalog_desc.append("CBS OData catalog (for Dutch statistics)")
     if has_ckan:
         catalog_desc.append("CKAN catalog (for government open data portals)")
-    catalog_desc.append("Tavily web search (fallback for any source)")
+    if not catalog_desc:
+        catalog_desc.append("no source catalog enabled under the v0.1 URL-safety policy")
+    available_catalogs = ", ".join(catalog_types) or "none under the current safety policy"
 
     tools.append(
         {
@@ -194,8 +205,8 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                     },
                     "source": {
                         "type": "string",
-                        "enum": catalog_types + ["tavily"],
-                        "description": f"Which catalog to search. Available: {', '.join(catalog_types + ['tavily'])}",
+                        "enum": catalog_types,
+                        "description": f"Which catalog to search. Available: {available_catalogs}",
                     },
                     "max_results": {
                         "type": "integer",
@@ -215,7 +226,6 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                 "Fetch full metadata and sample data for a specific dataset by its ID. "
                 "For CBS: use the table ID (e.g. '37230ned'). "
                 "For CKAN: use the package name or ID. "
-                "For web URLs: use the full URL. "
                 "Always fetch before downloading to verify quality and freshness."
             ),
             "input_schema": {
@@ -227,7 +237,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                     },
                     "source": {
                         "type": "string",
-                        "enum": catalog_types + ["tavily"],
+                        "enum": catalog_types,
                         "description": "Which tool to use for fetching",
                     },
                     "sample_rows": {
@@ -275,9 +285,10 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
         {
             "name": "download_dataset",
             "description": (
-                "Download a dataset into the local DuckDB database. "
-                "ONLY call this if: (1) the user explicitly requested downloading, "
-                "AND (2) the dataset has passed freshness and quality checks. "
+                "Request interactive approval to load one inspected dataset into DuckDB. "
+                "This tool call does not grant permission: deterministic code asks the user "
+                "to confirm this exact resource, and denial stops before the loader. "
+                "Only request approval after freshness and quality checks. "
                 "For CBS datasets, provide the table_id. "
                 "For CSV datasets, provide the download_url."
             ),
@@ -291,7 +302,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                     },
                     "source": {
                         "type": "string",
-                        "enum": catalog_types + ["tavily"],
+                        "enum": catalog_types,
                         "description": "Which tool to use for downloading",
                     },
                     "download_url": {
@@ -320,17 +331,16 @@ def execute_tool(
     tool_map: dict,
     budget: Budget,
     profile: Profile,
-    allow_download: bool,
+    loading_session: LoadingPolicySession,
     found_datasets: list,
     session_cost: SessionCost,
+    paths: AppPaths,
 ) -> dict:
     """
     Route a Claude tool call to the correct tool implementation.
     Updates budget and found_datasets in place.
     Returns JSON-serializable result dict.
     """
-    db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
-
     if tool_name == "search_catalog":
         source = tool_input["source"]
         keyword = tool_input["keyword"]
@@ -343,7 +353,9 @@ def execute_tool(
         if not budget.can_search():
             return {"error": "Search budget exhausted or timed out"}
 
-        console.print(f"  🔍 [cyan]Searching {source}:[/cyan] {keyword}")
+        console.print(
+            f"  🔍 [cyan]Searching {sanitize_url_text(source)}:[/cyan] {sanitize_url_text(keyword)}"
+        )
         budget.searches_used += 1
 
         results = tool.search(keyword, max_results)
@@ -362,18 +374,28 @@ def execute_tool(
         if not budget.can_probe():
             return {"error": "Probe budget exhausted or timed out"}
 
-        console.print(f"  📊 [cyan]Fetching ({source}):[/cyan] {dataset_id}")
+        console.print(
+            f"  📊 [cyan]Fetching ({sanitize_url_text(source)}):[/cyan] "
+            f"{sanitize_url_text(dataset_id)}"
+        )
         budget.probes_used += 1
 
         result = tool.fetch(dataset_id, sample_rows)
 
         if result.status == "probed":
             console.print(
-                f"    → ✅ {result.title} | {len(result.columns or [])} columns | modified: {result.modified}"
+                f"    → ✅ {sanitize_url_text(result.title)} | "
+                f"{len(result.columns or [])} columns | modified: {result.modified}"
             )
             found_datasets.append(result)
+            try:
+                loading_session.register_dataset_result(result, tool.adapter_identity)
+            except InspectedResourceError:
+                pass
         else:
-            console.print(f"    → ❌ {result.error or 'fetch failed'}")
+            console.print(
+                f"    → ❌ {sanitize_url_text(result.error) if result.error else 'fetch failed'}"
+            )
 
         return result.to_dict()
 
@@ -382,7 +404,10 @@ def execute_tool(
         last_updated = tool_input["last_updated"]
         max_days_old = tool_input["max_days_old"]
 
-        console.print(f"  📅 [cyan]Checking freshness:[/cyan] {dataset_id} (last: {last_updated})")
+        console.print(
+            f"  📅 [cyan]Checking freshness:[/cyan] {sanitize_url_text(dataset_id)} "
+            f"(last: {last_updated})"
+        )
 
         # Create a temporary DatasetResult to use its freshness logic
         temp = DatasetResult(
@@ -433,55 +458,61 @@ def execute_tool(
         }
 
     elif tool_name == "download_dataset":
-        if not allow_download:
-            console.print("  ⛔ [yellow]Download blocked — not requested by user[/yellow]")
-            return {"error": "Download not permitted — user did not request download"}
+        if not loading_session.download_enabled:
+            console.print("  ⛔ [yellow]Load offer blocked — --download was not set[/yellow]")
+            return {"error": "Download not permitted — --download was not set"}
 
         source = tool_input["source"]
         dataset_id = tool_input["dataset_id"]
-        title = tool_input["title"]
-        download_url = tool_input.get("download_url")
         table_id = tool_input.get("table_id")
+
+        matches = [d for d in found_datasets if d.source == source and d.id == dataset_id]
+        if not matches:
+            return {"error": "Download denied — resource is not an inspected candidate"}
+        if len(matches) > 1:
+            return {"error": "Download denied — inspected resource identity is ambiguous"}
+        dataset = matches[0]
+        if dataset.status != "probed":
+            return {"error": "Download denied — resource has not passed inspection"}
+        if table_id and table_id != dataset.id:
+            return {"error": "Download denied — table ID does not match inspected resource"}
+        if (
+            loader_for_resource(dataset.source, dataset.format, dataset.download_url or "")
+            is LoaderKind.UNSUPPORTED
+        ):
+            return {
+                "error": (
+                    "Download denied — unsupported or unknown format: "
+                    f"{dataset.format or 'unknown'}"
+                )
+            }
 
         tool = tool_map.get(source)
         if not tool:
             return {"error": f"Tool '{source}' not available"}
 
-        console.print(f"  💾 [cyan]Downloading:[/cyan] {title}")
-
-        # Find the DatasetResult in found_datasets or create one
-        dataset = next((d for d in found_datasets if d.id == dataset_id), None)
-        if not dataset:
-            dataset = DatasetResult(
-                id=table_id or dataset_id,
-                title=title,
-                description="",
-                source=source,
-                source_name=tool.source_name,
-                url=download_url or "",
-                download_url=download_url,
-                format="CSV",
-                modified=None,
-                frequency=None,
-                license=None,
-                license_url=None,
-                row_count=None,
-                columns=[],
-                sample=None,
-                language=None,
-                tags=[],
+        try:
+            authorization = loading_session.request_authorization(
+                source_key=source,
+                adapter_identity=tool.adapter_identity,
+                resource_id=dataset_id,
+                destination=paths.duckdb_path,
+                input_func=console.input,
             )
+        except InspectedResourceError as exc:
+            return {"error": f"Download denied — {sanitize_url_text(str(exc))}"}
+        if authorization is None:
+            console.print(f"  ⛔ [yellow]Not approved: {sanitize_url_text(dataset.title)}[/yellow]")
+            return {"error": "Download denied — exact affirmative consent was not given"}
 
-        # Override ID with CBS table_id if provided
-        if table_id:
-            dataset.id = table_id
-
-        result = tool.download(dataset, db_path)
+        console.print(f"  💾 [cyan]Downloading:[/cyan] {sanitize_url_text(dataset.title)}")
+        result = tool.download(dataset, str(paths.duckdb_path), authorization)
 
         if result.status == "downloaded":
-            console.print(f"    → ✅ {result.row_count:,} rows saved to DuckDB")
+            rows = f"{result.row_count:,}" if result.row_count is not None else "unknown"
+            console.print(f"    → ✅ {rows} rows saved to DuckDB")
         else:
-            console.print(f"    → ❌ {result.error}")
+            console.print(f"    → ❌ {sanitize_url_text(result.error or 'load failed')}")
 
         return result.to_dict()
 
@@ -496,9 +527,10 @@ def run_profile(
     user_prompt: str,
     profile: Profile,
     budget: Budget,
-    allow_download: bool,
+    loading_session: LoadingPolicySession,
     session_cost: SessionCost,
     cli_overrides: dict,
+    paths: AppPaths,
     initial_message: Optional[str] = None,
 ) -> ProfileResult:
     """
@@ -537,7 +569,7 @@ BEHAVIOUR RULES:
 3. Always fetch dataset details before recommending — verify quality, schema, and freshness.
 4. Apply freshness rules strictly using check_freshness — never assume a dataset is fresh.
 5. Evaluate licenses — prefer {", ".join(profile.license.preference)}.
-6. Only download if the user explicitly requested it.
+6. A download tool call only requests an interactive offer; it never grants authority.
 7. Stop and report when budget is exhausted.
 8. Explain each decision briefly before each tool call.
 
@@ -588,7 +620,7 @@ When done, present a structured summary table with:
                 f"{budget.elapsed_minutes():.1f} minutes.[/yellow]"
             )
             console.print(f"[yellow]Found {len(found_datasets)} dataset(s) so far.[/yellow]\n")
-            _handle_timeout(found_datasets, budget, tool_map, allow_download)
+            _handle_timeout(found_datasets, budget, tool_map, loading_session, paths)
             break
 
         # Status every 3 iterations
@@ -626,7 +658,9 @@ When done, present a structured summary table with:
         if response.stop_reason == "end_turn":
             for block in response.content:
                 if hasattr(block, "text") and block.text:
-                    console.print(f"\n[bold green]Agent Report:[/bold green]\n{block.text}")
+                    console.print(
+                        f"\n[bold green]Agent Report:[/bold green]\n{sanitize_url_text(block.text)}"
+                    )
             break
 
         if response.stop_reason != "tool_use":
@@ -638,7 +672,7 @@ When done, present a structured summary table with:
         for block in response.content:
             if block.type != "tool_use":
                 if hasattr(block, "text") and block.text:
-                    console.print(f"\n[dim italic]{block.text}[/dim italic]")
+                    console.print(f"\n[dim italic]{sanitize_url_text(block.text)}[/dim italic]")
                 continue
 
             result = execute_tool(
@@ -646,8 +680,9 @@ When done, present a structured summary table with:
                 tool_input=block.input,
                 tool_map=tool_map,
                 budget=budget,
+                paths=paths,
                 profile=profile,
-                allow_download=allow_download,
+                loading_session=loading_session,
                 found_datasets=found_datasets,
                 session_cost=session_cost,
             )
@@ -671,7 +706,13 @@ When done, present a structured summary table with:
     return profile_result
 
 
-def _handle_timeout(found_datasets: list, budget: Budget, tool_map: dict, allow_download: bool):
+def _handle_timeout(
+    found_datasets: list,
+    budget: Budget,
+    tool_map: dict,
+    loading_session: LoadingPolicySession,
+    paths: AppPaths,
+):
     """Handle timeout — ask user what to do with partial results."""
     console.print("\n[bold yellow]What would you like to do?[/bold yellow]")
     console.print("  1. Continue searching (resets timer)")
@@ -683,12 +724,43 @@ def _handle_timeout(found_datasets: list, budget: Budget, tool_map: dict, allow_
     if choice == "1":
         console.print("[green]Continuing...[/green]")
         budget.reset_timer()
-    elif choice == "2" and found_datasets and allow_download:
-        db_path = str(Path(__file__).parent.parent.parent / "output" / "datasets.duckdb")
-        for dataset in found_datasets:
-            tool = tool_map.get(dataset.source)
-            if tool and dataset.status == "probed":
-                tool.download(dataset, db_path)
+    elif choice == "2" and found_datasets and loading_session.download_enabled:
+        candidates = [
+            dataset
+            for dataset in found_datasets
+            if dataset.status == "probed"
+            and dataset.source in tool_map
+            and loader_for_resource(dataset.source, dataset.format, dataset.download_url or "")
+            is not LoaderKind.UNSUPPORTED
+        ]
+        for index, dataset in enumerate(candidates, 1):
+            console.print(
+                f"  {index}. {sanitize_url_text(dataset.title)} "
+                f"[{dataset.source}:{sanitize_url_text(dataset.id)}]"
+            )
+        try:
+            selection = console.input(
+                "[cyan]Select exact resources (e.g. 1,3 or 'all' or 'none'):[/cyan] "
+            )
+            indices = parse_exact_selection(selection, len(candidates))
+        except (EOFError, KeyboardInterrupt, ValueError):
+            indices = []
+
+        for index in indices:
+            dataset = candidates[index]
+            tool = tool_map[dataset.source]
+            try:
+                authorization = loading_session.request_authorization(
+                    source_key=dataset.source,
+                    adapter_identity=tool.adapter_identity,
+                    resource_id=dataset.id,
+                    destination=paths.duckdb_path,
+                    input_func=console.input,
+                )
+            except InspectedResourceError:
+                continue
+            if authorization is not None:
+                tool.download(dataset, str(paths.duckdb_path), authorization)
     else:
         _print_results_table(found_datasets)
 
@@ -717,7 +789,7 @@ def _print_results_table(datasets: list):
         }.get(d.status, "white")
 
         table.add_row(
-            d.title[:40],
+            sanitize_url_text(d.title)[:40],
             d.source,
             str(d.row_count) if d.row_count else "-",
             (d.modified or "unknown")[:10],
@@ -766,7 +838,9 @@ def main():
         help="Maximum tokens per Claude call (overrides profile default)",
     )
     parser.add_argument(
-        "--download", action="store_true", help="Allow agent to download datasets to DuckDB"
+        "--download",
+        action="store_true",
+        help="Offer exact per-resource loading choices after inspection",
     )
     parser.add_argument(
         "--list-profiles",
@@ -797,6 +871,8 @@ def main():
         console.print()
         return
 
+    paths = AppPaths.resolve()
+
     # Get user prompt
     console.print("\n[bold cyan]Dataset Discovery Agent[/bold cyan]")
     console.print("[dim]Describe the datasets you are looking for.[/dim]\n")
@@ -806,21 +882,12 @@ def main():
         console.print("[red]No prompt provided. Exiting.[/red]")
         return
 
-    # Detect download intent from prompt
-    download_keywords = [
-        "download",
-        "save",
-        "store",
-        "load into duckdb",
-        "downloaden",
-        "opslaan",
-        "bewaar",
-    ]
-    allow_download = args.download or any(kw in user_prompt.lower() for kw in download_keywords)
+    loading_session = LoadingPolicySession(download_enabled=args.download)
 
-    if allow_download:
+    if loading_session.download_enabled:
         console.print(
-            "[yellow]⚠️  Download mode enabled — datasets will be saved to DuckDB[/yellow]\n"
+            "[yellow]⚠️  Load offers enabled — each resource still requires exact "
+            "affirmative consent[/yellow]\n"
         )
 
     # Session cost tracker
@@ -898,9 +965,10 @@ def main():
             user_prompt=user_prompt,
             profile=profile,
             budget=budget,
-            allow_download=allow_download,
+            loading_session=loading_session,
             session_cost=profile_session_cost,
             cli_overrides={k: v for k, v in cli_overrides.items() if v is not None},
+            paths=paths,
             initial_message=initial_message,
         )
 
@@ -924,7 +992,8 @@ def main():
     # Save results
     all_datasets = aggregated.all_datasets
     if all_datasets:
-        output_path = Path(__file__).parent.parent.parent / "output" / "agent_results.json"
+        output_path = paths.agent_results_path
+        paths.ensure_output_dir()
         with open(output_path, "w") as f:
             json.dump([r.to_dict() for r in all_datasets], f, indent=2, default=str)
         console.print(f"\n[green]Results saved to {output_path}[/green]")

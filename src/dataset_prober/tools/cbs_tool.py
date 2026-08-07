@@ -2,22 +2,32 @@
 src/tools/cbs_tool.py
 
 CBS (Centraal Bureau voor de Statistiek) data source tool.
-Uses the CBS OData API directly for fast metadata and sample fetching.
-Uses cbsodata for full dataset downloads.
+Uses the CBS OData API through the application-owned guarded HTTP transport
+for metadata, samples, pagination, and full dataset retrieval.
 
 All configuration comes from the profile — no hardcoded values.
 """
 
-import queue as queue_module
-import threading
+from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
-import requests
-
+from dataset_prober.loading_policy import AuthorizedLoad, claims_for_dataset, sanitize_url_text
 from dataset_prober.tools.base import (
+    AuthorizedDuckDBConnection,
     DatasetResult,
     DataSourceTool,
-    safe_table_name,
+    load_dataframe_to_table,
 )
+from dataset_prober.tools.guards import (
+    MAX_DATASET_DOWNLOAD_BYTES,
+    UnsafeResourceError,
+    UnsafeURLError,
+    safe_http_get,
+)
+
+_CBS_ODATA_BASE = "https://opendata.cbs.nl/ODataApi/odata"
+_MAX_ODATA_PAGES = 10_000
+_MAX_ODATA_DOWNLOAD_BYTES = MAX_DATASET_DOWNLOAD_BYTES
 
 
 class CBSTool(DataSourceTool):
@@ -26,7 +36,7 @@ class CBSTool(DataSourceTool):
 
     Search: CBS OData Catalog API (fast, scored, filters archived tables)
     Fetch:  CBS OData TypedDataSet with $top (fast, timeout-safe)
-    Download: cbsodata.get_data() in a daemon thread with timeout
+    Download: guarded CBS OData pagination followed by authorized DuckDB CTAS
     """
 
     @property
@@ -38,12 +48,7 @@ class CBSTool(DataSourceTool):
         return "cbs"
 
     def is_available(self) -> bool:
-        try:
-            import cbsodata  # noqa
-
-            return True
-        except ImportError:
-            return False
+        return True
 
     def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
         """
@@ -55,8 +60,11 @@ class CBSTool(DataSourceTool):
         timeout = self.config.get("timeout_seconds", 30)
 
         try:
-            resp = requests.get(f"{catalog}/Tables?$format=json", timeout=timeout)
-            resp.raise_for_status()
+            resp = safe_http_get(
+                f"{catalog.rstrip('/')}/Tables",
+                params={"$format": "json"},
+                timeout=timeout,
+            )
             all_tables = resp.json().get("value", [])
         except Exception as e:
             return [
@@ -125,14 +133,14 @@ class CBSTool(DataSourceTool):
         Uses direct HTTP with timeout — never blocks.
         """
         timeout = self.config.get("timeout_seconds", 30)
-        base = "https://opendata.cbs.nl/ODataApi/odata"
-
         try:
+            self._validate_table_id(dataset_id)
             # Step 1: Table metadata
-            meta_resp = requests.get(
-                f"{base}/{dataset_id}/TableInfos?$format=json", timeout=timeout
+            meta_resp = safe_http_get(
+                f"{_CBS_ODATA_BASE}/{dataset_id}/TableInfos",
+                params={"$format": "json"},
+                timeout=timeout,
             )
-            meta_resp.raise_for_status()
             meta_values = meta_resp.json().get("value", [{}])
             meta = meta_values[0] if meta_values else {}
             title = meta.get("Title", dataset_id)
@@ -141,10 +149,11 @@ class CBSTool(DataSourceTool):
             summary = meta.get("Summary", "")[:300]
 
             # Step 2: Sample rows
-            sample_resp = requests.get(
-                f"{base}/{dataset_id}/TypedDataSet?$top={sample_rows}&$format=json", timeout=timeout
+            sample_resp = safe_http_get(
+                f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet",
+                params={"$top": int(sample_rows), "$format": "json"},
+                timeout=timeout,
             )
-            sample_resp.raise_for_status()
             sample_data = sample_resp.json().get("value", [])
 
             if not sample_data:
@@ -161,7 +170,7 @@ class CBSTool(DataSourceTool):
                 source=self.source_type,
                 source_name=self.source_name,
                 url=f"https://opendata.cbs.nl/statline/#/CBS/nl/dataset/{dataset_id}",
-                download_url=f"{base}/{dataset_id}/TypedDataSet",
+                download_url=(f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet?$format=json"),
                 format="OData",
                 modified=modified_display,
                 frequency=meta.get("Frequency"),
@@ -175,72 +184,95 @@ class CBSTool(DataSourceTool):
                 status="probed",
             )
 
-        except requests.Timeout:
-            return self._error_result(
-                id=dataset_id,
-                title=dataset_id,
-                error=f"Timed out after {timeout}s — table may be unavailable",
-            )
         except Exception as e:
             return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
 
-    def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
+    def download(
+        self,
+        dataset: DatasetResult,
+        destination: str | Path,
+        authorization: AuthorizedLoad,
+    ) -> DatasetResult:
         """
-        Download full CBS table using cbsodata in a daemon thread with timeout.
-        Saves to DuckDB via pandas.
+        Retrieve one full CBS table synchronously through guarded OData pages
+        and persist it via pandas inside the authorization lifetime.
         """
-        import cbsodata
-        import duckdb
         import pandas as pd
 
-        timeout = self.config.get("download_timeout_seconds", 300)
-        result_queue = queue_module.Queue()
-
-        def _fetch():
+        if not isinstance(authorization, AuthorizedLoad):
+            raise TypeError("CBS persistent loading requires an AuthorizedLoad")
+        actual_claims = claims_for_dataset(dataset, self.adapter_identity, destination)
+        with authorization.activate(actual_claims) as permit:
             try:
-                data = cbsodata.get_data(dataset.id)
-                result_queue.put(("ok", data))
-            except Exception as e:
-                result_queue.put(("error", str(e)))
+                data = self._download_odata_rows(
+                    actual_claims.retrieval_url,
+                    timeout=self.config.get("download_timeout_seconds", 30),
+                )
+                if not data:
+                    raise ValueError("No data returned from CBS")
 
-        thread = threading.Thread(target=_fetch, daemon=True)
-        thread.start()
-        thread.join(timeout=timeout)
+                dataframe = pd.DataFrame(data)
+                with AuthorizedDuckDBConnection(permit, destination) as connection:
+                    actual_rows = load_dataframe_to_table(connection, dataframe)
 
-        if thread.is_alive():
-            dataset.status = "failed"
-            dataset.error = f"Download timed out after {timeout}s"
-            return dataset
+                dataset.row_count = actual_rows
+                dataset.status = "downloaded"
+                return dataset
 
-        status, payload = result_queue.get()
-        if status == "error":
-            dataset.status = "failed"
-            dataset.error = payload
-            return dataset
+            except Exception as exc:
+                dataset.status = "failed"
+                dataset.error = sanitize_url_text(str(exc))
+                return dataset
 
-        data = payload
-        if not data:
-            dataset.status = "failed"
-            dataset.error = "No data returned from CBS"
-            return dataset
+    @staticmethod
+    def _validate_table_id(dataset_id: str) -> None:
+        if not dataset_id or not all(
+            character.isalnum() or character in "_-" for character in dataset_id
+        ):
+            raise ValueError("CBS table identifier contains unsupported characters")
 
-        table_name = safe_table_name(dataset.id, dataset.title)
+    @staticmethod
+    def _origin(url: str) -> tuple[str, str, int | None]:
+        parsed = urlsplit(url)
+        scheme = parsed.scheme.lower()
+        port = parsed.port
+        if port is None:
+            port = 443 if scheme == "https" else 80 if scheme == "http" else None
+        return scheme, (parsed.hostname or "").lower(), port
 
-        try:
-            df = pd.DataFrame(data)  # noqa: F841 -- DuckDB reads 'df' from local scope in the SQL below
-            con = duckdb.connect(db_path)
-            con.execute(f'CREATE OR REPLACE TABLE "{table_name}" AS SELECT * FROM df')
-            actual_rows = con.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
-            con.close()
+    def _download_odata_rows(self, initial_url: str, *, timeout: float) -> list[dict]:
+        """Retrieve CBS OData pages through the guarded transport only."""
+        expected_origin = self._origin(initial_url)
+        current_url = initial_url
+        seen = set()
+        rows = []
+        downloaded_bytes = 0
 
-            dataset.row_count = actual_rows
-            dataset.status = "downloaded"
-            return dataset
+        for _page_number in range(_MAX_ODATA_PAGES):
+            if current_url in seen:
+                raise ValueError("CBS OData pagination loop detected")
+            if self._origin(current_url) != expected_origin:
+                raise UnsafeURLError("CBS OData pagination changed source origin")
+            seen.add(current_url)
 
-        except Exception as e:
-            dataset.status = "failed"
-            dataset.error = str(e)
-            return dataset
+            response = safe_http_get(current_url, timeout=timeout)
+            if self._origin(response.url) != expected_origin:
+                raise UnsafeURLError("CBS OData redirect changed source origin")
+            downloaded_bytes += len(response.content)
+            if downloaded_bytes > _MAX_ODATA_DOWNLOAD_BYTES:
+                raise UnsafeResourceError("CBS OData download exceeds the configured size limit")
+            payload = response.json()
+            page_rows = payload.get("value")
+            if not isinstance(page_rows, list):
+                raise ValueError("CBS OData response has no row collection")
+            rows.extend(page_rows)
+
+            next_link = payload.get("@odata.nextLink") or payload.get("odata.nextLink")
+            if not next_link:
+                return rows
+            current_url = urljoin(response.url, next_link)
+
+        raise ValueError("CBS OData pagination limit exceeded")
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""

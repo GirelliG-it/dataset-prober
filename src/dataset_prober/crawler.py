@@ -1,10 +1,13 @@
+import re
 from urllib.parse import urljoin, urlparse
 
-import requests
 from bs4 import BeautifulSoup
 from rich.console import Console
 
+from dataset_prober.loading_policy import safe_url_identity, sanitize_url_text
+from dataset_prober.paths import AppPaths
 from dataset_prober.prober import probe_url, save_results
+from dataset_prober.tools.guards import safe_http_get
 
 console = Console()
 
@@ -44,20 +47,19 @@ def crawl(base_url: str, max_depth: int = 3) -> list[dict]:
             return
         visited.add(url)
 
-        console.print(f"  [dim]Depth {depth}:[/dim] {url}")
+        console.print(f"  [dim]Depth {depth}:[/dim] {safe_url_identity(url)}")
 
         try:
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            response = safe_http_get(url, timeout=10)
         except Exception as e:
-            console.print(f"  [red]Failed:[/red] {e}")
+            console.print(f"  [red]Failed:[/red] {sanitize_url_text(str(e))}")
             return
 
         soup = BeautifulSoup(response.text, "html.parser")
 
         for tag in soup.find_all("a", href=True):
             href = tag["href"].strip()
-            full_url = urljoin(url, href)
+            full_url = urljoin(response.url, href)
             link_text = tag.get_text(strip=True)
 
             # Skip already visited or empty
@@ -68,7 +70,10 @@ def crawl(base_url: str, max_depth: int = 3) -> list[dict]:
                 # Found a dataset file
                 name = link_text if link_text else full_url.split("/")[-1]
                 if not any(d["url"] == full_url for d in found_datasets):
-                    console.print(f"  [green]Found:[/green] {name} → {full_url}")
+                    console.print(
+                        f"  [green]Found:[/green] {sanitize_url_text(name)} → "
+                        f"{safe_url_identity(full_url)}"
+                    )
                     found_datasets.append({"name": name, "url": full_url})
 
             elif same_domain(base_url, full_url) and is_relevant_page(full_url, link_text):
@@ -123,14 +128,13 @@ def resolve_directory(url: str, timeout: int = 10) -> dict:
     so freshness can be shown per candidate without a second request.
     Raises on fetch failure; empty result if the page has no usable links.
     """
-    resp = requests.get(url, timeout=timeout)
-    resp.raise_for_status()
+    resp = safe_http_get(url, timeout=timeout)
     soup = BeautifulSoup(resp.text, "html.parser")
 
     subdirs, files, seen = [], [], set()
     for tag in soup.find_all("a", href=True):
         href = tag["href"].strip()
-        full = urljoin(url, href)
+        full = urljoin(resp.url, href)
         if full in seen:
             continue
 
@@ -159,7 +163,6 @@ def _parse_listing_date(tag) -> str | None:
     Best-effort: pull a YYYY-MM-DD date from the autoindex row containing this
     link. Apache renders it as plain text after the <a>. Returns None if absent.
     """
-    import re
 
     # The date sits in the tail text of the row — walk siblings after the link.
     tail = ""
@@ -172,6 +175,8 @@ def _parse_listing_date(tag) -> str | None:
 
 
 def main() -> None:
+    paths = AppPaths.resolve()
+
     console.print("\n[bold cyan]Dataset Crawler[/bold cyan]\n")
 
     url = console.input("[cyan]URL to crawl:[/cyan] ").strip()
@@ -180,7 +185,7 @@ def main() -> None:
     max_depth = int(depth_input) if depth_input.isdigit() else 3
     max_depth = min(max_depth, MAX_DEPTH)
 
-    console.print(f"\nCrawling [bold]{url}[/bold] to depth {max_depth}...\n")
+    console.print(f"\nCrawling [bold]{safe_url_identity(url)}[/bold] to depth {max_depth}...\n")
     datasets = crawl(url, max_depth)
 
     if not datasets:
@@ -193,7 +198,8 @@ def main() -> None:
 
         display_results(results)
 
-        save_results(results, "output/probe_results.json")
+        paths.ensure_output_dir()
+        save_results(results, str(paths.probe_results_path))
 
 
 if __name__ == "__main__":

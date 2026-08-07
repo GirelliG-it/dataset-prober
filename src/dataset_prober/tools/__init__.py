@@ -13,6 +13,7 @@ Adding a new data source:
 That's it. The agent, config loader, and prompt interpreter need no changes.
 """
 
+from dataset_prober.loading_policy import sanitize_url_text
 from dataset_prober.tools.base import DatasetResult, DataSourceTool
 from dataset_prober.tools.cbs_tool import CBSTool
 from dataset_prober.tools.ckan_tool import CKANTool
@@ -86,7 +87,10 @@ def tools_for_profile(profile) -> list[DataSourceTool]:
         except Exception as e:
             from rich.console import Console
 
-            Console().print(f"[red]Failed to initialize tool '{catalog.name}': {e}[/red]")
+            Console().print(
+                f"[red]Failed to initialize tool '{sanitize_url_text(catalog.name)}': "
+                f"{sanitize_url_text(str(e))}[/red]"
+            )
 
     # Always add Tavily as fallback if available
     tavily_config = {

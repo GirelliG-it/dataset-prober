@@ -8,15 +8,23 @@ All catalog-specific settings come from the profile configuration.
 CKAN API reference: https://docs.ckan.org/en/latest/api/
 """
 
-import requests
+from pathlib import Path
 
+from dataset_prober.loading_policy import (
+    AuthorizedLoad,
+    LoaderKind,
+    claims_for_dataset,
+    detect_resource_format,
+    loader_for_resource,
+    sanitize_url_text,
+)
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     download_csv_dataset,
-    ensure_httpfs,
     probe_csv_url,
 )
+from dataset_prober.tools.guards import safe_download, safe_http_get
 
 # Known license mappings from CKAN license_id to standardized names
 LICENSE_MAP = {
@@ -43,8 +51,8 @@ class CKANTool(DataSourceTool):
       - EU portal:       https://data.europa.eu/api/hub/search
 
     Search: CKAN package_search API
-    Fetch:  CKAN package_show API + direct CSV probe via DuckDB httpfs
-    Download: DuckDB httpfs read_csv_auto
+    Fetch:  guarded CKAN package_show API + guarded local CSV probe
+    Download: guarded temporary retrieval + authorized local DuckDB scan
     """
 
     @property
@@ -79,7 +87,7 @@ class CKANTool(DataSourceTool):
         url = f"{self._base_url()}/action/package_search"
 
         try:
-            resp = requests.get(
+            resp = safe_http_get(
                 url,
                 params={
                     "q": keyword,
@@ -90,7 +98,6 @@ class CKANTool(DataSourceTool):
                 headers=self._headers(),
                 timeout=timeout,
             )
-            resp.raise_for_status()
             data = resp.json()
 
             if not data.get("success"):
@@ -110,14 +117,6 @@ class CKANTool(DataSourceTool):
 
             return results
 
-        except requests.Timeout:
-            return [
-                self._error_result(
-                    id=f"ckan_search_{keyword}",
-                    title=f"CKAN search timed out: {keyword}",
-                    error=f"Request timed out after {timeout}s",
-                )
-            ]
         except Exception as e:
             return [
                 self._error_result(
@@ -133,10 +132,9 @@ class CKANTool(DataSourceTool):
         url = f"{self._base_url()}/action/package_show"
 
         try:
-            resp = requests.get(
+            resp = safe_http_get(
                 url, params={"id": dataset_id}, headers=self._headers(), timeout=timeout
             )
-            resp.raise_for_status()
             data = resp.json()
 
             if not data.get("success"):
@@ -161,14 +159,22 @@ class CKANTool(DataSourceTool):
             return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
 
     def _probe_csv(self, result: DatasetResult, sample_rows: int, timeout: int) -> DatasetResult:
-        """Probe a CSV URL using DuckDB httpfs."""
+        """Safely retrieve a CSV and probe its temporary local copy with DuckDB."""
+        admission_error = self._csv_admission_error(result)
+        if admission_error:
+            result.status = "found"
+            result.error = admission_error
+            return result
+
         try:
             import duckdb
 
-            con = duckdb.connect()
-            ensure_httpfs(con)
-            probe = probe_csv_url(con, result.download_url, sample_rows)
-            con.close()
+            with safe_download(result.download_url, timeout=timeout) as fetched:
+                con = duckdb.connect()
+                try:
+                    probe = probe_csv_url(con, fetched.path, sample_rows)
+                finally:
+                    con.close()
 
             result.columns = probe["columns"]
             result.sample = probe["sample"][:3]
@@ -179,12 +185,21 @@ class CKANTool(DataSourceTool):
         except Exception as e:
             # Probe failed — still return the result with found status
             result.status = "found"
-            result.error = f"Probe failed: {str(e)[:100]}"
+            result.error = sanitize_url_text(f"Probe failed: {str(e)[:100]}")
             return result
 
-    def download(self, dataset: DatasetResult, db_path: str) -> DatasetResult:
-        """Download a CSV dataset into DuckDB using httpfs."""
-        return download_csv_dataset(dataset, db_path)
+    def download(
+        self,
+        dataset: DatasetResult,
+        destination: str | Path,
+        authorization: AuthorizedLoad,
+    ) -> DatasetResult:
+        """Safely retrieve and load one authorized CSV dataset into DuckDB."""
+        if not isinstance(authorization, AuthorizedLoad):
+            raise TypeError("CKAN persistent loading requires an AuthorizedLoad")
+        actual_claims = claims_for_dataset(dataset, self.adapter_identity, destination)
+        with authorization.activate(actual_claims) as permit:
+            return download_csv_dataset(dataset, self.adapter_identity, destination, permit)
 
     def _package_to_result(self, pkg: dict) -> DatasetResult | None:
         """Convert a CKAN package dict to a DatasetResult."""
@@ -217,6 +232,11 @@ class CKANTool(DataSourceTool):
         notes = pkg.get("notes", "") or ""
         description = notes[:300]
 
+        resource_format = None
+        if csv_resource:
+            catalog_format = csv_resource.get("format", "").upper()
+            resource_format = "CSV" if catalog_format in ("CSV", "TEXT/CSV") else catalog_format
+
         return DatasetResult(
             id=pkg.get("name", pkg.get("id", "")),
             title=pkg.get("title", ""),
@@ -225,7 +245,7 @@ class CKANTool(DataSourceTool):
             source_name=f"{self.source_name} ({org_name})" if org_name else self.source_name,
             url=f"https://catalog.data.gov/dataset/{pkg.get('name', '')}",
             download_url=csv_resource.get("url") if csv_resource else None,
-            format="CSV" if csv_resource else None,
+            format=resource_format,
             modified=modified_display,
             frequency=self._parse_frequency(pkg),
             license=license_name,
@@ -257,6 +277,18 @@ class CKANTool(DataSourceTool):
                 }
                 return freq_map.get(freq, freq)
         return None
+
+    def _csv_admission_error(self, dataset: DatasetResult) -> str | None:
+        """Reject catalog labels that contradict or cannot prove the resource format."""
+        loader = loader_for_resource(self.source_type, dataset.format, dataset.download_url or "")
+        if loader is LoaderKind.DUCKDB_CSV:
+            return None
+        detected_format = detect_resource_format(dataset.download_url or "")
+        declared_format = dataset.format.strip().upper() if dataset.format else None
+        return (
+            "Unsupported or unproven CKAN resource format: "
+            f"{detected_format or declared_format or 'unknown'}"
+        )
 
     def _error_result(self, id: str, title: str, error: str) -> DatasetResult:
         """Create a failed DatasetResult."""

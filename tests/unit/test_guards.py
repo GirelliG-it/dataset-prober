@@ -12,7 +12,8 @@ Key behaviours under test:
    multicast, reserved, unspecified)
 3. IPv6 zone indices are handled rather than crashing
 4. A host resolving to several addresses is rejected if ANY is non-public
-5. Resolution is cached per hostname
+5. Resolution is repeated per guarded request so a cached validation cannot
+   be separated from the connection that consumes it
 """
 
 import socket
@@ -29,22 +30,6 @@ def make_addrinfo(*ips: str) -> list:
     is_safe_url reads sockaddr[0]. Only that position needs to be faithful.
     """
     return [(socket.AF_UNSPEC, socket.SOCK_STREAM, 0, "", (ip, 0)) for ip in ips]
-
-
-@pytest.fixture(autouse=True)
-def clear_resolution_cache():
-    """
-    Clear the lru_cache on _resolve between tests.
-
-    Without this, a hostname mocked as public in one test stays cached and the
-    next test's mock is never consulted — tests would pass or fail depending on
-    execution order. Autouse so it can never be forgotten.
-    """
-    from dataset_prober.tools.guards import _resolve
-
-    _resolve.cache_clear()
-    yield
-    _resolve.cache_clear()
 
 
 class TestSchemeRejection:
@@ -202,18 +187,18 @@ class TestDnsFailure:
 class TestUrlParsing:
     """The hostname the guard checks is the host that will be connected to."""
 
-    def test_userinfo_prefix_does_not_disguise_host(self):
+    def test_userinfo_is_rejected_before_dns(self):
         """
-        http://trusted.example.com@127.0.0.1/ connects to 127.0.0.1. The text
-        before the @ is credentials, not the host — urlparse().hostname gets
-        this right, and the guard must inherit that.
+        Credentials are not needed for public dataset sources and create parser
+        ambiguity, so they are denied without resolving either apparent host.
         """
         from dataset_prober.tools.guards import is_safe_url
 
-        with patch("socket.getaddrinfo", return_value=make_addrinfo("127.0.0.1")) as mock_resolve:
-            safe, _ = is_safe_url("http://trusted.example.com@127.0.0.1/data.csv")
+        with patch("socket.getaddrinfo") as mock_resolve:
+            safe, reason = is_safe_url("http://trusted.example.com@127.0.0.1/data.csv")
         assert safe is False
-        assert mock_resolve.call_args[0][0] == "127.0.0.1"
+        assert "credentials" in reason
+        mock_resolve.assert_not_called()
 
     def test_ip_literal_host_is_checked(self):
         from dataset_prober.tools.guards import is_safe_url
@@ -222,20 +207,20 @@ class TestUrlParsing:
             safe, _ = is_safe_url("http://192.168.0.10:8080/data.csv")
         assert safe is False
 
-    def test_port_is_not_part_of_hostname(self):
+    def test_non_default_port_is_rejected_before_dns(self):
         from dataset_prober.tools.guards import is_safe_url
 
-        with patch(
-            "socket.getaddrinfo", return_value=make_addrinfo("93.184.216.34")
-        ) as mock_resolve:
-            is_safe_url("https://data.example.com:8443/x.csv")
-        assert mock_resolve.call_args[0][0] == "data.example.com"
+        with patch("socket.getaddrinfo") as mock_resolve:
+            safe, reason = is_safe_url("https://data.example.com:8443/x.csv")
+        assert safe is False
+        assert "port" in reason
+        mock_resolve.assert_not_called()
 
 
-class TestResolutionCaching:
-    """One lookup per hostname per run, not one per link."""
+class TestResolutionLifetime:
+    """Each guarded request owns a fresh result that its connector consumes."""
 
-    def test_same_host_resolved_once(self):
+    def test_same_host_is_resolved_for_each_guarded_request(self):
         from dataset_prober.tools.guards import is_safe_url
 
         with patch(
@@ -244,7 +229,7 @@ class TestResolutionCaching:
             is_safe_url("https://data.example.com/a.csv")
             is_safe_url("https://data.example.com/b.csv")
             is_safe_url("https://data.example.com/c.csv")
-        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_count == 3
 
     def test_different_hosts_resolved_separately(self):
         from dataset_prober.tools.guards import is_safe_url

@@ -32,13 +32,13 @@ structure. The current prototype does not yet enforce that rule reliably end to 
 ## Discovery and verification are different
 
 The agentic workflow uses Claude to interpret a natural-language request, choose source
-profiles, plan searches and call source tools. CBS, CKAN and Tavily integrations can then
-return candidate resources. Model output, search snippets, filenames and catalog metadata
+profiles, plan searches and call source tools. CBS and CKAN integrations can then return
+candidate resources. Model output, search snippets, filenames and catalog metadata
 are discovery evidence; none of them prove that a resource is a dataset.
 
 The deterministic part uses DuckDB SQL to try to read CSV-like resources and report row
-counts, column names, DuckDB types and sample records. The CBS adapter uses the CBS OData
-catalog and `cbsodata` for table retrieval. These observations are stronger evidence than
+counts, column names, DuckDB types and sample records. The CBS adapter uses guarded HTTP
+for its OData catalog, samples and paginated table retrieval. These observations are stronger evidence than
 an AI recommendation, but the current acceptance checks can still produce false positives.
 Treat the current `ok` and `probed` statuses as prototype inspection results, not as a
 v0.1 verification guarantee.
@@ -52,10 +52,15 @@ v0.1 verification guarantee.
 - The crawler follows relevant same-domain pages and collects links whose filenames look
   like data resources.
 - The agentic command can interpret a request, choose bundled geographic source profiles,
-  search CBS and CKAN catalogs, use Tavily as a web-search fallback, fetch candidates and
-  present an aggregated result.
-- CSV-like resources can be probed and loaded with DuckDB `httpfs`. CBS tables have a
-  separate loader through `cbsodata`. These are the only implemented loading paths.
+  search CBS and CKAN catalogs, fetch candidates and present an aggregated result. Tavily
+  provider-side search and extraction are disabled on the v0.1 stabilization branch because
+  their source-fetch transport is opaque to the application.
+- Supported CSV resources are retrieved through the application-owned guarded HTTP transport
+  and probed or loaded from temporary local copies with DuckDB. CBS tables use the same
+  guarded transport for OData catalogue, sample and paginated dataset retrieval.
+- Guarded catalog responses are limited to 32 MiB per response and dataset retrieval is
+  limited to 512 MiB per load attempt. Sensitive URL credentials, query values and fragments
+  are replaced by sanitized identities in console output, model-facing results and saved JSON.
 - Manual probe results and agent results are written as JSON. Optional post-probe analysis
   can use Claude or a local Ollama model.
 - Offline unit, fixture-based and mocked tests cover selected parsing, configuration,
@@ -98,8 +103,8 @@ The JSON input for `dataset-prober-probe --file` is a list of named URLs:
 ]
 ```
 
-Agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`. Tavily fallback
-search requires `TAVILY_API_KEY`. The optional local analysis path expects an Ollama server
+Agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`. Tavily provider
+search and extraction remain disabled even when `TAVILY_API_KEY` is set. The optional local analysis path expects an Ollama server
 at `http://localhost:11434` and the requested model to be available there. Environment
 variables can be placed in a repository-root `.env` file for the current checkout-based
 workflow.
@@ -118,21 +123,25 @@ Use the prototype on disposable outputs and review every candidate yourself.
   another non-dataset resource for structured data. PDFs, reports, documentation, search
   snippets and landing pages must not be reported or used as verified datasets.
 - The implemented generic loader is CSV-oriented, while discovery can identify extensions
-  such as JSON, Excel, Parquet and GeoJSON. Unsupported formats are not yet consistently
-  stopped before they reach CSV probing or loading code.
-- Agentic download authority is not fail closed. The current command accepts `--download`
-  but also infers permission from words in the prompt; negated or ambiguous text can
-  therefore enable download mode. The agent also lacks exact, explicit, per-resource
-  selection. Do not rely on the agentic loading path where writes are unacceptable.
+  such as JSON, Excel, Parquet and GeoJSON. Those unsupported formats are denied before CSV
+  probing or loading, but deterministic classification of them is not yet implemented.
+- Loading requires an explicit `--download` flag, exact inspected-resource selection and
+  per-resource `y`/`yes` consent bound to the planned destination and table. Prompt wording
+  does not grant download authority.
 - DuckDB loading uses replacement semantics. Colliding table names or a failed validation
   after replacement can overwrite or remove existing data. There is no complete explicit
   overwrite policy or transactional preservation guarantee.
-- A URL-safety guard exists and has unit tests, but application-controlled runtime fetches
-  do not consistently pass through it. Redirect handling and SSRF protection are not an
-  end-to-end guarantee, especially for transports whose DNS and redirect behavior is
-  opaque to the application.
-- Table names include shortened hashes, but table identity is not yet based on a complete,
-  collision-resistant canonical source identity.
+- Enabled application-controlled source fetches on the v0.1 stabilization branch use a
+  centralized transport that validates URL syntax, DNS answers and every redirect, ignores
+  environment proxies, connects to a validation-time address, permits only HTTP port 80 and
+  HTTPS port 443, and rejects HTTPS-to-HTTP redirects. One monotonic deadline covers DNS,
+  address attempts, TLS, redirects, headers and body reads. Opaque source-fetch paths are
+  disabled rather than described as protected. This is a bounded application control, not a
+  claim that third-party services or malicious code in the same process are SSRF-safe. A DNS
+  worker that exceeds the caller's deadline can finish in the background, with concurrency
+  bounded by the transport.
+- Planned table names use a collision-resistant digest of the complete source-specific
+  identity without placing raw sensitive URL values in the identifier.
 - Results capture some source metadata, rows, columns, samples, status, errors, licenses and
   estimated model usage, depending on the path. Retrieval history, checksums, consent,
   table mapping, terminal failures, model usage and costs are not yet recorded completely
@@ -185,8 +194,8 @@ The repository is relevant to several complementary areas:
 
 - **Python:** packaged command-line workflows, source adapters, configuration profiles and
   orchestration.
-- **DuckDB and SQL:** remote CSV inspection, schema and row-count queries, local analytical
-  tables and sample-based analysis.
+- **DuckDB and SQL:** guarded local CSV inspection, schema and row-count queries, local
+  analytical tables and sample-based analysis.
 - **Testing:** pytest unit tests, fixture-based parser tests, mocked boundary tests and Ruff
   checks in GitHub Actions.
 - **Agentic AI:** Claude-driven prompt interpretation, source selection and tool use, with

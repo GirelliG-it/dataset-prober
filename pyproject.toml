@@ -18,7 +18,6 @@ dependencies = [
     "pyyaml>=6.0,<7",
     "requests>=2.32,<3",
     "rich>=14,<15",
-    "tavily-python>=0.7,<1",
     "pandas>=3.0",
 ]
 
@@ -35,6 +34,7 @@ dev = [
 dataset-prober = "dataset_prober.dataset_agent:main"
 dataset-prober-probe = "dataset_prober.run:main"
 dataset-prober-crawl = "dataset_prober.crawler:main"
+dataset-prober-analyze= "dataset_prober.agent:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import anthropic
@@ -6,6 +7,8 @@ import requests
 from dotenv import load_dotenv
 
 from dataset_prober.config_loader import get_anthropic_api_key
+from dataset_prober.loading_policy import sanitize_url_text
+from dataset_prober.paths import AppPaths
 
 # Load API key from .env
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -42,7 +45,7 @@ def _build_prompt(results: list[dict]) -> str:
         else:
             results_text += f"Error: {r['error']}\n"
 
-    return f"""You are a data analyst reviewing Dutch open datasets probed via DuckDB httpfs.
+    return f"""You are a data analyst reviewing safely retrieved datasets probed with DuckDB.
 
 Here are the probe results:
 {results_text}
@@ -82,7 +85,7 @@ def summarize_probe_results_local(results: list[dict], model: str = "qwen2.5-cod
     return response.json()["message"]["content"]
 
 
-if __name__ == "__main__":
+def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -97,12 +100,13 @@ if __name__ == "__main__":
         help="Ollama model to use (default: qwen2.5-coder:3b)",
     )
     args = parser.parse_args()
+    paths = AppPaths.resolve()
 
-    output_path = Path(__file__).parent.parent.parent / "output" / "probe_results.json"
+    output_path = paths.probe_results_path
 
     if not output_path.exists():
         print("No probe results found. Run run.py first.")
-        exit(1)
+        sys.exit(1)
 
     with open(output_path) as f:
         results = json.load(f)
@@ -114,9 +118,15 @@ if __name__ == "__main__":
         print("\nSending results to Claude for analysis...\n")
         summary = summarize_probe_results(results)
 
+    summary = sanitize_url_text(summary)
     print(summary)
 
-    summary_path = Path(__file__).parent.parent.parent / "output" / "analysis_summary.txt"
+    summary_path = paths.analysis_summary_path
+    paths.ensure_output_dir()
     with open(summary_path, "w") as f:
         f.write(summary)
     print(f"\nSummary saved to {summary_path}")
+
+
+if __name__ == "__main__":
+    main()
