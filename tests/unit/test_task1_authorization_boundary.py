@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from unittest.mock import Mock
 
@@ -11,6 +12,18 @@ import pytest
 
 from dataset_prober.prober import ProbeResult
 from dataset_prober.tools.base import DatasetResult
+
+
+@contextmanager
+def guarded_resource(url, path="/tmp/dataset-prober-test-resource.csv", **_kwargs):
+    from dataset_prober.tools.guards import FetchedResource
+
+    yield FetchedResource(
+        source_url=url,
+        final_url=url,
+        path=str(path),
+        headers={"Content-Type": "text/csv"},
+    )
 
 
 def dataset_result(
@@ -417,7 +430,7 @@ def test_direct_manual_writer_rejects_before_retrieval_or_connect(monkeypatch, t
     )
     retrieval = Mock(side_effect=AssertionError("unauthorized retrieval"))
     connect = Mock(side_effect=AssertionError("unauthorized connect"))
-    monkeypatch.setattr(prober, "response_is_html", retrieval)
+    monkeypatch.setattr(prober, "safe_download", retrieval)
     monkeypatch.setattr("duckdb.connect", connect)
 
     with pytest.raises(Exception):
@@ -437,17 +450,17 @@ def test_direct_adapter_writer_rejects_before_side_effects(monkeypatch, tmp_path
         tool = CBSTool({"name": "CBS", "download_timeout_seconds": 1})
         dataset = cbs_result()
         retrieval = Mock(side_effect=AssertionError("unauthorized CBS retrieval"))
-        monkeypatch.setattr("cbsodata.get_data", retrieval)
+        monkeypatch.setattr(tool, "_download_odata_rows", retrieval)
     elif tool_name == "ckan":
         tool = CKANTool({"name": "CKAN", "base_url": "https://catalog.test"})
         dataset = dataset_result(source="ckan")
         retrieval = Mock(side_effect=AssertionError("unauthorized CSV retrieval"))
-        monkeypatch.setattr("dataset_prober.tools.base.response_is_html", retrieval)
+        monkeypatch.setattr("dataset_prober.tools.base.safe_download", retrieval)
     else:
         tool = TavilyTool({"name": "Tavily", "blocked_sources": []})
         dataset = dataset_result(source="tavily")
         retrieval = Mock(side_effect=AssertionError("unauthorized CSV retrieval"))
-        monkeypatch.setattr("dataset_prober.tools.base.response_is_html", retrieval)
+        monkeypatch.setattr("dataset_prober.tools.base.safe_download", retrieval)
     connect = Mock(side_effect=AssertionError("unauthorized connect"))
     monkeypatch.setattr("duckdb.connect", connect)
 
@@ -464,10 +477,17 @@ def test_raw_duckdb_connection_is_rejected_by_persistent_sql_writers():
         load_csv_to_table,
         load_dataframe_to_table,
     )
+    from dataset_prober.tools.guards import FetchedResource
 
     raw_connection = Mock()
+    fetched = FetchedResource(
+        source_url="https://example.test/data.csv",
+        final_url="https://example.test/data.csv",
+        path="/tmp/data.csv",
+        headers={"Content-Type": "text/csv"},
+    )
     with pytest.raises(TypeError):
-        load_csv_to_table(raw_connection)
+        load_csv_to_table(raw_connection, fetched)
     with pytest.raises(TypeError):
         _reject_if_html(raw_connection)
     with pytest.raises(TypeError):
@@ -529,7 +549,7 @@ def test_authorization_for_table_a_cannot_target_table_b(
     with authorization.activate(claims) as permit:
         with AuthorizedDuckDBConnection(permit, destination) as connection:
             operation_method = getattr(connection, method_name)
-            with pytest.raises(TypeError, match="positional argument"):
+            with pytest.raises(TypeError):
                 operation_method("table_b")
 
     assert raw_connection.execute.call_count == 0, operation
@@ -617,7 +637,7 @@ def _probe_adapter_tool(source):
 def test_adapter_probe_connection_closes_after_success_or_failure(monkeypatch, source, probe_fails):
     connection = Mock()
     connect = Mock(return_value=connection)
-    ensure = Mock()
+    download = Mock(side_effect=guarded_resource)
     probe = Mock(
         side_effect=RuntimeError("probe failed") if probe_fails else None,
         return_value={
@@ -627,7 +647,7 @@ def test_adapter_probe_connection_closes_after_success_or_failure(monkeypatch, s
         },
     )
     monkeypatch.setattr("duckdb.connect", connect)
-    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.ensure_httpfs", ensure)
+    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.safe_download", download)
     monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.probe_csv_url", probe)
     tool = _probe_adapter_tool(source)
 
@@ -636,7 +656,7 @@ def test_adapter_probe_connection_closes_after_success_or_failure(monkeypatch, s
     expected_status = ("found" if source == "ckan" else "failed") if probe_fails else "probed"
     assert result.status == expected_status
     connect.assert_called_once_with()
-    ensure.assert_called_once_with(connection)
+    download.assert_called_once()
     probe.assert_called_once()
     connection.close.assert_called_once_with()
 
@@ -645,7 +665,10 @@ def test_adapter_probe_connection_closes_after_success_or_failure(monkeypatch, s
 def test_adapter_probe_connection_closes_when_keyboard_interrupt_propagates(monkeypatch, source):
     connection = Mock()
     monkeypatch.setattr("duckdb.connect", Mock(return_value=connection))
-    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.ensure_httpfs", Mock())
+    monkeypatch.setattr(
+        f"dataset_prober.tools.{source}_tool.safe_download",
+        Mock(side_effect=guarded_resource),
+    )
     monkeypatch.setattr(
         f"dataset_prober.tools.{source}_tool.probe_csv_url",
         Mock(side_effect=KeyboardInterrupt()),
@@ -661,10 +684,10 @@ def test_adapter_probe_connection_closes_when_keyboard_interrupt_propagates(monk
 @pytest.mark.parametrize("source", ["ckan", "tavily"])
 def test_adapter_probe_connection_creation_failure_does_not_attempt_cleanup(monkeypatch, source):
     connect = Mock(side_effect=RuntimeError("connect failed"))
-    ensure = Mock(side_effect=AssertionError("setup ran without a connection"))
+    download = Mock(side_effect=guarded_resource)
     probe = Mock(side_effect=AssertionError("probe ran without a connection"))
     monkeypatch.setattr("duckdb.connect", connect)
-    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.ensure_httpfs", ensure)
+    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.safe_download", download)
     monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.probe_csv_url", probe)
     tool = _probe_adapter_tool(source)
 
@@ -672,7 +695,7 @@ def test_adapter_probe_connection_creation_failure_does_not_attempt_cleanup(monk
 
     assert result.status != "probed"
     connect.assert_called_once_with()
-    ensure.assert_not_called()
+    download.assert_called_once()
     probe.assert_not_called()
 
 
@@ -686,7 +709,6 @@ def test_failed_real_adapter_inspection_cannot_authorize_or_persist(monkeypatch,
     tool = _probe_adapter_tool(source)
     if source == "ckan":
         response = Mock()
-        response.raise_for_status.return_value = None
         response.json.return_value = {
             "success": True,
             "result": {
@@ -696,7 +718,7 @@ def test_failed_real_adapter_inspection_cannot_authorize_or_persist(monkeypatch,
             },
         }
         monkeypatch.setattr(
-            "dataset_prober.tools.ckan_tool.requests.get",
+            "dataset_prober.tools.ckan_tool.safe_http_get",
             Mock(return_value=response),
         )
         resource_id = "resource-a"
@@ -706,7 +728,10 @@ def test_failed_real_adapter_inspection_cannot_authorize_or_persist(monkeypatch,
     connection = Mock()
     connect = Mock(return_value=connection)
     monkeypatch.setattr("duckdb.connect", connect)
-    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.ensure_httpfs", Mock())
+    monkeypatch.setattr(
+        f"dataset_prober.tools.{source}_tool.safe_download",
+        Mock(side_effect=guarded_resource),
+    )
     monkeypatch.setattr(
         f"dataset_prober.tools.{source}_tool.probe_csv_url",
         Mock(side_effect=RuntimeError("probe failed")),
@@ -776,7 +801,11 @@ def test_real_csv_adapters_complete_one_authorized_load(monkeypatch, tmp_path, s
     session = LoadingPolicySession(download_enabled=True)
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, destination)
     claims = claims_for_dataset(dataset, tool.adapter_identity, destination)
-    monkeypatch.setattr(base, "ensure_httpfs", lambda _connection: None)
+    monkeypatch.setattr(
+        base,
+        "safe_download",
+        lambda url, **_kwargs: guarded_resource(url, csv_path),
+    )
 
     returned = tool.download(dataset, destination, authorization)
 
@@ -805,7 +834,11 @@ def test_real_cbs_adapter_completes_one_authorized_load(monkeypatch, tmp_path):
     session = LoadingPolicySession(download_enabled=True)
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, destination)
     claims = claims_for_dataset(dataset, tool.adapter_identity, destination)
-    monkeypatch.setattr("cbsodata.get_data", lambda _dataset_id: [{"Period": "2025", "Value": 3}])
+    monkeypatch.setattr(
+        tool,
+        "_download_odata_rows",
+        lambda _url, timeout: [{"Period": "2025", "Value": 3}],
+    )
 
     returned = tool.download(dataset, destination, authorization)
 
@@ -827,7 +860,7 @@ def test_shared_csv_loader_rejects_without_live_permit(monkeypatch, tmp_path):
 
     dataset = dataset_result()
     retrieval = Mock(side_effect=AssertionError("unauthorized retrieval"))
-    monkeypatch.setattr(base, "response_is_html", retrieval)
+    monkeypatch.setattr(base, "safe_download", retrieval)
 
     with pytest.raises(TypeError):
         base.download_csv_dataset(dataset, "configured-ckan", tmp_path / "datasets.duckdb", None)
@@ -854,7 +887,7 @@ def test_writer_reconstructs_mutated_resource_and_rejects_before_side_effects(
     dataset.download_url = "https://attacker.test/replacement.csv"
     retrieval = Mock(side_effect=AssertionError("mismatch reached retrieval"))
     connect = Mock(side_effect=AssertionError("mismatch reached connect"))
-    monkeypatch.setattr(base, "response_is_html", retrieval)
+    monkeypatch.setattr(base, "safe_download", retrieval)
     monkeypatch.setattr("duckdb.connect", connect)
 
     with pytest.raises(AuthorizationMismatchError):
@@ -882,7 +915,7 @@ def test_writer_rejects_destination_changed_after_consent_before_creation(monkey
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, approved)
     retrieval = Mock(side_effect=AssertionError("wrong destination reached retrieval"))
     connect = Mock(side_effect=AssertionError("wrong destination reached connect"))
-    monkeypatch.setattr(base, "response_is_html", retrieval)
+    monkeypatch.setattr(base, "safe_download", retrieval)
     monkeypatch.setattr("duckdb.connect", connect)
 
     with pytest.raises(AuthorizationMismatchError):
@@ -904,7 +937,7 @@ def test_retrieval_exception_consumes_authorization(monkeypatch, tmp_path):
     destination = tmp_path / "datasets.duckdb"
     session = LoadingPolicySession(download_enabled=True)
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, destination)
-    monkeypatch.setattr(base, "response_is_html", Mock(side_effect=RuntimeError("retrieval")))
+    monkeypatch.setattr(base, "safe_download", Mock(side_effect=RuntimeError("retrieval")))
 
     returned = tool.download(dataset, destination, authorization)
 
@@ -922,7 +955,11 @@ def test_connection_failure_consumes_authorization(monkeypatch, tmp_path):
     destination = tmp_path / "datasets.duckdb"
     session = LoadingPolicySession(download_enabled=True)
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, destination)
-    monkeypatch.setattr(base, "response_is_html", lambda _url: False)
+    monkeypatch.setattr(
+        base,
+        "safe_download",
+        lambda url, **_kwargs: guarded_resource(url),
+    )
     monkeypatch.setattr("duckdb.connect", Mock(side_effect=RuntimeError("connect")))
 
     returned = tool.download(dataset, destination, authorization)
@@ -943,8 +980,13 @@ def test_persistent_sql_failure_closes_connection_and_consumes(monkeypatch, tmp_
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, destination)
     connection = Mock()
     connection.execute.side_effect = RuntimeError("CTAS failed")
-    monkeypatch.setattr(base, "response_is_html", lambda _url: False)
-    monkeypatch.setattr(base, "ensure_httpfs", lambda _connection: None)
+    csv_path = tmp_path / "guarded.csv"
+    csv_path.write_text("value\n1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        base,
+        "safe_download",
+        lambda url, **_kwargs: guarded_resource(url, csv_path),
+    )
     monkeypatch.setattr(base, "csv_scan_expr", lambda _connection, _url: "read_csv_auto(?)")
     monkeypatch.setattr("duckdb.connect", Mock(return_value=connection))
 
@@ -976,7 +1018,7 @@ def test_keyboard_interrupt_consumes_before_propagating(monkeypatch, tmp_path):
         destination=destination,
         input_func=lambda _prompt: "yes",
     )
-    monkeypatch.setattr(prober, "response_is_html", Mock(side_effect=KeyboardInterrupt()))
+    monkeypatch.setattr(prober, "safe_download", Mock(side_effect=KeyboardInterrupt()))
 
     with pytest.raises(KeyboardInterrupt):
         prober.download_to_duckdb(result, str(destination), authorization)

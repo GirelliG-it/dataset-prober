@@ -7,6 +7,7 @@ import requests
 from dotenv import load_dotenv
 
 from dataset_prober.config_loader import get_anthropic_api_key
+from dataset_prober.loading_policy import sanitize_url_text
 from dataset_prober.paths import AppPaths
 
 # Load API key from .env
@@ -44,7 +45,7 @@ def _build_prompt(results: list[dict]) -> str:
         else:
             results_text += f"Error: {r['error']}\n"
 
-    return f"""You are a data analyst reviewing Dutch open datasets probed via DuckDB httpfs.
+    return f"""You are a data analyst reviewing safely retrieved datasets probed with DuckDB.
 
 Here are the probe results:
 {results_text}
@@ -117,6 +118,7 @@ def main() -> None:
         print("\nSending results to Claude for analysis...\n")
         summary = summarize_probe_results(results)
 
+    summary = sanitize_url_text(summary)
     print(summary)
 
     summary_path = paths.analysis_summary_path

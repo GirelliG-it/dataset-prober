@@ -24,6 +24,14 @@ from dataset_prober.loading_policy import (
     canonicalize_destination,
     claims_for_dataset,
     configured_adapter_identity,
+    safe_url_identity,
+    sanitize_for_presentation,
+    sanitize_url_text,
+)
+from dataset_prober.tools.guards import (
+    FetchedResource,
+    safe_download,
+    safe_http_head,
 )
 
 
@@ -149,34 +157,36 @@ class DatasetResult:
             language=language,
             tags=[],
             status="failed",
-            error=error,
+            error=sanitize_url_text(error),
         )
 
     def to_dict(self) -> dict:
-        """Serialize to dictionary for JSON output."""
-        return {
-            "id": self.id,
-            "title": self.title,
-            "description": self.description,
-            "source": self.source,
-            "source_name": self.source_name,
-            "url": self.url,
-            "download_url": self.download_url,
-            "format": self.format,
-            "modified": self.modified,
-            "frequency": self.frequency,
-            "license": self.license,
-            "license_url": self.license_url,
-            "license_grade": self.license_grade(),
-            "row_count": self.row_count,
-            "columns": self.columns,
-            "language": self.language,
-            "tags": self.tags,
-            "status": self.status,
-            "error": self.error,
-            "tokens_used": self.tokens_used,
-            "cost_usd": round(self.cost_usd, 6),
-        }
+        """Serialize a presentation-safe copy without changing internal identity."""
+        return sanitize_for_presentation(
+            {
+                "id": self.id,
+                "title": self.title,
+                "description": self.description,
+                "source": self.source,
+                "source_name": self.source_name,
+                "url": self.url,
+                "download_url": self.download_url,
+                "format": self.format,
+                "modified": self.modified,
+                "frequency": self.frequency,
+                "license": self.license,
+                "license_url": self.license_url,
+                "license_grade": self.license_grade(),
+                "row_count": self.row_count,
+                "columns": self.columns,
+                "language": self.language,
+                "tags": self.tags,
+                "status": self.status,
+                "error": self.error,
+                "tokens_used": self.tokens_used,
+                "cost_usd": round(self.cost_usd, 6),
+            }
+        )
 
 
 class DataSourceTool(ABC):
@@ -316,9 +326,20 @@ def _is_degenerate(names: list[str]) -> bool:
     return False
 
 
-def csv_scan_expr(con, url: str) -> str:
+def _existing_local_csv_path(path: str | Path) -> str:
+    """Return an absolute local file path; never allow DuckDB to own source retrieval."""
+    try:
+        local_path = Path(path).resolve()
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError("CSV scanning requires an existing local file") from exc
+    if not local_path.is_file():
+        raise ValueError("CSV scanning requires an existing local file")
+    return str(local_path)
+
+
+def csv_scan_expr(con, path: str | Path) -> str:
     """
-    Decide ONCE how a CSV at `url` should be scanned, and return the DuckDB
+    Decide ONCE how a local CSV should be scanned, and return the DuckDB
     table function as a string with a '?' placeholder the caller binds.
 
     Returns either "read_csv_auto(?)" or the European-dialect fallback. The
@@ -332,8 +353,11 @@ def csv_scan_expr(con, url: str) -> str:
     fail or mis-sniff fall back to all-VARCHAR, which loads losslessly and is
     cast in SQL when analysing.
     """
+    local_path = _existing_local_csv_path(path)
     try:
-        cols = con.execute("DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [url]).fetchall()
+        cols = con.execute(
+            "DESCRIBE SELECT * FROM read_csv_auto(?) LIMIT 1", [local_path]
+        ).fetchall()
         if not _is_degenerate([str(c[0]) for c in cols]):
             return "read_csv_auto(?)"
     except Exception:
@@ -341,9 +365,9 @@ def csv_scan_expr(con, url: str) -> str:
     return f"read_csv(?, {EUROPEAN_CSV_ARGS})"
 
 
-def probe_csv_url(con, url: str, sample_rows: int) -> dict:
+def probe_csv_url(con, path: str | Path, sample_rows: int) -> dict:
     """
-    Probe a CSV at `url`: column definitions, a sample of rows, and the total
+    Probe a safely retrieved local CSV: column definitions, a sample of rows, and the total
     row count. Shared by every tool that probes a discovered URL directly
     (CKANTool, TavilyTool) — they previously called read_csv_auto(?) on their
     own, which skipped the European-dialect fallback that csv_scan_expr
@@ -355,14 +379,15 @@ def probe_csv_url(con, url: str, sample_rows: int) -> dict:
     not a correctness signal; describe/sample failures propagate to the
     caller, same as before this was extracted.
     """
-    expr = csv_scan_expr(con, url)
-    describe = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 1", [url]).fetchall()
+    local_path = _existing_local_csv_path(path)
+    expr = csv_scan_expr(con, local_path)
+    describe = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 1", [local_path]).fetchall()
     columns = [{"name": row[0], "type": row[1]} for row in describe]
 
-    sample = con.execute(f"SELECT * FROM {expr} LIMIT {int(sample_rows)}", [url]).fetchall()
+    sample = con.execute(f"SELECT * FROM {expr} LIMIT {int(sample_rows)}", [local_path]).fetchall()
 
     try:
-        row_count = con.execute(f"SELECT COUNT(*) FROM {expr}", [url]).fetchone()[0]
+        row_count = con.execute(f"SELECT COUNT(*) FROM {expr}", [local_path]).fetchone()[0]
     except Exception:
         row_count = None
 
@@ -382,7 +407,7 @@ def download_csv_dataset(
     """
     Download dataset.download_url into DuckDB, updating `dataset` in place.
 
-    Shared by every tool whose download is "httpfs-load a CSV" — CKANTool
+    Shared by every tool whose download safely retrieves and loads a CSV — CKANTool
     and TavilyTool previously carried byte-identical copies of this method,
     which is exactly the drift risk this module's helpers exist to prevent
     (see module docstring).
@@ -394,14 +419,9 @@ def download_csv_dataset(
     permit._assert_claims(actual_claims)
 
     try:
-        if response_is_html(actual_claims.retrieval_url):
-            raise ValueError(
-                f"URL serves an HTML page, not data: {actual_claims.retrieval_url} "
-                f"(landing/listing page - a direct file link is required)"
-            )
-
-        with AuthorizedDuckDBConnection(permit, destination) as connection:
-            actual_rows = load_csv_to_table(connection)
+        with safe_download(actual_claims.retrieval_url) as fetched:
+            with AuthorizedDuckDBConnection(permit, destination) as connection:
+                actual_rows = load_csv_to_table(connection, fetched)
 
         dataset.row_count = actual_rows
         dataset.status = "downloaded"
@@ -409,7 +429,7 @@ def download_csv_dataset(
 
     except Exception as e:
         dataset.status = "failed"
-        dataset.error = str(e)
+        dataset.error = sanitize_url_text(str(e))
         return dataset
 
 
@@ -452,15 +472,20 @@ class AuthorizedDuckDBConnection:
             raise TypeError(f"Persistent operation requires loader {loader_kind.value}")
         return claims
 
-    def _create_csv_table(self) -> None:
+    def _create_csv_table(self, fetched: FetchedResource) -> None:
         claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
-        ensure_httpfs(self.__connection)
-        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
-        expr = csv_scan_expr(self.__connection, claims.retrieval_url)
+        if not isinstance(fetched, FetchedResource):
+            raise TypeError("Persistent CSV loading requires a guarded fetched resource")
+        if fetched.source_url != claims.retrieval_url:
+            raise ValueError("Guarded resource does not match the authorized retrieval URL")
+        local_path = str(Path(fetched.path).resolve())
+        if not Path(local_path).is_file():
+            raise ValueError("Guarded resource is not an available local file")
+        expr = csv_scan_expr(self.__connection, local_path)
         claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
         self.__connection.execute(
             f'CREATE OR REPLACE TABLE "{claims.planned_table_name}" AS SELECT * FROM {expr}',
-            [claims.retrieval_url],
+            [local_path],
         )
 
     def _csv_row_count(self) -> int:
@@ -488,7 +513,7 @@ class AuthorizedDuckDBConnection:
             self._drop_csv_table()
             raise ValueError(
                 "URL returned an HTML page, not tabular data (redirect trap?): "
-                f"{claims.retrieval_url}. "
+                f"{safe_url_identity(claims.retrieval_url)}. "
                 "This is often a landing/listing page — a direct CSV link is required."
             )
 
@@ -519,20 +544,20 @@ def _authorized_connection(connection) -> AuthorizedDuckDBConnection:
     return connection
 
 
-def load_csv_to_table(connection: AuthorizedDuckDBConnection) -> int:
+def load_csv_to_table(
+    connection: AuthorizedDuckDBConnection,
+    fetched: FetchedResource,
+) -> int:
     """
     Load the authorized CSV into its planned table, returning the row count.
 
-    The claimed URL is ALWAYS bound as a parameter, never interpolated. It arrives from
-    third-party catalogues and web search results and must be treated as
-    hostile. DuckDB resolves a bound value as a literal path, so an injection
-    payload fails as a bad filename instead of executing.
+    The guarded local path is ALWAYS bound as a parameter, never interpolated.
+    The planned table name is authorization-derived and identifier-quoted.
 
-    The planned table name is ours, not the source's, and is identifier-quoted.
     The scan dialect comes from csv_scan_expr, shared with probe_url.
     """
     authorized = _authorized_connection(connection)
-    authorized._create_csv_table()
+    authorized._create_csv_table(fetched)
     _reject_if_html(authorized)
     return authorized._csv_row_count()
 
@@ -548,11 +573,10 @@ def response_is_html(url: str, timeout: float = 5.0) -> bool:
     """
     Best-effort pre-check: does `url` serve an HTML page rather than data?
 
-    Sends a HEAD (falling back to a streamed GET for servers that mishandle
-    HEAD) and inspects Content-Type. Returns True only when the server clearly
-    declares HTML. ANY failure — non-HTTP URL, timeout, connection error,
-    blocked host — returns False, so this never blocks a download on its own;
-    the post-load _reject_if_html guard remains the backstop.
+    Sends a guarded HEAD and inspects Content-Type. Returns True only when the
+    server clearly declares HTML. Any failure returns False, so this remains a
+    directory-discovery hint; guarded retrieval and the post-load HTML check
+    remain the enforcement points.
 
     Kept network-free for non-HTTP inputs (local paths, file://) so unit tests
     that load fixture CSVs never touch the network.
@@ -560,16 +584,8 @@ def response_is_html(url: str, timeout: float = 5.0) -> bool:
     if not url.lower().startswith(("http://", "https://")):
         return False
     try:
-        import requests
-
-        resp = requests.head(url, allow_redirects=True, timeout=timeout)
-        ctype = resp.headers.get("Content-Type", "")
-        if resp.status_code >= 400 or not ctype:
-            # Some data servers reject HEAD; confirm with a streamed GET that
-            # reads headers only (no body download).
-            resp = requests.get(url, stream=True, timeout=timeout)
-            ctype = resp.headers.get("Content-Type", "")
-            resp.close()
+        response = safe_http_head(url, timeout=timeout)
+        ctype = response.headers.get("Content-Type", "")
         mime = ctype.split(";")[0].strip().lower()
         return mime in ("text/html", "application/xhtml+xml")
     except Exception:
@@ -587,11 +603,3 @@ def _reject_if_html(connection: AuthorizedDuckDBConnection) -> None:
     an HTML tag. Real CSVs don't name a column `<!DOCTYPE html>`.
     """
     _authorized_connection(connection)._reject_html_csv_table()
-
-
-def ensure_httpfs(con) -> None:
-    """
-    Install AND load httpfs. prober.py previously only called LOAD, which
-    fails on any machine with a cold DuckDB extension cache.
-    """
-    con.execute("INSTALL httpfs; LOAD httpfs;")

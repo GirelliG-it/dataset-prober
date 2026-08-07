@@ -13,6 +13,8 @@ from typing import Optional
 
 import yaml
 
+from dataset_prober.loading_policy import sanitize_url_text
+
 # Profiles are package data - resolved relative to this module, not the
 # project root, so the path holds inside an installed wheel.
 DEFAULT_PROFILES_DIR = Path(__file__).parent / "profiles"
@@ -190,19 +192,22 @@ class Profile:
         ]
 
         for cat in sorted(self.catalogs, key=lambda c: c.priority):
-            lines.append(f"  - {cat.name} (type: {cat.type}, url: {cat.base_url})")
+            lines.append(
+                f"  - {sanitize_url_text(cat.name)} (type: {cat.type}, "
+                f"url: {sanitize_url_text(cat.base_url)})"
+            )
 
         if self.trusted_domains:
             lines.append("")
             lines.append("TRUSTED DOMAINS (prefer results from these):")
             for domain in self.trusted_domains:
-                lines.append(f"  - {domain}")
+                lines.append(f"  - {sanitize_url_text(domain)}")
 
         if self.blocked_sources:
             lines.append("")
             lines.append("BLOCKED SOURCES (do not access these):")
             for source in self.blocked_sources:
-                lines.append(f"  - {source}")
+                lines.append(f"  - {sanitize_url_text(source)}")
 
         lines.append("")
         lines.append("LICENSE RULES:")

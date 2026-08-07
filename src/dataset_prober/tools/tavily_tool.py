@@ -1,15 +1,12 @@
 """
 src/tools/tavily_tool.py
 
-Tavily-based web search and extraction tool.
-Used as a fallback when catalog APIs don't find results,
-and as the primary tool for the global discovery profile.
+Direct-resource portion of the Tavily adapter.
 
-Tavily handles JavaScript-rendered pages — solving the JS wall problem
-without needing Playwright or a headless browser.
+Provider-side search and extraction are disabled for v0.1 because the
+application cannot enforce DNS and redirect policy inside that opaque fetch.
 """
 
-import os
 import re
 from pathlib import Path
 
@@ -24,8 +21,13 @@ from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     download_csv_dataset,
-    ensure_httpfs,
     probe_csv_url,
+)
+from dataset_prober.tools.guards import safe_download
+
+_PROVIDER_DISABLED = (
+    "Tavily provider-side search and extraction are disabled by the v0.1 "
+    "URL-safety policy; use a direct supported public resource URL"
 )
 
 
@@ -33,13 +35,12 @@ class TavilyTool(DataSourceTool):
     """
     Web search and page extraction tool using Tavily AI.
 
-    Search: Tavily search API — returns ranked web results
-    Fetch:  Tavily extract API — pulls content from JS-rendered pages
-            and finds direct dataset file URLs
-    Download: Delegates to DuckDB httpfs for CSV files
+    Search/extraction: disabled by the v0.1 URL-safety policy
+    Direct fetch: guarded temporary retrieval followed by local DuckDB probing
+    Download: guarded temporary retrieval followed by authorized local loading
 
-    This tool is the fallback for sources not covered by CBS or CKAN tools.
-    For the global profile, it is the primary tool.
+    It is not registered as an agentic fallback while provider-side fetching
+    remains disabled. Exact direct CSV URLs can still use the guarded path.
     """
 
     @property
@@ -51,101 +52,22 @@ class TavilyTool(DataSourceTool):
         return "tavily"
 
     def is_available(self) -> bool:
-        try:
-            from tavily import TavilyClient  # noqa
-
-            key = os.environ.get("TAVILY_API_KEY")
-            return bool(key)
-        except ImportError:
-            return False
-
-    def _client(self):
-        """Lazily initialize Tavily client."""
-        from tavily import TavilyClient
-
-        key = os.environ.get("TAVILY_API_KEY")
-        if not key:
-            raise EnvironmentError("TAVILY_API_KEY not set. Add it to your .env file.")
-        return TavilyClient(api_key=key)
+        """Provider-side fetching is intentionally unavailable for v0.1."""
+        return False
 
     def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
-        """
-        Search the web for dataset sources using Tavily.
-        Applies trusted domain filtering from profile config.
-        """
-        timeout = self.config.get("timeout_seconds", 30)
-        trusted_domains = self.config.get("trusted_domains", [])
-        blocked_sources = self.config.get("blocked_sources", [])
-
-        try:
-            client = self._client()
-
-            # Build search kwargs
-            search_kwargs = {
-                "query": keyword,
-                "search_depth": "advanced",
-                "max_results": max_results,
-                "timeout": timeout,
-            }
-
-            # Apply domain filter if trusted domains are specified
-            if trusted_domains:
-                # Tavily include_domains expects full domain names
-                clean_domains = [d.lstrip(".") for d in trusted_domains if not d.startswith("http")]
-                if clean_domains:
-                    search_kwargs["include_domains"] = clean_domains[:5]  # Tavily limit
-
-            response = client.search(**search_kwargs)
-            results = []
-
-            for r in response.get("results", []):
-                url = r.get("url", "")
-
-                # Skip blocked sources
-                if any(blocked in url for blocked in blocked_sources):
-                    continue
-
-                # Check if it's a direct dataset file
-                is_direct = self._is_dataset_url(url)
-
-                result = DatasetResult(
-                    id=url,
-                    title=r.get("title", url),
-                    description=r.get("content", "")[:300],
-                    source=self.source_type,
-                    source_name=self.source_name,
-                    url=url,
-                    download_url=url if is_direct else None,
-                    format=self._detect_format(url) if is_direct else None,
-                    modified=None,
-                    frequency=None,
-                    license=None,
-                    license_url=None,
-                    row_count=None,
-                    columns=None,
-                    sample=None,
-                    language=None,
-                    tags=[],
-                    status="found",
-                )
-                results.append(result)
-
-            return results
-
-        except Exception as e:
-            return [
-                self._error_result(
-                    id=f"tavily_search_{keyword}",
-                    title=f"Web search failed: {keyword}",
-                    error=str(e),
-                )
-            ]
+        """Fail explicitly because provider-side Tavily search is disabled."""
+        return [
+            self._error_result(
+                id=f"tavily_search_{keyword}",
+                title=f"Web search disabled: {keyword}",
+                error=_PROVIDER_DISABLED,
+            )
+        ]
 
     def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
         """
-        Extract content from a URL using Tavily.
-        Finds direct dataset file URLs in page content.
-        For direct CSV URLs, probes with DuckDB httpfs.
+        Probe direct supported resources locally; reject provider extraction.
         """
         timeout = self.config.get("timeout_seconds", 30)
         blocked_sources = self.config.get("blocked_sources", [])
@@ -160,68 +82,23 @@ class TavilyTool(DataSourceTool):
         if self._is_dataset_url(dataset_id):
             return self._probe_direct(dataset_id, sample_rows, timeout)
 
-        # Otherwise, extract page content to find dataset URLs
-        try:
-            client = self._client()
-            response = client.extract(urls=[dataset_id])
-            extract_results = response.get("results", [])
-
-            if not extract_results:
-                return self._error_result(
-                    id=dataset_id, title=dataset_id, error="No content extracted from page"
-                )
-
-            content = extract_results[0].get("raw_content", "")[:5000]
-
-            # Find dataset URLs in content
-            dataset_urls = self._find_dataset_urls(content)
-
-            if not dataset_urls:
-                # Return as a landing page result — agent can decide what to do
-                return DatasetResult(
-                    id=dataset_id,
-                    title=extract_results[0].get("url", dataset_id),
-                    description=content[:300],
-                    source=self.source_type,
-                    source_name=self.source_name,
-                    url=dataset_id,
-                    download_url=None,
-                    format=None,
-                    modified=None,
-                    frequency=None,
-                    license=None,
-                    license_url=None,
-                    row_count=None,
-                    columns=None,
-                    sample=None,
-                    language=None,
-                    tags=[],
-                    status="found",
-                    error=f"No direct dataset URLs found. Page content extracted ({len(content)} chars).",
-                )
-
-            # Probe the first found CSV URL
-            best_url = dataset_urls[0]
-            result = self._probe_direct(best_url, sample_rows, timeout)
-            result.url = dataset_id  # Keep original page URL as reference
-            return result
-
-        except Exception as e:
-            return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
+        return self._error_result(id=dataset_id, title=dataset_id, error=_PROVIDER_DISABLED)
 
     def _probe_direct(self, url: str, sample_rows: int, timeout: int) -> DatasetResult:
-        """Probe a direct CSV URL using DuckDB httpfs."""
+        """Safely retrieve a direct CSV and probe its temporary local copy."""
         resource_format = detect_resource_format(url)
         if loader_for_resource(self.source_type, resource_format, url) is not LoaderKind.DUCKDB_CSV:
             return self._unsupported_direct_result(url, resource_format)
 
-        con = None
         try:
             import duckdb
 
-            con = duckdb.connect()
-            ensure_httpfs(con)
-            probe = probe_csv_url(con, url, sample_rows)
+            with safe_download(url, timeout=timeout) as fetched:
+                con = duckdb.connect()
+                try:
+                    probe = probe_csv_url(con, fetched.path, sample_rows)
+                finally:
+                    con.close()
 
             # Extract filename as title
             title = url.split("/")[-1].split("?")[0] or url
@@ -249,9 +126,6 @@ class TavilyTool(DataSourceTool):
 
         except Exception as e:
             return self._error_result(id=url, title=url, error=f"Probe failed: {str(e)}")
-        finally:
-            if con is not None:
-                con.close()
 
     def download(
         self,
@@ -259,7 +133,7 @@ class TavilyTool(DataSourceTool):
         destination: str | Path,
         authorization: AuthorizedLoad,
     ) -> DatasetResult:
-        """Download a CSV dataset into DuckDB using httpfs."""
+        """Safely retrieve and load one authorized CSV dataset into DuckDB."""
         if not isinstance(authorization, AuthorizedLoad):
             raise TypeError("Tavily persistent loading requires an AuthorizedLoad")
         actual_claims = claims_for_dataset(dataset, self.adapter_identity, destination)

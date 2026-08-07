@@ -10,14 +10,15 @@ from dataset_prober.loading_policy import (
     claims_for_probe,
     detect_resource_format,
     is_supported_format,
+    sanitize_for_presentation,
+    sanitize_url_text,
 )
 from dataset_prober.tools.base import (
     AuthorizedDuckDBConnection,
     csv_scan_expr,
-    ensure_httpfs,
     load_csv_to_table,
-    response_is_html,
 )
+from dataset_prober.tools.guards import safe_download
 
 
 @dataclass
@@ -33,7 +34,7 @@ class ProbeResult:
 
 
 def probe_url(name: str, url: str) -> ProbeResult:
-    """Probe a single URL with DuckDB and return a structured result."""
+    """Safely retrieve one URL and probe its local copy with DuckDB."""
     resource_format = detect_resource_format(url)
     if not is_supported_format("manual", resource_format):
         detail = resource_format or "unknown"
@@ -45,24 +46,29 @@ def probe_url(name: str, url: str) -> ProbeResult:
             format=resource_format,
         )
 
-    con = duckdb.connect()
-    ensure_httpfs(con)
-
     try:
-        # URLs are bound as parameters, never interpolated into SQL text.
-        # DuckDB treats a bound value as a literal path, so an injection
-        # payload fails as a bad filename rather than executing.
-        expr = csv_scan_expr(con, url)
-        count_result = con.execute(f"SELECT COUNT(*) FROM {expr}", [url]).fetchone()
-        row_count = count_result[0]
+        with safe_download(url) as fetched:
+            con = duckdb.connect()
+            try:
+                # DuckDB receives only the guarded temporary path. The source
+                # URL never reaches httpfs or another opaque network transport.
+                expr = csv_scan_expr(con, fetched.path)
+                count_result = con.execute(
+                    f"SELECT COUNT(*) FROM {expr}", [fetched.path]
+                ).fetchone()
+                row_count = count_result[0]
 
-        # Get column names and types
-        describe = con.execute(f"DESCRIBE SELECT * FROM {expr} LIMIT 1", [url]).fetchall()
-        columns = [{"name": row[0], "type": row[1]} for row in describe]
+                describe = con.execute(
+                    f"DESCRIBE SELECT * FROM {expr} LIMIT 1", [fetched.path]
+                ).fetchall()
+                columns = [{"name": row[0], "type": row[1]} for row in describe]
 
-        # Get sample rows
-        sample_rows = con.execute(f"SELECT * FROM {expr} LIMIT 3", [url]).fetchall()
-        sample = [list(row) for row in sample_rows]
+                sample_rows = con.execute(
+                    f"SELECT * FROM {expr} LIMIT 3", [fetched.path]
+                ).fetchall()
+                sample = [list(row) for row in sample_rows]
+            finally:
+                con.close()
 
         return ProbeResult(
             url=url,
@@ -75,7 +81,7 @@ def probe_url(name: str, url: str) -> ProbeResult:
         )
 
     except Exception as e:
-        error_msg = str(e)
+        error_msg = sanitize_url_text(str(e))
         # Detect silent redirect traps (HTML returned instead of data)
         if "Expected" in error_msg and "but got" in error_msg:
             status = "redirect_trap"
@@ -89,15 +95,12 @@ def probe_url(name: str, url: str) -> ProbeResult:
             format=resource_format,
         )
 
-    finally:
-        con.close()
-
 
 def probe_all(sources: list[dict]) -> list[ProbeResult]:
     """Probe a list of sources. Each source is a dict with 'name' and 'url'."""
     results = []
     for source in sources:
-        print(f"  Probing: {source['name']}...")
+        print(f"  Probing: {sanitize_url_text(str(source['name']))}...")
         result = probe_url(source["name"], source["url"])
         results.append(result)
         time.sleep(0.5)
@@ -106,7 +109,7 @@ def probe_all(sources: list[dict]) -> list[ProbeResult]:
 
 def save_results(results: list[ProbeResult], path: str):
     """Save probe results to a JSON file."""
-    data = [vars(r) for r in results]
+    data = [sanitize_for_presentation(vars(r)) for r in results]
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
     print(f"  Results saved to {path}")
@@ -122,16 +125,15 @@ def download_to_duckdb(
     actual_claims = claims_for_probe(result, destination)
     with authorization.activate(actual_claims) as permit:
         try:
-            if response_is_html(actual_claims.retrieval_url):
-                raise ValueError(
-                    f"{actual_claims.retrieval_url} serves HTML, not data (landing page?)"
+            with safe_download(actual_claims.retrieval_url) as fetched:
+                print(
+                    f"  Downloading: {sanitize_url_text(result.name)} → "
+                    f"table '{actual_claims.planned_table_name}'..."
                 )
-
-            print(f"  Downloading: {result.name} → table '{actual_claims.planned_table_name}'...")
-            with AuthorizedDuckDBConnection(permit, destination) as connection:
-                rows = load_csv_to_table(connection)
+                with AuthorizedDuckDBConnection(permit, destination) as connection:
+                    rows = load_csv_to_table(connection, fetched)
             result.row_count = rows
             print(f"  Done — {rows} rows loaded.")
         except Exception as exc:
-            print(f"  Failed: {exc}")
+            print(f"  Failed: {sanitize_url_text(str(exc))}")
     return result

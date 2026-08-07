@@ -1,7 +1,8 @@
 # config/profiles/global.yaml
 #
 # Profile for global open data discovery.
-# No preset sources — uses Tavily web search to find datasets worldwide.
+# No preset sources. Provider-side Tavily discovery is disabled by the v0.1
+# URL-safety policy, so this profile currently has no enabled search transport.
 # WARNING: This profile is slower and more expensive than targeted profiles.
 
 name: Global Discovery
@@ -51,7 +52,7 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 
-# No preset catalogs — agent discovers sources via Tavily
+# No preset catalogs; opaque provider-side discovery is disabled for v0.1.
 catalogs: []
 
 # No preset trusted domains — agent evaluates source credibility

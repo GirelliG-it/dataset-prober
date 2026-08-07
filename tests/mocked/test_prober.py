@@ -165,26 +165,26 @@ class TestResponseIsHtmlGuard:
 
         assert response_is_html("/tmp/local.csv") is False
 
-    def test_html_content_type_detected(self):
-        import responses
+    def test_html_content_type_detected(self, monkeypatch):
+        from types import SimpleNamespace
 
-        from dataset_prober.tools.base import response_is_html
+        from dataset_prober.tools import base
 
-        @responses.activate
-        def run():
-            responses.add(responses.HEAD, "https://x.test/page", content_type="text/html")
-            return response_is_html("https://x.test/page")
+        monkeypatch.setattr(
+            base,
+            "safe_http_head",
+            lambda _url, timeout: SimpleNamespace(headers={"Content-Type": "text/html"}),
+        )
+        assert base.response_is_html("https://x.test/page") is True
 
-        assert run() is True
+    def test_csv_content_type_allowed(self, monkeypatch):
+        from types import SimpleNamespace
 
-    def test_csv_content_type_allowed(self):
-        import responses
+        from dataset_prober.tools import base
 
-        from dataset_prober.tools.base import response_is_html
-
-        @responses.activate
-        def run():
-            responses.add(responses.HEAD, "https://x.test/data.csv", content_type="text/csv")
-            return response_is_html("https://x.test/data.csv")
-
-        assert run() is False
+        monkeypatch.setattr(
+            base,
+            "safe_http_head",
+            lambda _url, timeout: SimpleNamespace(headers={"Content-Type": "text/csv"}),
+        )
+        assert base.response_is_html("https://x.test/data.csv") is False

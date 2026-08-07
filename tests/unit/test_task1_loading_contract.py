@@ -1,6 +1,7 @@
 """Task 1 contracts for exact selection, consent, and loader admission."""
 
 import sys
+from contextlib import contextmanager
 from unittest.mock import Mock
 
 import pytest
@@ -362,8 +363,22 @@ def test_supported_manual_csv_reaches_persistent_loader(monkeypatch, tmp_path):
     connection = Mock()
     connect = Mock(return_value=connection)
     load = Mock(return_value=2)
+    csv_path = tmp_path / "guarded.csv"
+    csv_path.write_text("value\n1\n", encoding="utf-8")
+
+    @contextmanager
+    def download(url, **_kwargs):
+        from dataset_prober.tools.guards import FetchedResource
+
+        yield FetchedResource(
+            source_url=url,
+            final_url=url,
+            path=str(csv_path),
+            headers={"Content-Type": "text/csv"},
+        )
+
     monkeypatch.setattr("duckdb.connect", connect)
-    monkeypatch.setattr(prober, "response_is_html", Mock(return_value=False))
+    monkeypatch.setattr(prober, "safe_download", download)
     monkeypatch.setattr(prober, "load_csv_to_table", load)
 
     db_path = str(tmp_path / "datasets.duckdb")

@@ -334,11 +334,25 @@ _URL_SHAPED_TEXT = re.compile(
 )
 
 
-def _safe_title(title: str) -> str:
+def sanitize_url_text(text: str) -> str:
+    """Redact sensitive components from every URL-shaped value in presentation text."""
     return _URL_SHAPED_TEXT.sub(
         lambda match: safe_url_identity(match.group(0)),
-        title,
+        text,
     )
+
+
+def sanitize_for_presentation(value):
+    """Return a redacted copy suitable for logs, model messages, and saved reports."""
+    if isinstance(value, str):
+        return sanitize_url_text(value)
+    if isinstance(value, dict):
+        return {key: sanitize_for_presentation(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_for_presentation(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_for_presentation(item) for item in value)
+    return value
 
 
 _AUTHORIZED_LOAD_ISSUER = object()
@@ -506,9 +520,9 @@ class LoadingPolicySession:
         return (
             "Approve this exact one-shot DuckDB load?\n"
             f"  Source: {claims.source_key.value}\n"
-            f"  Adapter: {_safe_title(claims.adapter_identity)}\n"
-            f"  Resource ID: {_safe_title(claims.resource_id)}\n"
-            f"  Title: {_safe_title(snapshot.display_title)}\n"
+            f"  Adapter: {sanitize_url_text(claims.adapter_identity)}\n"
+            f"  Resource ID: {sanitize_url_text(claims.resource_id)}\n"
+            f"  Title: {sanitize_url_text(snapshot.display_title)}\n"
             f"  Retrieval URL: {safe_url_identity(claims.retrieval_url)}\n"
             f"  Verified format: {claims.verified_format.value}\n"
             f"  Loader: {claims.loader_kind.value}\n"

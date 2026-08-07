@@ -12,6 +12,8 @@ from dataset_prober.loading_policy import (
     LoadingPolicySession,
     configured_adapter_identity,
     parse_exact_selection,
+    safe_url_identity,
+    sanitize_url_text,
 )
 from dataset_prober.paths import AppPaths
 from dataset_prober.prober import download_to_duckdb, probe_all, save_results
@@ -80,7 +82,10 @@ def expand_directories(sources: list[dict]) -> list[dict]:
         try:
             listing = resolve_directory(url)
         except Exception as e:
-            console.print(f"[yellow]Could not read directory {url}: {e}[/yellow]")
+            console.print(
+                f"[yellow]Could not read directory {safe_url_identity(url)}: "
+                f"{sanitize_url_text(str(e))}[/yellow]"
+            )
             expanded.append(src)  # let it fall through and fail honestly downstream
             continue
 
@@ -105,16 +110,16 @@ def _walk_directory(url: str, listing: dict | None = None) -> list[dict]:
             listing = resolve_directory(url)
         subdirs, files = listing["subdirs"], listing["files"]
 
-        console.print(f"\n[bold cyan]Directory:[/bold cyan] {url}")
+        console.print(f"\n[bold cyan]Directory:[/bold cyan] {safe_url_identity(url)}")
         if subdirs:
             console.print("[bold]Subfolders:[/bold]")
             for i, d in enumerate(subdirs, 1):
-                console.print(f"  d{i}. {d['name']}")
+                console.print(f"  d{i}. {sanitize_url_text(str(d['name']))}")
         if files:
             console.print("[bold]Files:[/bold]")
             for i, f in enumerate(files, 1):
                 date = f" [dim]({f['modified']})[/dim]" if f.get("modified") else ""
-                console.print(f"  f{i}. {f['name']}{date}")
+                console.print(f"  f{i}. {sanitize_url_text(str(f['name']))}{date}")
         if not subdirs and not files:
             console.print("[yellow]Empty directory.[/yellow]")
             return []
@@ -163,18 +168,18 @@ def display_results(results):
     for r in results:
         status_color = "green" if r.status == "ok" else "red"
         table.add_row(
-            r.name,
+            sanitize_url_text(r.name),
             f"[{status_color}]{r.status}[/{status_color}]",
             str(r.row_count) if r.row_count else "-",
             str(len(r.columns)) if r.columns else "-",
-            r.error[:60] if r.error else "",
+            sanitize_url_text(r.error[:60]) if r.error else "",
         )
 
     console.print(table)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Probe open datasets via DuckDB httpfs")
+    parser = argparse.ArgumentParser(description="Safely retrieve and probe open datasets")
     parser.add_argument("--file", help="Path to a JSON file with dataset sources")
     parser.add_argument("--analyze", action="store_true", help="Run Claude analysis after probing")
     parser.add_argument(
@@ -231,7 +236,7 @@ def main() -> None:
         manual_adapter = configured_adapter_identity("manual", {})
         console.print("\n[bold]Available for download:[/bold]")
         for i, r in enumerate(loadable_results, 1):
-            console.print(f"  {i}. {r.name} ({r.row_count} rows)")
+            console.print(f"  {i}. {sanitize_url_text(r.name)} ({r.row_count} rows)")
 
         try:
             selection = console.input(
@@ -252,9 +257,9 @@ def main() -> None:
                 input_func=console.input,
             )
             if authorization is None:
-                console.print(f"[yellow]Not approved: {result.name}[/yellow]")
+                console.print(f"[yellow]Not approved: {sanitize_url_text(result.name)}[/yellow]")
                 continue
-            console.print(f"\n[bold]Downloading {result.name}...[/bold]\n")
+            console.print(f"\n[bold]Downloading {sanitize_url_text(result.name)}...[/bold]\n")
             download_to_duckdb(result, str(paths.duckdb_path), authorization)
 
     # Save results
@@ -278,6 +283,7 @@ def main() -> None:
             from dataset_prober.agent import summarize_probe_results
 
             summary = summarize_probe_results(saved)
+        summary = sanitize_url_text(summary)
         console.print(summary)
         summary_path = paths.analysis_summary_path
         paths.ensure_output_dir()

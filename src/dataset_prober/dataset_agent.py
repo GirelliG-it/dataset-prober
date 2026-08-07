@@ -52,6 +52,7 @@ from dataset_prober.loading_policy import (  # noqa: E402
     LoadingPolicySession,
     loader_for_resource,
     parse_exact_selection,
+    sanitize_url_text,
 )
 from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
 from dataset_prober.paths import AppPaths  # noqa: E402
@@ -170,7 +171,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
     Build Claude tool definitions dynamically from profile.
     No hardcoded tool descriptions — profile context is injected at runtime.
     """
-    catalog_types = [c.type for c in profile.catalogs]
+    catalog_types = list(dict.fromkeys(c.type for c in profile.catalogs if c.type != "tavily"))
     has_cbs = "cbs" in catalog_types
     has_ckan = "ckan" in catalog_types
 
@@ -182,7 +183,9 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
         catalog_desc.append("CBS OData catalog (for Dutch statistics)")
     if has_ckan:
         catalog_desc.append("CKAN catalog (for government open data portals)")
-    catalog_desc.append("Tavily web search (fallback for any source)")
+    if not catalog_desc:
+        catalog_desc.append("no source catalog enabled under the v0.1 URL-safety policy")
+    available_catalogs = ", ".join(catalog_types) or "none under the current safety policy"
 
     tools.append(
         {
@@ -202,8 +205,8 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                     },
                     "source": {
                         "type": "string",
-                        "enum": catalog_types + ["tavily"],
-                        "description": f"Which catalog to search. Available: {', '.join(catalog_types + ['tavily'])}",
+                        "enum": catalog_types,
+                        "description": f"Which catalog to search. Available: {available_catalogs}",
                     },
                     "max_results": {
                         "type": "integer",
@@ -223,7 +226,6 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                 "Fetch full metadata and sample data for a specific dataset by its ID. "
                 "For CBS: use the table ID (e.g. '37230ned'). "
                 "For CKAN: use the package name or ID. "
-                "For web URLs: use the full URL. "
                 "Always fetch before downloading to verify quality and freshness."
             ),
             "input_schema": {
@@ -235,7 +237,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                     },
                     "source": {
                         "type": "string",
-                        "enum": catalog_types + ["tavily"],
+                        "enum": catalog_types,
                         "description": "Which tool to use for fetching",
                     },
                     "sample_rows": {
@@ -300,7 +302,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                     },
                     "source": {
                         "type": "string",
-                        "enum": catalog_types + ["tavily"],
+                        "enum": catalog_types,
                         "description": "Which tool to use for downloading",
                     },
                     "download_url": {
@@ -351,7 +353,9 @@ def execute_tool(
         if not budget.can_search():
             return {"error": "Search budget exhausted or timed out"}
 
-        console.print(f"  🔍 [cyan]Searching {source}:[/cyan] {keyword}")
+        console.print(
+            f"  🔍 [cyan]Searching {sanitize_url_text(source)}:[/cyan] {sanitize_url_text(keyword)}"
+        )
         budget.searches_used += 1
 
         results = tool.search(keyword, max_results)
@@ -370,14 +374,18 @@ def execute_tool(
         if not budget.can_probe():
             return {"error": "Probe budget exhausted or timed out"}
 
-        console.print(f"  📊 [cyan]Fetching ({source}):[/cyan] {dataset_id}")
+        console.print(
+            f"  📊 [cyan]Fetching ({sanitize_url_text(source)}):[/cyan] "
+            f"{sanitize_url_text(dataset_id)}"
+        )
         budget.probes_used += 1
 
         result = tool.fetch(dataset_id, sample_rows)
 
         if result.status == "probed":
             console.print(
-                f"    → ✅ {result.title} | {len(result.columns or [])} columns | modified: {result.modified}"
+                f"    → ✅ {sanitize_url_text(result.title)} | "
+                f"{len(result.columns or [])} columns | modified: {result.modified}"
             )
             found_datasets.append(result)
             try:
@@ -385,7 +393,9 @@ def execute_tool(
             except InspectedResourceError:
                 pass
         else:
-            console.print(f"    → ❌ {result.error or 'fetch failed'}")
+            console.print(
+                f"    → ❌ {sanitize_url_text(result.error) if result.error else 'fetch failed'}"
+            )
 
         return result.to_dict()
 
@@ -394,7 +404,10 @@ def execute_tool(
         last_updated = tool_input["last_updated"]
         max_days_old = tool_input["max_days_old"]
 
-        console.print(f"  📅 [cyan]Checking freshness:[/cyan] {dataset_id} (last: {last_updated})")
+        console.print(
+            f"  📅 [cyan]Checking freshness:[/cyan] {sanitize_url_text(dataset_id)} "
+            f"(last: {last_updated})"
+        )
 
         # Create a temporary DatasetResult to use its freshness logic
         temp = DatasetResult(
@@ -487,19 +500,19 @@ def execute_tool(
                 input_func=console.input,
             )
         except InspectedResourceError as exc:
-            return {"error": f"Download denied — {exc}"}
+            return {"error": f"Download denied — {sanitize_url_text(str(exc))}"}
         if authorization is None:
-            console.print(f"  ⛔ [yellow]Not approved: {dataset.title}[/yellow]")
+            console.print(f"  ⛔ [yellow]Not approved: {sanitize_url_text(dataset.title)}[/yellow]")
             return {"error": "Download denied — exact affirmative consent was not given"}
 
-        console.print(f"  💾 [cyan]Downloading:[/cyan] {dataset.title}")
+        console.print(f"  💾 [cyan]Downloading:[/cyan] {sanitize_url_text(dataset.title)}")
         result = tool.download(dataset, str(paths.duckdb_path), authorization)
 
         if result.status == "downloaded":
             rows = f"{result.row_count:,}" if result.row_count is not None else "unknown"
             console.print(f"    → ✅ {rows} rows saved to DuckDB")
         else:
-            console.print(f"    → ❌ {result.error}")
+            console.print(f"    → ❌ {sanitize_url_text(result.error or 'load failed')}")
 
         return result.to_dict()
 
@@ -645,7 +658,9 @@ When done, present a structured summary table with:
         if response.stop_reason == "end_turn":
             for block in response.content:
                 if hasattr(block, "text") and block.text:
-                    console.print(f"\n[bold green]Agent Report:[/bold green]\n{block.text}")
+                    console.print(
+                        f"\n[bold green]Agent Report:[/bold green]\n{sanitize_url_text(block.text)}"
+                    )
             break
 
         if response.stop_reason != "tool_use":
@@ -657,7 +672,7 @@ When done, present a structured summary table with:
         for block in response.content:
             if block.type != "tool_use":
                 if hasattr(block, "text") and block.text:
-                    console.print(f"\n[dim italic]{block.text}[/dim italic]")
+                    console.print(f"\n[dim italic]{sanitize_url_text(block.text)}[/dim italic]")
                 continue
 
             result = execute_tool(
@@ -719,7 +734,10 @@ def _handle_timeout(
             is not LoaderKind.UNSUPPORTED
         ]
         for index, dataset in enumerate(candidates, 1):
-            console.print(f"  {index}. {dataset.title} [{dataset.source}:{dataset.id}]")
+            console.print(
+                f"  {index}. {sanitize_url_text(dataset.title)} "
+                f"[{dataset.source}:{sanitize_url_text(dataset.id)}]"
+            )
         try:
             selection = console.input(
                 "[cyan]Select exact resources (e.g. 1,3 or 'all' or 'none'):[/cyan] "
@@ -771,7 +789,7 @@ def _print_results_table(datasets: list):
         }.get(d.status, "white")
 
         table.add_row(
-            d.title[:40],
+            sanitize_url_text(d.title)[:40],
             d.source,
             str(d.row_count) if d.row_count else "-",
             (d.modified or "unknown")[:10],

@@ -5,7 +5,25 @@ Tests for pure functions with no external dependencies.
 These run in milliseconds and never touch the network or filesystem.
 """
 
+from contextlib import contextmanager
+from pathlib import Path
+
 import pytest
+
+
+@contextmanager
+def _guarded_local_download(url, **_kwargs):
+    from dataset_prober.tools.guards import FetchedResource, UnsafeURLError
+
+    path = Path(url)
+    if not path.is_file():
+        raise UnsafeURLError("test transport rejected non-local source")
+    yield FetchedResource(
+        source_url=str(url),
+        final_url=str(url),
+        path=str(path),
+        headers={"Content-Type": "text/csv"},
+    )
 
 
 def _authorized_manual_load(monkeypatch, url, destination, *, name="dataset"):
@@ -13,7 +31,6 @@ def _authorized_manual_load(monkeypatch, url, destination, *, name="dataset"):
     from dataset_prober import prober
     from dataset_prober.loading_policy import LoadingPolicySession
     from dataset_prober.prober import ProbeResult
-    from dataset_prober.tools import base
 
     result = ProbeResult(
         url=str(url),
@@ -31,7 +48,7 @@ def _authorized_manual_load(monkeypatch, url, destination, *, name="dataset"):
         destination=destination,
         input_func=lambda _prompt: "yes",
     )
-    monkeypatch.setattr(base, "ensure_httpfs", lambda _connection: None)
+    monkeypatch.setattr(prober, "safe_download", _guarded_local_download)
     return prober.download_to_duckdb(result, str(destination), authorization)
 
 
@@ -40,9 +57,9 @@ def _authorized_manual_load(monkeypatch, url, destination, *, name="dataset"):
 
 class TestSqlInjection:
     """
-    URLs reach DuckDB from untrusted places: CKAN catalogues, Tavily web search
-    results, user input. These assert the property that matters — a payload does
-    NOT execute — instead of asserting *how* we sanitise.
+    Guarded local filenames still originate from untrusted source metadata and
+    user input. These assert the property that matters — a payload does NOT
+    execute — instead of asserting *how* we sanitise.
 
     The previous tests checked `"'" not in _safe_url(url)`. A function that
     returns "" would also pass that. They could not have caught the fact that
@@ -57,8 +74,8 @@ class TestSqlInjection:
         con.execute("CREATE TABLE canary AS SELECT 1 AS x")
         con.close()
 
-        payload = "http://x/a.csv?value='); DROP TABLE canary; --"
-        monkeypatch.setattr("dataset_prober.prober.response_is_html", lambda _url: False)
+        payload = tmp_path / "a'); DROP TABLE canary; --.csv"
+        payload.write_text("value\n1\n", encoding="utf-8")
         _authorized_manual_load(monkeypatch, payload, destination, name="loot")
 
         con = duckdb.connect(str(destination))
@@ -676,14 +693,12 @@ class TestCsvScanExprSharedByProbeAndLoad:
         have no fallback, so a European file errored at probe and never
         reached download. Both paths must now succeed on the same file.
         """
-        from unittest.mock import patch
-
         from dataset_prober import prober
 
         path = self._write(tmp_path, "euro.csv", self.EUROPEAN)
 
-        with patch.object(prober, "ensure_httpfs", lambda con: None):
-            result = prober.probe_url("euro", path)
+        monkeypatch.setattr(prober, "safe_download", _guarded_local_download)
+        result = prober.probe_url("euro", path)
 
         loaded = _authorized_manual_load(monkeypatch, path, tmp_path / "euro.duckdb", name="euro")
 
@@ -691,14 +706,12 @@ class TestCsvScanExprSharedByProbeAndLoad:
         assert result.row_count == loaded.row_count
 
     def test_probe_and_load_agree_on_the_clean_file(self, monkeypatch, tmp_path):
-        from unittest.mock import patch
-
         from dataset_prober import prober
 
         path = self._write(tmp_path, "clean.csv", self.CLEAN)
 
-        with patch.object(prober, "ensure_httpfs", lambda con: None):
-            result = prober.probe_url("clean", path)
+        monkeypatch.setattr(prober, "safe_download", _guarded_local_download)
+        result = prober.probe_url("clean", path)
 
         loaded = _authorized_manual_load(monkeypatch, path, tmp_path / "clean.duckdb", name="clean")
 

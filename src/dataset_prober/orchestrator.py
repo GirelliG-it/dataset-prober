@@ -28,6 +28,8 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from dataset_prober.loading_policy import sanitize_url_text
+
 console = Console()
 
 
@@ -81,26 +83,29 @@ class ProfileResult:
         Target: under 300 tokens.
         """
         lines = ["HANDOFF FROM PREVIOUS PROFILE:"]
-        lines.append(f"Profile: {self.display_name}")
-        lines.append(f"Objective: {self.objective.what_to_find}")
+        lines.append(f"Profile: {sanitize_url_text(self.display_name)}")
+        lines.append(f"Objective: {sanitize_url_text(self.objective.what_to_find)}")
         lines.append("")
 
         if self.datasets_downloaded:
             lines.append("✅ Successfully downloaded:")
             for d in self.datasets_downloaded:
                 lines.append(
-                    f"  - {d.title} ({d.id}) | "
+                    f"  - {sanitize_url_text(d.title)} ({sanitize_url_text(d.id)}) | "
                     f"{d.row_count or '?'} rows | "
                     f"modified: {d.modified or 'unknown'}"
                 )
         elif self.datasets_found:
             lines.append("⚠️  Found but could not download:")
             for d in self.datasets_found[:3]:
-                lines.append(f"  - {d.title} ({d.id}) — {d.error or d.status}")
+                lines.append(
+                    f"  - {sanitize_url_text(d.title)} ({sanitize_url_text(d.id)}) — "
+                    f"{sanitize_url_text(d.error or d.status)}"
+                )
         else:
             lines.append("❌ Nothing found for this objective.")
             if self.failure_reason:
-                lines.append(f"   Reason: {self.failure_reason}")
+                lines.append(f"   Reason: {sanitize_url_text(self.failure_reason)}")
 
         lines.append("")
         lines.append(
@@ -192,9 +197,9 @@ class AggregatedResult:
             }.get(d.status, "white")
 
             table.add_row(
-                d.source_name[:15],
-                d.title[:35],
-                d.id[:15],
+                sanitize_url_text(d.source_name)[:15],
+                sanitize_url_text(d.title)[:35],
+                sanitize_url_text(d.id)[:15],
                 str(d.row_count) if d.row_count else "-",
                 (d.modified or "unknown")[:10],
                 d.license_grade() if d.license else "?",
@@ -304,7 +309,10 @@ class Orchestrator:
                 icon = "❌"
                 status = result.failure_reason or "nothing found"
 
-            console.print(f"\n{icon} Profile {current}/{total} ({profile_name}): {status}")
+            console.print(
+                f"\n{icon} Profile {current}/{total} ({sanitize_url_text(profile_name)}): "
+                f"{sanitize_url_text(status)}"
+            )
             console.print(
                 f"   Cost: ${result.cost_usd:.4f} | "
                 f"Tokens: {result.tokens_used:,} | "
