@@ -434,7 +434,7 @@ def download_csv_dataset(
 
 
 class AuthorizedDuckDBConnection:
-    """Own one persistent connection while a matching active permit is live."""
+    """Own one transactional persistent connection while an active permit is live."""
 
     __slots__ = ("__permit", "__destination", "__connection")
 
@@ -453,13 +453,58 @@ class AuthorizedDuckDBConnection:
 
         import duckdb
 
-        self.__connection = duckdb.connect(destination)
+        connection = duckdb.connect(destination)
+        try:
+            connection.execute("BEGIN TRANSACTION")
+        except BaseException as begin_error:
+            try:
+                connection.close()
+            except BaseException as close_error:
+                raise begin_error from close_error
+            raise
+        self.__connection = connection
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> bool:
         connection = self.__connection
         self.__connection = None
-        if connection is not None:
+        if connection is None:
+            return False
+
+        if exc is not None:
+            rollback_error = None
+            try:
+                connection.execute("ROLLBACK")
+            except BaseException as caught_rollback_error:
+                rollback_error = caught_rollback_error
+            try:
+                connection.close()
+            except BaseException as close_error:
+                exc.add_note(
+                    f"Persistent DuckDB connection close also failed ({type(close_error).__name__})"
+                )
+            if rollback_error is not None:
+                raise exc.with_traceback(traceback) from rollback_error
+            return False
+
+        try:
+            connection.execute("COMMIT")
+        except BaseException as commit_error:
+            rollback_error = None
+            try:
+                connection.execute("ROLLBACK")
+            except BaseException as caught_rollback_error:
+                rollback_error = caught_rollback_error
+            try:
+                connection.close()
+            except BaseException as close_error:
+                commit_error.add_note(
+                    f"Persistent DuckDB connection close also failed ({type(close_error).__name__})"
+                )
+            if rollback_error is not None:
+                raise commit_error from rollback_error
+            raise
+        else:
             connection.close()
         return False
 
@@ -484,7 +529,7 @@ class AuthorizedDuckDBConnection:
         expr = csv_scan_expr(self.__connection, local_path)
         claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
         self.__connection.execute(
-            f'CREATE OR REPLACE TABLE "{claims.planned_table_name}" AS SELECT * FROM {expr}',
+            f'CREATE TABLE "{claims.planned_table_name}" AS SELECT * FROM {expr}',
             [local_path],
         )
 
@@ -510,16 +555,11 @@ class AuthorizedDuckDBConnection:
                 first_cell = str(row[0]).lower()
 
         if any(marker in header_blob or marker in first_cell for marker in _HTML_MARKERS):
-            self._drop_csv_table()
             raise ValueError(
                 "URL returned an HTML page, not tabular data (redirect trap?): "
                 f"{safe_url_identity(claims.retrieval_url)}. "
                 "This is often a landing/listing page — a direct CSV link is required."
             )
-
-    def _drop_csv_table(self) -> None:
-        claims = self.__active_claims(LoaderKind.DUCKDB_CSV)
-        self.__connection.execute(f'DROP TABLE IF EXISTS "{claims.planned_table_name}"')
 
     def _create_dataframe_table(self, dataframe) -> None:
         claims = self.__active_claims(LoaderKind.CBS_ODATA)
@@ -527,7 +567,7 @@ class AuthorizedDuckDBConnection:
         self.__connection.register(frame_name, dataframe)
         claims = self.__active_claims(LoaderKind.CBS_ODATA)
         self.__connection.execute(
-            f'CREATE OR REPLACE TABLE "{claims.planned_table_name}" AS SELECT * FROM {frame_name}'
+            f'CREATE TABLE "{claims.planned_table_name}" AS SELECT * FROM {frame_name}'
         )
 
     def _dataframe_row_count(self) -> int:

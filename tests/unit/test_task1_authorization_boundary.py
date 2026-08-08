@@ -6,7 +6,7 @@ import hashlib
 import threading
 from contextlib import contextmanager
 from dataclasses import replace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -520,20 +520,14 @@ def test_authorized_connection_has_no_raw_or_arbitrary_sql_escape(monkeypatch, t
             with pytest.raises(AttributeError):
                 connection._write("CREATE TABLE unrelated AS SELECT 1")
 
-    raw_connection.execute.assert_not_called()
+    assert raw_connection.execute.call_args_list == [
+        call("BEGIN TRANSACTION"),
+        call("COMMIT"),
+    ]
 
 
-@pytest.mark.parametrize(
-    ("operation", "method_name"),
-    [
-        ("CREATE", "_create_csv_table"),
-        ("CREATE OR REPLACE", "_create_csv_table"),
-        ("DROP", "_drop_csv_table"),
-    ],
-)
-def test_authorization_for_table_a_cannot_target_table_b(
-    monkeypatch, tmp_path, operation, method_name
-):
+@pytest.mark.parametrize("method_name", ["_create_csv_table", "_create_dataframe_table"])
+def test_authorization_for_table_a_cannot_target_table_b(monkeypatch, tmp_path, method_name):
     from dataset_prober.loading_policy import LoadingPolicySession, claims_for_dataset
     from dataset_prober.tools.base import AuthorizedDuckDBConnection
 
@@ -548,11 +542,19 @@ def test_authorization_for_table_a_cannot_target_table_b(
 
     with authorization.activate(claims) as permit:
         with AuthorizedDuckDBConnection(permit, destination) as connection:
-            operation_method = getattr(connection, method_name)
             with pytest.raises(TypeError):
-                operation_method("table_b")
+                getattr(connection, method_name)("table_b")
 
-    assert raw_connection.execute.call_count == 0, operation
+    assert raw_connection.execute.call_args_list == [
+        call("BEGIN TRANSACTION"),
+        call("COMMIT"),
+    ]
+
+
+def test_authorized_connection_exposes_no_drop_operation():
+    from dataset_prober.tools.base import AuthorizedDuckDBConnection
+
+    assert not hasattr(AuthorizedDuckDBConnection, "_drop_csv_table")
 
 
 def test_destination_normalization_and_table_derivation_are_shared(tmp_path):
@@ -979,7 +981,7 @@ def test_persistent_sql_failure_closes_connection_and_consumes(monkeypatch, tmp_
     session = LoadingPolicySession(download_enabled=True)
     authorization = authorize_dataset(session, dataset, tool.adapter_identity, destination)
     connection = Mock()
-    connection.execute.side_effect = RuntimeError("CTAS failed")
+    connection.execute.side_effect = [None, RuntimeError("CTAS failed"), None]
     csv_path = tmp_path / "guarded.csv"
     csv_path.write_text("value\n1\n", encoding="utf-8")
     monkeypatch.setattr(
@@ -994,6 +996,10 @@ def test_persistent_sql_failure_closes_connection_and_consumes(monkeypatch, tmp_
 
     assert returned.status == "failed"
     assert authorization.state is AuthorizationState.CONSUMED
+    assert connection.execute.call_args_list[0] == call("BEGIN TRANSACTION")
+    assert connection.execute.call_args_list[1].args[0].startswith("CREATE TABLE ")
+    assert "OR REPLACE" not in connection.execute.call_args_list[1].args[0]
+    assert connection.execute.call_args_list[2] == call("ROLLBACK")
     connection.close.assert_called_once()
 
 

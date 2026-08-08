@@ -17,8 +17,9 @@ to the source. For the latter, read `git log`.
   now walked before probing: pick a subfolder, descend, pick files. Chosen files
   flow into the existing probe and download pipeline.
 - HTML landing-page guard. A URL that serves HTML is rejected before load, and a
-  table whose contents look like markup is dropped after load. Redirect traps
-  and portal landing pages now fail honestly instead of being stored as data.
+  table whose contents look like markup causes the complete load transaction to
+  roll back. Redirect traps and portal landing pages now fail honestly instead
+  of being stored as data.
 
 ### Changed
 
@@ -51,6 +52,9 @@ to the source. For the latter, read `git log`.
 
 ### Fixed
 
+- Persistent DuckDB loads now refuse to overwrite an existing target table.
+- Table creation and validation now run atomically, so a failed load rolls back
+  without leaving a partial table or persistent staging artifact.
 - Mis-sniffed CSVs are detected reliably. The previous check looked only for
   generic `column0`, `column1` names; the common real-world failure is a file
   collapsing into a single column named after its first physical line, which
