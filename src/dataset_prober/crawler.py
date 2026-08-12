@@ -71,7 +71,7 @@ def crawl(base_url: str, max_depth: int = 3) -> list[dict]:
                 name = link_text if link_text else full_url.split("/")[-1]
                 if not any(d["url"] == full_url for d in found_datasets):
                     console.print(
-                        f"  [green]Found:[/green] {sanitize_url_text(name)} → "
+                        f"  [green]Candidate resource:[/green] {sanitize_url_text(name)} → "
                         f"{safe_url_identity(full_url)}"
                     )
                     found_datasets.append({"name": name, "url": full_url})
@@ -189,9 +189,11 @@ def main() -> None:
     datasets = crawl(url, max_depth)
 
     if not datasets:
-        console.print("[yellow]No datasets found.[/yellow]")
+        console.print("[yellow]No candidate resources found.[/yellow]")
     else:
-        console.print(f"\n[bold]Found {len(datasets)} dataset(s). Probing...[/bold]\n")
+        console.print(
+            f"\n[bold]Found {len(datasets)} candidate resource(s). Inspecting...[/bold]\n"
+        )
         results = [probe_url(d["name"], d["url"]) for d in datasets]
 
         from dataset_prober.run import display_results

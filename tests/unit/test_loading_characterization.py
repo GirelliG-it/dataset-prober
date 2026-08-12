@@ -9,6 +9,7 @@ from dataset_prober.loading_policy import AuthorizedLoad, LoadingPolicySession
 from dataset_prober.paths import AppPaths
 from dataset_prober.prober import ProbeResult
 from dataset_prober.tools.base import DatasetResult
+from tests.conftest import eligible_assessment_for_candidate
 
 
 def _dataset(*, source: str, format: str, dataset_id: str) -> DatasetResult:
@@ -36,6 +37,12 @@ def _dataset(*, source: str, format: str, dataset_id: str) -> DatasetResult:
         language=None,
         tags=[],
         status="probed",
+        assessment=eligible_assessment_for_candidate(
+            source_key=source,
+            adapter_identity=source.upper(),
+            resource_id=dataset_id,
+            retrieval_url=download_url,
+        ),
     )
 
 
@@ -105,6 +112,12 @@ def test_manual_download_flag_and_exact_selection_load_only_that_result(monkeypa
         row_count=2,
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id="https://example.com/first.csv",
+            retrieval_url="https://example.com/first.csv",
+        ),
     )
     second = ProbeResult(
         name="Second",
@@ -113,6 +126,12 @@ def test_manual_download_flag_and_exact_selection_load_only_that_result(monkeypa
         row_count=3,
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id="https://example.com/second.csv",
+            retrieval_url="https://example.com/second.csv",
+        ),
     )
     paths = AppPaths(output_dir=tmp_path)
     load_calls = []
@@ -161,6 +180,12 @@ def test_manual_multi_selection_issues_one_authorization_and_attempt_per_resourc
             row_count=index,
             columns=[{"name": "value", "type": "INTEGER"}],
             format="CSV",
+            assessment=eligible_assessment_for_candidate(
+                source_key="manual",
+                adapter_identity="Manual URL",
+                resource_id=f"https://example.com/{name.lower()}.csv",
+                retrieval_url=f"https://example.com/{name.lower()}.csv",
+            ),
         )
         for index, name in enumerate(("First", "Second"), 1)
     ]

@@ -1,13 +1,14 @@
 # dataset-prober
 
 `dataset-prober` is a functional pre-release Python prototype for finding open-data
-resources, inspecting their structure with DuckDB and optionally loading selected data
-into a local DuckDB database.
+resources, deterministically assessing inspected content and optionally loading an
+explicitly approved resource into a local DuckDB database.
 
-It is not yet a stable release. In particular, the current `main` branch does not enforce
-all of the classification, consent, URL-safety, overwrite-protection, provenance and
-installation contracts planned for v0.1. Read [Current limitations](#current-limitations)
-before using it with untrusted URLs or an existing database.
+It is not yet a stable release. The current pre-release implements bounded classification,
+consent, URL-safety and non-destructive loading contracts for its supported routes, but
+provenance, packaging, CI and other v0.1 release work remain incomplete. Read
+[Current limitations](#current-limitations) before using it with untrusted URLs or an
+existing database.
 
 ## Why this project exists
 
@@ -27,7 +28,8 @@ This project explores that workflow with Python, agentic AI, catalog adapters an
 Reports, PDFs, documentation and landing pages can be useful evidence or pointers, but
 they are not verified datasets. A resource should only be called a verified dataset after
 deterministic inspection has established that it contains a supported, queryable
-structure. The current prototype does not yet enforce that rule reliably end to end.
+structure with observations. The current prototype enforces that rule for its supported
+CSV and CBS/OData loading paths; other candidates remain visible as report-only resources.
 
 ## Discovery and verification are different
 
@@ -36,31 +38,40 @@ profiles, plan searches and call source tools. CBS and CKAN integrations can the
 candidate resources. Model output, search snippets, filenames and catalog metadata
 are discovery evidence; none of them prove that a resource is a dataset.
 
-The deterministic part uses DuckDB SQL to try to read CSV-like resources and report row
-counts, column names, DuckDB types and sample records. The CBS adapter uses guarded HTTP
-for its OData catalog, samples and paginated table retrieval. These observations are stronger evidence than
-an AI recommendation, but the current acceptance checks can still produce false positives.
-Treat the current `ok` and `probed` statuses as prototype inspection results, not as a
-v0.1 verification guarantee.
+The deterministic part retrieves enabled resources through a guarded transport and
+classifies the inspected content before using DuckDB SQL to report row counts, column
+names, types and sample records. CBS/OData records are assessed through the same central
+assessment model. Eligibility is derived from a coherent, classifier-issued assessment;
+an `ok`, `found` or `probed` lifecycle status does not make a resource load-eligible.
+
+Classifier-issued assessment evidence is bound to the canonical identity of the inspected
+candidate. One resource's assessment cannot authorize another resource, and model output
+cannot replace deterministic verification.
 
 ## What works today
 
-- The manual prober accepts named URLs interactively or from JSON, attempts a DuckDB
-  structural probe, displays the result and asks which successful probes to load.
+- The manual prober accepts named URLs interactively or from JSON, classifies inspected
+  content, displays both verified and report-only results, and offers only verified,
+  load-eligible resources for exact selection when `--download` is present.
 - Apache/nginx-style directory listings can be explored interactively before probing a
   concrete file.
 - The crawler follows relevant same-domain pages and collects links whose filenames look
   like data resources.
 - The agentic command can interpret a request, choose bundled geographic source profiles,
-  search CBS and CKAN catalogs, fetch candidates and present an aggregated result. Tavily
-  provider-side search and extraction are disabled on the v0.1 stabilization branch because
-  their source-fetch transport is opaque to the application.
+  search CBS and CKAN catalogs, fetch candidates and present an aggregated result. The
+  Tavily adapter supports an explicitly supplied direct CSV resource, while Tavily
+  provider-side search and extraction remain disabled because their source-fetch transport
+  is opaque to the application.
 - Supported CSV resources are retrieved through the application-owned guarded HTTP transport
   and probed or loaded from temporary local copies with DuckDB. CBS tables use the same
   guarded transport for OData catalogue, sample and paginated dataset retrieval.
 - Guarded catalog responses are limited to 32 MiB per response and dataset retrieval is
   limited to 512 MiB per load attempt. Sensitive URL credentials, query values and fragments
   are replaced by sanitized identities in console output, model-facing results and saved JSON.
+- Every load requires `--download`, exact registered-resource selection and per-resource
+  `y`/`yes` consent for the displayed destination and table. The actual payload is retrieved
+  and assessed again before persistent DuckDB access. Table creation is transactional, and
+  an existing target table is never overwritten.
 - Manual probe results and agent results are written as JSON. Optional post-probe analysis
   can use Claude or a local Ollama model.
 - Offline unit, fixture-based and mocked tests cover selected parsing, configuration,
@@ -85,6 +96,7 @@ dataset-prober
 # Manual URL probing and optional analysis
 dataset-prober-probe
 dataset-prober-probe --file sources.json
+dataset-prober-probe --file sources.json --download
 dataset-prober-probe --analyze
 dataset-prober-probe --analyze --local --model qwen2.5-coder:3b
 
@@ -103,34 +115,40 @@ The JSON input for `dataset-prober-probe --file` is a list of named URLs:
 ]
 ```
 
+`--download` only enables the loading workflow. The user must still select an exact
+load-eligible resource and answer `y` or `yes` to the consent prompt for that resource's
+displayed destination and table.
+
 Agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`. Tavily provider
 search and extraction remain disabled even when `TAVILY_API_KEY` is set. The optional local analysis path expects an Ollama server
 at `http://localhost:11434` and the requested model to be available there. Environment
 variables can be placed in a repository-root `.env` file for the current checkout-based
 workflow.
 
-The manual workflow writes `output/probe_results.json` and, after an explicit interactive
-selection, `output/datasets.duckdb`. The agentic workflow writes
-`output/agent_results.json` and can write to the same DuckDB file. These fixed paths are a
-current limitation, not a stable storage interface.
+By default, a checkout-based manual workflow writes `output/probe_results.json` and an
+approved load uses `output/datasets.duckdb`. The agentic workflow writes
+`output/agent_results.json` and can use the same DuckDB file. `DATASET_PROBER_OUTPUT` can
+select another output directory, but artifact names are fixed and the console commands do
+not yet expose the existing output-directory setting as a complete installed-runtime
+interface.
 
 ## Current limitations
 
 Use the prototype on disposable outputs and review every candidate yourself.
 
-- Resource classification is incomplete. Extension checks, catalog metadata or a
-  permissive CSV parse can mistake HTML, prose, an error response, an API specification or
-  another non-dataset resource for structured data. PDFs, reports, documentation, search
-  snippets and landing pages must not be reported or used as verified datasets.
-- The implemented generic loader is CSV-oriented, while discovery can identify extensions
-  such as JSON, Excel, Parquet and GeoJSON. Those unsupported formats are denied before CSV
-  probing or loading, but deterministic classification of them is not yet implemented.
+- Deterministic classification is intentionally narrow and conservative. Supported CSV and
+  CBS/OData content must be non-empty and structurally queryable. Documentary, HTML, empty,
+  ambiguous, unsupported, contradictory and erroneous content remains report-only. There
+  is no PDF extraction, semantic document analysis or general-purpose format classifier.
+- The generic loader is CSV-oriented. Discovery may identify JSON, Excel, Parquet, GeoJSON
+  or other machine-readable resources, but those formats remain report-only and have no
+  v0.1 loader.
 - Loading requires an explicit `--download` flag, exact inspected-resource selection and
   per-resource `y`/`yes` consent bound to the planned destination and table. Prompt wording
-  does not grant download authority.
-- DuckDB loading uses replacement semantics. Colliding table names or a failed validation
-  after replacement can overwrite or remove existing data. There is no complete explicit
-  overwrite policy or transactional preservation guarantee.
+  does not grant download authority, and `--download` alone is not authorization.
+- DuckDB loads refuse an existing target table. A new table is created and validated in one
+  transaction; parsing or validation failures roll back without replacing, dropping or
+  altering an existing table. Explicit overwrite, append and upsert modes are not supported.
 - Enabled application-controlled source fetches on the v0.1 stabilization branch use a
   centralized transport that validates URL syntax, DNS answers and every redirect, ignores
   environment proxies, connects to a validation-time address, permits only HTTP port 80 and
@@ -146,17 +164,25 @@ Use the prototype on disposable outputs and review every candidate yourself.
   estimated model usage, depending on the path. Retrieval history, checksums, consent,
   table mapping, terminal failures, model usage and costs are not yet recorded completely
   by one authoritative mechanism.
+- Fresh load-time assessment verifies that the retrieved payload remains eligible; it does
+  not prove byte-for-byte identity with the initially inspected payload. Checksums and
+  durable retrieval identity remain deferred.
 - Profile freshness, license, scope and budget instructions are partly configuration or
   model-prompt guidance rather than complete deterministic enforcement.
-- Output filenames and several runtime paths are fixed relative to the checkout. Repeated
-  runs can replace result files or leave stale artifacts that look current.
+- Output paths are centrally resolved, but artifact filenames and some runtime assumptions
+  remain checkout-oriented. Repeated runs can replace result files or leave stale artifacts
+  that look current.
 - The current test suite protects selected behaviors but does not globally prohibit
   network access, exercise every console workflow, or verify a fresh non-editable wheel.
+  Its patch-heavy test design also remains scheduled for separate pre-release work.
 
 ## Planned v0.1 stabilization
 
-The following are release contracts for the planned v0.1 stabilization work; they are not
-claims about the current `main` branch:
+The following remain v0.1 release contracts. The current pre-release implements the
+classification, loading-authorization, guarded-transport and non-destructive persistence
+boundaries described above for enabled routes. That does not make v0.1 complete: each
+contract remains subject to release verification, and provenance, cost, runtime,
+packaging and CI work below is still incomplete.
 
 1. Reports, PDFs, documentation, search snippets and landing pages are never reported as
    verified datasets.
@@ -166,8 +192,8 @@ claims about the current `main` branch:
    or loaded.
 4. Prompt text never grants download authority; consent and selection are explicit, exact,
    per resource and fail closed.
-5. Validation or loading failures cannot silently overwrite or destroy existing DuckDB
-   data, and overwriting follows an explicit policy.
+5. Existing DuckDB tables are never overwritten; validation or loading failures roll back
+   without leaving a partial table.
 6. Application-controlled source URLs pass through a centralized runtime safety boundary,
    including redirect validation and minimum SSRF protection; unsafe opaque transport
    paths are disabled when that protection cannot be demonstrated.
@@ -200,7 +226,7 @@ The repository is relevant to several complementary areas:
   checks in GitHub Actions.
 - **Agentic AI:** Claude-driven prompt interpretation, source selection and tool use, with
   optional Claude or Ollama summaries. AI assists discovery and explanation; deterministic
-  code must own verification and loading policy for v0.1.
+  code owns verification and loading policy.
 
 ## Development checks
 

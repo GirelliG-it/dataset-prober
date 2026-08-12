@@ -12,6 +12,31 @@ from unittest.mock import MagicMock
 
 import pytest
 
+
+def eligible_assessment_for_candidate(
+    *,
+    source_key: str,
+    adapter_identity: str,
+    resource_id: str,
+    retrieval_url: str,
+):
+    """Return genuine classifier output bound to one synthetic test candidate."""
+    from dataset_prober.loading_policy import canonical_candidate_identity
+    from dataset_prober.resource_classification import classify_record_payload
+
+    identity = canonical_candidate_identity(
+        source=source_key,
+        adapter_identity=adapter_identity,
+        resource_id=resource_id,
+        retrieval_url=retrieval_url,
+    )
+    assessment, _records = classify_record_payload(
+        {"value": [{"value": 1}]},
+        candidate_identity=identity,
+    )
+    return assessment
+
+
 # ─── Sample data fixtures ────────────────────────────────────────────────────
 
 
@@ -30,14 +55,22 @@ def sample_probe_result_ok(sample_columns):
     """A successful ProbeResult."""
     from dataset_prober.prober import ProbeResult
 
+    url = "https://example.com/data.csv"
+
     return ProbeResult(
-        url="https://example.com/data.csv",
+        url=url,
         name="test-dataset",
         status="ok",
         row_count=1000,
         columns=sample_columns,
         sample=[[1, "Alice", 42.0, "2024-01-01"]],
         error=None,
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id=url,
+            retrieval_url=url,
+        ),
     )
 
 
@@ -79,8 +112,11 @@ def sample_dataset_result_ok(sample_columns):
 
     from dataset_prober.tools.base import DatasetResult
 
+    dataset_id = "37789ksz"
+    retrieval_url = "https://opendata.cbs.nl/statline/#/CBS/nl/dataset/37789ksz"
+
     return DatasetResult(
-        id="37789ksz",
+        id=dataset_id,
         title="Sociale zekerheid; kerncijfers",
         description="Social security key figures from CBS",
         source="cbs",
@@ -98,6 +134,12 @@ def sample_dataset_result_ok(sample_columns):
         language="nl",
         tags=["social security", "benefits"],
         status="probed",
+        assessment=eligible_assessment_for_candidate(
+            source_key="cbs",
+            adapter_identity="CBS Statistics Netherlands",
+            resource_id=dataset_id,
+            retrieval_url=retrieval_url,
+        ),
     )
 
 

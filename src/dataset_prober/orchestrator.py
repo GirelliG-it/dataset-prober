@@ -96,11 +96,15 @@ class ProfileResult:
                     f"modified: {d.modified or 'unknown'}"
                 )
         elif self.datasets_found:
-            lines.append("⚠️  Found but could not download:")
+            lines.append("⚠️  Inspected resources not loaded:")
             for d in self.datasets_found[:3]:
+                assessment = (
+                    "verified but not loaded"
+                    if d.assessment.load_eligible
+                    else f"report-only: {d.assessment.reason.value}"
+                )
                 lines.append(
-                    f"  - {sanitize_url_text(d.title)} ({sanitize_url_text(d.id)}) — "
-                    f"{sanitize_url_text(d.error or d.status)}"
+                    f"  - {sanitize_url_text(d.title)} ({sanitize_url_text(d.id)}) — {assessment}"
                 )
         else:
             lines.append("❌ Nothing found for this objective.")
@@ -172,20 +176,21 @@ class AggregatedResult:
         return "\n".join(lines)
 
     def print_summary_table(self):
-        """Print a final summary table of all discovered datasets."""
+        """Print a final summary table of all discovered resources."""
         all_ds = self.all_datasets
         if not all_ds:
-            console.print("[yellow]No datasets found across all profiles.[/yellow]")
+            console.print("[yellow]No resources found across all profiles.[/yellow]")
             return
 
         table = Table(title="Session Results", box=box.ROUNDED)
         table.add_column("Profile", style="dim")
-        table.add_column("Dataset", style="cyan", max_width=35)
+        table.add_column("Resource", style="cyan", max_width=35)
         table.add_column("ID", max_width=15)
         table.add_column("Rows", justify="right")
         table.add_column("Modified")
         table.add_column("License")
         table.add_column("Status")
+        table.add_column("Assessment")
 
         for d in all_ds:
             status_color = {
@@ -204,6 +209,11 @@ class AggregatedResult:
                 (d.modified or "unknown")[:10],
                 d.license_grade() if d.license else "?",
                 f"[{status_color}]{d.status}[/{status_color}]",
+                (
+                    "verified"
+                    if d.assessment.load_eligible
+                    else f"report-only: {d.assessment.reason.value}"
+                ),
             )
 
         console.print(table)
@@ -268,17 +278,26 @@ class Orchestrator:
         """
         downloaded = profile_result.datasets_downloaded
         found = profile_result.datasets_found
+        eligible = [dataset for dataset in found if dataset.assessment.load_eligible]
 
         if downloaded:
             profile_result.objective_met = True
-        elif found:
+        elif eligible:
             profile_result.partial_success = True
             profile_result.failure_reason = (
-                f"Found {len(found)} dataset(s) but could not download. "
-                f"Manual download may be required."
+                f"Verified {len(eligible)} load-eligible resource(s), but none were loaded."
+            )
+        elif found:
+            profile_result.partial_success = True
+            reasons = sorted({dataset.assessment.reason.value for dataset in found})
+            profile_result.failure_reason = (
+                f"Inspected {len(found)} resource candidate(s), but none were verified "
+                f"load-eligible ({', '.join(reasons)})."
             )
         else:
-            profile_result.failure_reason = f"No datasets found matching: {objective.what_to_find}"
+            profile_result.failure_reason = (
+                f"No resource candidates found matching: {objective.what_to_find}"
+            )
 
         return profile_result
 
@@ -304,7 +323,7 @@ class Orchestrator:
                 status = f"found {len(result.datasets_downloaded)} dataset(s)"
             elif result.partial_success:
                 icon = "⚠️ "
-                status = f"found but couldn't download — {result.failure_reason}"
+                status = result.failure_reason or "resource candidates remain report-only"
             else:
                 icon = "❌"
                 status = result.failure_reason or "nothing found"

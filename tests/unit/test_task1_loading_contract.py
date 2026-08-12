@@ -2,7 +2,7 @@
 
 import sys
 from contextlib import contextmanager
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -13,7 +13,9 @@ from dataset_prober.loading_policy import (
 )
 from dataset_prober.paths import AppPaths
 from dataset_prober.prober import ProbeResult
+from dataset_prober.resource_classification import classify_tabular_structure
 from dataset_prober.tools.base import DatasetResult
+from tests.conftest import eligible_assessment_for_candidate
 
 
 def make_dataset(
@@ -47,6 +49,7 @@ def make_dataset(
         language=None,
         tags=[],
         status="probed",
+        assessment=classify_tabular_structure([{"name": "value", "type": "BIGINT"}], 1),
     )
 
 
@@ -64,6 +67,16 @@ class RecordingTool:
         return dataset
 
 
+def bind_dataset_assessment(dataset, adapter_identity):
+    dataset.assessment = eligible_assessment_for_candidate(
+        source_key=dataset.source,
+        adapter_identity=adapter_identity,
+        resource_id=dataset.id,
+        retrieval_url=dataset.download_url,
+    )
+    return dataset
+
+
 def execute_download(
     monkeypatch,
     tmp_path,
@@ -78,6 +91,7 @@ def execute_download(
     tool = RecordingTool()
     paths = AppPaths(output_dir=tmp_path)
     loading_session = LoadingPolicySession(download_enabled=allow_download)
+    bind_dataset_assessment(dataset, tool.adapter_identity)
     try:
         loading_session.register_dataset_result(dataset, tool.adapter_identity)
     except InspectedResourceError:
@@ -169,6 +183,8 @@ def test_duplicate_inspected_identity_is_denied_before_consent(monkeypatch, tmp_
     second = make_dataset(dataset_id="shared-id", resource_url="https://catalog-b.example/data.csv")
     tool = RecordingTool()
     loading_session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(first, tool.adapter_identity)
+    bind_dataset_assessment(second, tool.adapter_identity)
     loading_session.register_dataset_result(first, tool.adapter_identity)
     loading_session.register_dataset_result(second, tool.adapter_identity)
     consent = Mock(side_effect=AssertionError("ambiguous identity must not ask for consent"))
@@ -206,6 +222,7 @@ def test_consent_identity_comes_from_inspected_resource(monkeypatch, tmp_path):
     tool = RecordingTool()
     prompts = []
     loading_session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(inspected, tool.adapter_identity)
     loading_session.register_dataset_result(inspected, tool.adapter_identity)
 
     def approve(prompt):
@@ -350,18 +367,28 @@ def test_real_manual_non_csv_path_never_reaches_csv_probe(monkeypatch, url, expe
 
 def test_supported_manual_csv_reaches_persistent_loader(monkeypatch, tmp_path):
     """A truthfully identified manual CSV remains admitted by the real boundary."""
+    import duckdb
+
     from dataset_prober import prober
 
+    retrieval_url = "https://example.com/data.csv"
     result = ProbeResult(
         name="Supported CSV",
-        url="https://example.com/data.csv",
+        url=retrieval_url,
         status="ok",
         row_count=2,
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id=retrieval_url,
+            retrieval_url=retrieval_url,
+        ),
     )
     connection = Mock()
-    connect = Mock(return_value=connection)
+    real_connect = duckdb.connect
+    connect = Mock(side_effect=lambda path=None: real_connect() if path is None else connection)
     load = Mock(return_value=2)
     csv_path = tmp_path / "guarded.csv"
     csv_path.write_text("value\n1\n", encoding="utf-8")
@@ -393,7 +420,10 @@ def test_supported_manual_csv_reaches_persistent_loader(monkeypatch, tmp_path):
     )
     prober.download_to_duckdb(result, db_path, authorization)
 
-    connect.assert_called_once_with(str((tmp_path / "datasets.duckdb").resolve()))
+    assert connect.call_args_list == [
+        call(),
+        call(str((tmp_path / "datasets.duckdb").resolve())),
+    ]
     load.assert_called_once()
 
 
@@ -419,7 +449,7 @@ def test_tavily_non_csv_candidates_never_reach_csv_probe_or_loader(
     csv_probe = Mock(side_effect=AssertionError("unsupported resource reached CSV probe"))
     csv_loader = Mock(side_effect=AssertionError("unsupported resource reached CSV loader"))
     monkeypatch.setattr(duckdb, "connect", connect)
-    monkeypatch.setattr(tavily_tool, "probe_csv_url", csv_probe)
+    monkeypatch.setattr(tavily_tool, "inspect_csv_resource", csv_probe)
     monkeypatch.setattr(tavily_tool, "download_csv_dataset", csv_loader)
     tool = tavily_tool.TavilyTool({"blocked_sources": [], "timeout_seconds": 1})
 
@@ -458,7 +488,7 @@ def test_ckan_csv_label_cannot_override_known_non_csv_url(monkeypatch, tmp_path,
     csv_probe = Mock(side_effect=AssertionError("known non-CSV reached CKAN CSV probe"))
     csv_loader = Mock(side_effect=AssertionError("known non-CSV reached CKAN CSV loader"))
     monkeypatch.setattr(duckdb, "connect", connect)
-    monkeypatch.setattr(ckan_tool, "probe_csv_url", csv_probe)
+    monkeypatch.setattr(ckan_tool, "inspect_csv_resource", csv_probe)
     monkeypatch.setattr(ckan_tool, "download_csv_dataset", csv_loader)
     tool = ckan_tool.CKANTool({"timeout_seconds": 1})
 
@@ -484,13 +514,20 @@ def run_manual_cli(
 ):
     from dataset_prober import run
 
+    retrieval_url = "https://example.com/data.csv"
     candidate = ProbeResult(
         name=candidate_name,
-        url="https://example.com/data.csv",
+        url=retrieval_url,
         status="ok",
         row_count=2,
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id=retrieval_url,
+            retrieval_url=retrieval_url,
+        ),
     )
     paths = AppPaths(output_dir=tmp_path)
     load_calls = []
@@ -611,6 +648,8 @@ def test_timeout_batch_choice_still_requires_exact_per_resource_consent(monkeypa
     second = make_dataset(dataset_id="resource-b")
     tool = RecordingTool()
     loading_session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(first, tool.adapter_identity)
+    bind_dataset_assessment(second, tool.adapter_identity)
     loading_session.register_dataset_result(first, tool.adapter_identity)
     loading_session.register_dataset_result(second, tool.adapter_identity)
     answers = iter(["2", "all", "yes", "yes"])
@@ -634,6 +673,7 @@ def test_timeout_invalid_selection_denies_entire_batch(monkeypatch, tmp_path):
     dataset = make_dataset()
     tool = RecordingTool()
     loading_session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(dataset, tool.adapter_identity)
     loading_session.register_dataset_result(dataset, tool.adapter_identity)
     answers = iter(["2", "1,garbage"])
     monkeypatch.setattr(dataset_agent.console, "input", lambda _prompt: next(answers))

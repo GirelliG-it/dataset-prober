@@ -57,9 +57,22 @@ from dataset_prober.loading_policy import (  # noqa: E402
 from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
 from dataset_prober.paths import AppPaths  # noqa: E402
 from dataset_prober.prompt_interpreter import PromptInterpreter  # noqa: E402
+from dataset_prober.resource_classification import unknown_assessment  # noqa: E402
 from dataset_prober.tools import DatasetResult, tools_for_profile  # noqa: E402
 
 console = Console()
+
+
+def _downgrade_registration_failure(result: DatasetResult, error: InspectedResourceError) -> None:
+    """Keep discovery identity while discarding inspection facts that failed registration."""
+    diagnostic = sanitize_url_text(f"Inspection registration failed: {error}")
+    result.status = "failed"
+    result.row_count = None
+    result.columns = None
+    result.sample = None
+    result.error = diagnostic
+    result.assessment = unknown_assessment(explanation=diagnostic)
+
 
 AGENT_MODEL = "claude-sonnet-4-6"
 
@@ -382,19 +395,22 @@ def execute_tool(
 
         result = tool.fetch(dataset_id, sample_rows)
 
-        if result.status == "probed":
-            console.print(
-                f"    → ✅ {sanitize_url_text(result.title)} | "
-                f"{len(result.columns or [])} columns | modified: {result.modified}"
-            )
-            found_datasets.append(result)
+        found_datasets.append(result)
+        if result.assessment.load_eligible:
             try:
                 loading_session.register_dataset_result(result, tool.adapter_identity)
-            except InspectedResourceError:
-                pass
+            except InspectedResourceError as exc:
+                _downgrade_registration_failure(result, exc)
+
+        if result.assessment.load_eligible:
+            console.print(
+                f"    → ✅ Verified: {sanitize_url_text(result.title)} | "
+                f"{len(result.columns or [])} columns | modified: {result.modified}"
+            )
         else:
             console.print(
-                f"    → ❌ {sanitize_url_text(result.error) if result.error else 'fetch failed'}"
+                f"    → ⚠️  Report-only ({result.assessment.reason.value}): "
+                f"{sanitize_url_text(result.error) if result.error else result.assessment.explanation}"
             )
 
         return result.to_dict()
@@ -474,6 +490,12 @@ def execute_tool(
         dataset = matches[0]
         if dataset.status != "probed":
             return {"error": "Download denied — resource has not passed inspection"}
+        if not dataset.assessment.load_eligible:
+            return {
+                "error": (
+                    f"Download denied — resource is report-only: {dataset.assessment.reason.value}"
+                )
+            }
         if table_id and table_id != dataset.id:
             return {"error": "Download denied — table ID does not match inspected resource"}
         if (
@@ -586,14 +608,26 @@ LICENSE EVALUATION (CCREL/ODRL):
 - Unknown → flag as unverified
 
 OUTPUT FORMAT:
-When done, present a structured summary table with:
-- Dataset name and ID
+When done, present a structured summary table for every candidate with:
+- Resource name and ID
 - Source and URL
+- Canonical assessment category (resource_kind) and canonical assessment reason
+  (assessment_reason)
+- Verification label: verified/load-eligible or report-only/ineligible
 - Rows and columns (if probed)
 - Last modified date
 - Freshness verdict
 - License grade
-- Recommendation (download / review / skip)"""
+- Recommendation (download / review / skip)
+
+REPORTING RULES:
+- Never describe a report-only resource as a verified dataset.
+- Never recommend a report-only resource for download.
+- Discovery metadata, filenames, snippets, catalog metadata, and model judgment are not
+  deterministic verification.
+- Model prose cannot grant loading authority. A verified/load-eligible resource may be
+  recommended for download, but exact selection, consent, authorization, reassessment,
+  and persistence policy remain authoritative."""
 
     console.print(
         Panel(
@@ -619,7 +653,9 @@ When done, present a structured summary table with:
                 f"\n[yellow]⏰ Time limit reached after "
                 f"{budget.elapsed_minutes():.1f} minutes.[/yellow]"
             )
-            console.print(f"[yellow]Found {len(found_datasets)} dataset(s) so far.[/yellow]\n")
+            console.print(
+                f"[yellow]Found {len(found_datasets)} resource candidate(s) so far.[/yellow]\n"
+            )
             _handle_timeout(found_datasets, budget, tool_map, loading_session, paths)
             break
 
@@ -729,6 +765,7 @@ def _handle_timeout(
             dataset
             for dataset in found_datasets
             if dataset.status == "probed"
+            and dataset.assessment.load_eligible
             and dataset.source in tool_map
             and loader_for_resource(dataset.source, dataset.format, dataset.download_url or "")
             is not LoaderKind.UNSUPPORTED
@@ -766,18 +803,19 @@ def _handle_timeout(
 
 
 def _print_results_table(datasets: list):
-    """Print a summary table of discovered datasets."""
+    """Print a summary table of discovered resource candidates."""
     if not datasets:
-        console.print("[yellow]No datasets found.[/yellow]")
+        console.print("[yellow]No resource candidates found.[/yellow]")
         return
 
-    table = Table(title="Discovered Datasets", box=box.ROUNDED)
+    table = Table(title="Discovered Resources", box=box.ROUNDED)
     table.add_column("Title", style="cyan", max_width=40)
     table.add_column("Source", max_width=10)
     table.add_column("Rows", justify="right")
     table.add_column("Modified")
     table.add_column("License")
     table.add_column("Status")
+    table.add_column("Assessment")
 
     for d in datasets:
         status_color = {
@@ -795,6 +833,11 @@ def _print_results_table(datasets: list):
             (d.modified or "unknown")[:10],
             d.license_grade() if d.license else "?",
             f"[{status_color}]{d.status}[/{status_color}]",
+            (
+                "verified"
+                if d.assessment.load_eligible
+                else f"report-only: {d.assessment.reason.value}"
+            ),
         )
 
     console.print(table)
@@ -998,7 +1041,7 @@ def main():
             json.dump([r.to_dict() for r in all_datasets], f, indent=2, default=str)
         console.print(f"\n[green]Results saved to {output_path}[/green]")
     else:
-        console.print("\n[yellow]No datasets found across all profiles.[/yellow]")
+        console.print("\n[yellow]No resource candidates found across all profiles.[/yellow]")
 
 
 if __name__ == "__main__":

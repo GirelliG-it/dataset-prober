@@ -12,6 +12,7 @@ Shared loading helpers generate collision-resistant DuckDB table names and
 provide one consistent loading path across all tools.
 """
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,16 +20,28 @@ from typing import Optional
 
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
+    CandidateIdentity,
     LoaderKind,
     _ActivePermit,
     canonicalize_destination,
     claims_for_dataset,
     configured_adapter_identity,
+    detect_resource_format,
     safe_url_identity,
     sanitize_for_presentation,
     sanitize_url_text,
 )
+from dataset_prober.resource_classification import (
+    ResourceAssessment,
+    ResourceClassificationError,
+    _bind_classifier_evidence,
+    classify_blocking_content,
+    classify_tabular_structure,
+    inspection_failed_assessment,
+    unknown_assessment,
+)
 from dataset_prober.tools.guards import (
+    MAX_HTTP_RESPONSE_BYTES,
     FetchedResource,
     safe_download,
     safe_http_head,
@@ -79,6 +92,9 @@ class DatasetResult:
     # Cost tracking
     tokens_used: int = 0  # Tokens consumed discovering/fetching this dataset
     cost_usd: float = 0.0  # Estimated cost in USD
+
+    # Deterministic safety assessment; legacy/discovery-only construction fails closed.
+    assessment: ResourceAssessment = field(default_factory=unknown_assessment)
 
     def freshness_days(self) -> Optional[int]:
         """Return how many days ago this dataset was last modified. None if unknown."""
@@ -183,6 +199,7 @@ class DatasetResult:
                 "tags": self.tags,
                 "status": self.status,
                 "error": self.error,
+                "assessment": self.assessment.to_dict(),
                 "tokens_used": self.tokens_used,
                 "cost_usd": round(self.cost_usd, 6),
             }
@@ -375,9 +392,8 @@ def probe_csv_url(con, path: str | Path, sample_rows: int) -> dict:
     ';'-delimited file found via CKAN or Tavily search would probe as
     garbage while the identical file loaded fine on download.
 
-    Row count failure is tolerated (returns None) since it's a nice-to-have,
-    not a correctness signal; describe/sample failures propagate to the
-    caller, same as before this was extracted.
+    Describe, sample, and exact row counting must all succeed. Task 4 uses
+    the row count as one part of deterministic non-empty evidence.
     """
     local_path = _existing_local_csv_path(path)
     expr = csv_scan_expr(con, local_path)
@@ -386,16 +402,134 @@ def probe_csv_url(con, path: str | Path, sample_rows: int) -> dict:
 
     sample = con.execute(f"SELECT * FROM {expr} LIMIT {int(sample_rows)}", [local_path]).fetchall()
 
-    try:
-        row_count = con.execute(f"SELECT COUNT(*) FROM {expr}", [local_path]).fetchone()[0]
-    except Exception:
-        row_count = None
+    row_count = con.execute(f"SELECT COUNT(*) FROM {expr}", [local_path]).fetchone()[0]
 
     return {
         "columns": columns,
         "sample": [list(row) for row in sample],
         "row_count": row_count,
     }
+
+
+def _content_type(headers) -> str | None:
+    for key, value in headers.items():
+        if str(key).lower() == "content-type":
+            return str(value)
+    return None
+
+
+def _leading_content(path: Path) -> tuple[bool, bytes]:
+    """Return all-whitespace status and the first significant content bytes."""
+    utf8_bom = b"\xef\xbb\xbf"
+    leading_whitespace = b" \t\r\n\f\v"
+    pending = b""
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(8192)
+            at_eof = not chunk
+            pending += chunk
+
+            while True:
+                stripped = pending.lstrip(leading_whitespace)
+                if stripped != pending:
+                    pending = stripped
+                    continue
+                if pending.startswith(utf8_bom):
+                    pending = pending[len(utf8_bom) :]
+                    continue
+                break
+
+            if not pending:
+                if at_eof:
+                    return True, b""
+                continue
+            if not at_eof and len(pending) < len(utf8_bom) and utf8_bom.startswith(pending):
+                continue
+            return False, pending
+
+
+def inspect_csv_resource(
+    con,
+    fetched: FetchedResource,
+    sample_rows: int,
+    *,
+    candidate_identity: CandidateIdentity | None = None,
+) -> dict:
+    """Classify one guarded local CSV candidate using content plus parser evidence."""
+    if not isinstance(fetched, FetchedResource):
+        raise TypeError("CSV inspection requires a guarded fetched resource")
+    local_path = Path(_existing_local_csv_path(fetched.path))
+    empty, leading = _leading_content(local_path)
+
+    json_detected = leading.startswith((b"{", b"["))
+    json_value = None
+    if json_detected and local_path.stat().st_size <= MAX_HTTP_RESPONSE_BYTES:
+        try:
+            with local_path.open("r", encoding="utf-8-sig") as handle:
+                json_value = json.load(handle)
+        except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+            json_value = None
+
+    final_format = detect_resource_format(fetched.final_url)
+    blocker = classify_blocking_content(
+        empty=empty,
+        leading_bytes=leading,
+        content_type=_content_type(fetched.headers),
+        json_detected=json_detected,
+        json_value=json_value,
+        format_conflict=final_format is not None and final_format.value != "CSV",
+    )
+    if blocker is not None:
+        return {
+            "columns": [],
+            "sample": [],
+            "row_count": None,
+            "assessment": blocker,
+        }
+
+    try:
+        probe = probe_csv_url(con, local_path, sample_rows)
+    except Exception as exc:
+        return {
+            "columns": [],
+            "sample": [],
+            "row_count": None,
+            "assessment": inspection_failed_assessment(
+                f"CSV inspection failed ({type(exc).__name__})"
+            ),
+        }
+    assessment = classify_tabular_structure(probe["columns"], probe["row_count"])
+    if candidate_identity is not None:
+        _bind_classifier_evidence(assessment, candidate_identity)
+    probe["assessment"] = assessment
+    return probe
+
+
+def require_eligible_csv_payload(
+    fetched: FetchedResource,
+    candidate_identity: CandidateIdentity,
+) -> dict:
+    """Reclassify actual load bytes before any persistent DuckDB connection opens."""
+    import duckdb
+
+    connection = duckdb.connect()
+    try:
+        inspection = inspect_csv_resource(
+            connection,
+            fetched,
+            sample_rows=3,
+            candidate_identity=candidate_identity,
+        )
+    finally:
+        connection.close()
+    assessment = inspection["assessment"]
+    if not assessment.load_eligible:
+        raise ResourceClassificationError(
+            "Actual load payload for "
+            f"{safe_url_identity(fetched.final_url)} is report-only: "
+            f"{assessment.reason.value}"
+        )
+    return inspection
 
 
 def download_csv_dataset(
@@ -420,6 +554,7 @@ def download_csv_dataset(
 
     try:
         with safe_download(actual_claims.retrieval_url) as fetched:
+            require_eligible_csv_payload(fetched, actual_claims.candidate_identity)
             with AuthorizedDuckDBConnection(permit, destination) as connection:
                 actual_rows = load_csv_to_table(connection, fetched)
 

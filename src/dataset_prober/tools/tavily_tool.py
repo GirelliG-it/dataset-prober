@@ -13,15 +13,21 @@ from pathlib import Path
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
     LoaderKind,
+    canonical_candidate_identity,
     claims_for_dataset,
     detect_resource_format,
     loader_for_resource,
+)
+from dataset_prober.resource_classification import (
+    InspectionOutcome,
+    inspection_error_assessment,
+    unsupported_format_assessment,
 )
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     download_csv_dataset,
-    probe_csv_url,
+    inspect_csv_resource,
 )
 from dataset_prober.tools.guards import safe_download
 
@@ -93,10 +99,21 @@ class TavilyTool(DataSourceTool):
         try:
             import duckdb
 
+            candidate_identity = canonical_candidate_identity(
+                self.source_type,
+                self.adapter_identity,
+                url,
+                url,
+            )
             with safe_download(url, timeout=timeout) as fetched:
                 con = duckdb.connect()
                 try:
-                    probe = probe_csv_url(con, fetched.path, sample_rows)
+                    probe = inspect_csv_resource(
+                        con,
+                        fetched,
+                        sample_rows,
+                        candidate_identity=candidate_identity,
+                    )
                 finally:
                     con.close()
 
@@ -121,11 +138,21 @@ class TavilyTool(DataSourceTool):
                 sample=probe["sample"][:3],
                 language=None,
                 tags=[],
-                status="probed",
+                status=(
+                    "probed"
+                    if probe["assessment"].inspection_outcome is InspectionOutcome.SUCCEEDED
+                    else "failed"
+                ),
+                error=(
+                    None if probe["assessment"].load_eligible else probe["assessment"].explanation
+                ),
+                assessment=probe["assessment"],
             )
 
         except Exception as e:
-            return self._error_result(id=url, title=url, error=f"Probe failed: {str(e)}")
+            result = self._error_result(id=url, title=url, error=f"Probe failed: {str(e)}")
+            result.assessment = inspection_error_assessment(e)
+            return result
 
     def download(
         self,
@@ -196,5 +223,8 @@ class TavilyTool(DataSourceTool):
             status="failed",
             error=(
                 f"Unsupported or unproven Tavily resource format: {resource_format or 'unknown'}"
+            ),
+            assessment=unsupported_format_assessment(
+                resource_format.value if resource_format is not None else None
             ),
         )

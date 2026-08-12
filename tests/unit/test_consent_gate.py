@@ -24,6 +24,7 @@ import pytest
 from dataset_prober.loading_policy import AuthorizedLoad, LoadingPolicySession
 from dataset_prober.paths import AppPaths
 from dataset_prober.tools.base import DatasetResult
+from tests.conftest import eligible_assessment_for_candidate
 
 
 class FakeDownloadResult:
@@ -88,6 +89,12 @@ def call_execute_tool(tool, tool_input, *, download_enabled, paths):
     """
     from dataset_prober.dataset_agent import execute_tool
 
+    assessment = eligible_assessment_for_candidate(
+        source_key=tool_input["source"],
+        adapter_identity=tool.adapter_identity,
+        resource_id=tool_input["dataset_id"],
+        retrieval_url=tool_input["download_url"],
+    )
     inspected = DatasetResult(
         id=tool_input["dataset_id"],
         title=tool_input["title"],
@@ -107,6 +114,7 @@ def call_execute_tool(tool, tool_input, *, download_enabled, paths):
         language=None,
         tags=[],
         status="probed",
+        assessment=assessment,
     )
     loading_session = LoadingPolicySession(download_enabled=download_enabled)
     loading_session.register_dataset_result(inspected, tool.adapter_identity)
