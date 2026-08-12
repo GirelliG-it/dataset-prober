@@ -36,26 +36,30 @@ def _build_prompt(results: list[dict]) -> str:
     for r in results:
         results_text += f"\n--- {r['name']} ---\n"
         results_text += f"Status: {r['status']}\n"
-        if r["status"] == "ok":
+        assessment = r.get("assessment", {})
+        if assessment.get("load_eligible") is True:
             results_text += f"Rows: {r['row_count']}\n"
             cols = [f"{c['name']} ({c['type']})" for c in r["columns"]]
             results_text += f"Columns: {', '.join(cols)}\n"
             if r["sample"]:
                 results_text += f"Sample row: {r['sample'][0]}\n"
         else:
-            results_text += f"Error: {r['error']}\n"
+            reason = assessment.get("assessment_reason", "unknown_unverified")
+            results_text += f"Assessment: report-only ({reason})\n"
+            if r.get("error"):
+                results_text += f"Error: {r['error']}\n"
 
     return f"""You are a data analyst reviewing safely retrieved datasets probed with DuckDB.
 
 Here are the probe results:
 {results_text}
 
-For each dataset with status 'ok', provide:
+For each deterministically verified resource with load_eligible=true, provide:
 1. A one-sentence description of what the dataset contains
 2. Its likely use case for public sector analysis
 3. A readiness assessment: is it analysis-ready?
 
-For failed datasets, briefly explain what likely went wrong.
+For report-only resources, preserve that label and briefly explain the deterministic reason.
 
 Be concise and practical. Write as if briefing a data team."""
 

@@ -23,17 +23,25 @@ from dataset_prober.tools.base import (
     load_dataframe_to_table,
 )
 from dataset_prober.tools.guards import FetchedResource
+from tests.conftest import eligible_assessment_for_candidate
 
 
 def _manual_result() -> ProbeResult:
+    retrieval_url = "https://example.test/authorized.csv"
     return ProbeResult(
-        url="https://example.test/authorized.csv",
+        url=retrieval_url,
         name="Authorized CSV",
         status="ok",
         row_count=2,
         columns=[{"name": "id", "type": "BIGINT"}],
         sample=[[1], [2]],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id=retrieval_url,
+            retrieval_url=retrieval_url,
+        ),
     )
 
 
@@ -58,6 +66,12 @@ def _cbs_result() -> DatasetResult:
         language="nl",
         tags=[],
         status="probed",
+        assessment=eligible_assessment_for_candidate(
+            source_key="cbs",
+            adapter_identity="CBS Statistics Netherlands",
+            resource_id="83583NED",
+            retrieval_url=retrieval_url,
+        ),
     )
 
 

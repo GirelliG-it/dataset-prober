@@ -13,16 +13,24 @@ from pathlib import Path
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
     LoaderKind,
+    canonical_candidate_identity,
     claims_for_dataset,
     detect_resource_format,
     loader_for_resource,
     sanitize_url_text,
 )
+from dataset_prober.resource_classification import (
+    InspectionOutcome,
+    error_response_assessment,
+    inspection_error_assessment,
+    inspection_failed_assessment,
+    unsupported_format_assessment,
+)
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
     download_csv_dataset,
-    probe_csv_url,
+    inspect_csv_resource,
 )
 from dataset_prober.tools.guards import safe_download, safe_http_get
 
@@ -138,16 +146,20 @@ class CKANTool(DataSourceTool):
             data = resp.json()
 
             if not data.get("success"):
-                return self._error_result(
+                result = self._error_result(
                     id=dataset_id, title=dataset_id, error="Package not found"
                 )
+                result.assessment = error_response_assessment(
+                    "CKAN package response contains an explicit error envelope"
+                )
+                return result
 
             pkg = data["result"]
             result = self._package_to_result(pkg)
-            if not result:
-                return self._error_result(
-                    id=dataset_id, title=dataset_id, error="No CSV resources found in package"
-                )
+            if not result.download_url:
+                result.error = "No supported CSV resources found in package"
+                result.assessment = unsupported_format_assessment(None)
+                return result
 
             # Probe the CSV if we have a direct URL
             if result.download_url:
@@ -156,7 +168,11 @@ class CKANTool(DataSourceTool):
             return result
 
         except Exception as e:
-            return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
+            result = self._error_result(id=dataset_id, title=dataset_id, error=str(e))
+            result.assessment = inspection_failed_assessment(
+                "CKAN package retrieval and inspection did not complete"
+            )
+            return result
 
     def _probe_csv(self, result: DatasetResult, sample_rows: int, timeout: int) -> DatasetResult:
         """Safely retrieve a CSV and probe its temporary local copy with DuckDB."""
@@ -164,28 +180,51 @@ class CKANTool(DataSourceTool):
         if admission_error:
             result.status = "found"
             result.error = admission_error
+            result.assessment = unsupported_format_assessment(result.format)
             return result
 
         try:
             import duckdb
 
+            candidate_identity = canonical_candidate_identity(
+                self.source_type,
+                self.adapter_identity,
+                result.id,
+                result.download_url,
+            )
             with safe_download(result.download_url, timeout=timeout) as fetched:
                 con = duckdb.connect()
                 try:
-                    probe = probe_csv_url(con, fetched.path, sample_rows)
+                    probe = inspect_csv_resource(
+                        con,
+                        fetched,
+                        sample_rows,
+                        candidate_identity=candidate_identity,
+                    )
                 finally:
                     con.close()
 
             result.columns = probe["columns"]
             result.sample = probe["sample"][:3]
             result.row_count = probe["row_count"]
-            result.status = "probed"
+            result.assessment = probe["assessment"]
+            result.status = (
+                "probed"
+                if result.assessment.inspection_outcome is InspectionOutcome.SUCCEEDED
+                else "failed"
+            )
+            result.error = (
+                None if result.assessment.load_eligible else result.assessment.explanation
+            )
             return result
 
         except Exception as e:
-            # Probe failed — still return the result with found status
-            result.status = "found"
+            result.status = "failed"
+            result.row_count = None
+            result.columns = None
+            result.sample = None
             result.error = sanitize_url_text(f"Probe failed: {str(e)[:100]}")
+            result.assessment = inspection_error_assessment(e)
             return result
 
     def download(

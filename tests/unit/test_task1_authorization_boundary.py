@@ -11,7 +11,9 @@ from unittest.mock import Mock, call
 import pytest
 
 from dataset_prober.prober import ProbeResult
+from dataset_prober.resource_classification import classify_tabular_structure
 from dataset_prober.tools.base import DatasetResult
+from tests.conftest import eligible_assessment_for_candidate
 
 
 @contextmanager
@@ -52,6 +54,7 @@ def dataset_result(
         language=None,
         tags=[],
         status="probed",
+        assessment=classify_tabular_structure([{"name": "value", "type": "BIGINT"}], 1),
     )
 
 
@@ -64,7 +67,18 @@ def cbs_result() -> DatasetResult:
     )
 
 
+def bind_dataset_assessment(dataset, adapter_identity):
+    dataset.assessment = eligible_assessment_for_candidate(
+        source_key=dataset.source,
+        adapter_identity=adapter_identity,
+        resource_id=dataset.id,
+        retrieval_url=dataset.download_url,
+    )
+    return dataset
+
+
 def authorize_dataset(session, dataset, adapter_identity, destination, response="yes"):
+    bind_dataset_assessment(dataset, adapter_identity)
     session.register_dataset_result(dataset, adapter_identity)
     return session.request_authorization(
         source_key=dataset.source,
@@ -81,6 +95,7 @@ def test_disabled_session_blocks_destination_prompt_and_issuance(monkeypatch, tm
 
     dataset = dataset_result()
     session = LoadingPolicySession(download_enabled=False)
+    bind_dataset_assessment(dataset, "ckan:configured")
     session.register_dataset_result(dataset, "ckan:configured")
     prompt = Mock(side_effect=AssertionError("disabled session prompted"))
     destination = Mock(side_effect=AssertionError("disabled session resolved destination"))
@@ -104,6 +119,7 @@ def test_disabled_session_cannot_be_changed_into_an_enabled_session(tmp_path):
 
     dataset = dataset_result()
     session = LoadingPolicySession(download_enabled=False)
+    bind_dataset_assessment(dataset, "ckan:configured")
     session.register_dataset_result(dataset, "ckan:configured")
 
     with pytest.raises(AttributeError):
@@ -132,6 +148,7 @@ def test_consent_operation_shows_plan_safely_and_binds_exact_url(tmp_path):
     exact_url = "https://alice:secret@example.test:8443/data/file.csv?token=top-secret#private"
     dataset = dataset_result(url=exact_url)
     session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(dataset, "configured-ckan")
     session.register_dataset_result(dataset, "configured-ckan")
     destination = tmp_path / "nested" / "datasets.duckdb"
     expected_claims = claims_for_dataset(dataset, "configured-ckan", destination)
@@ -172,6 +189,7 @@ def test_url_shaped_resource_id_is_sanitized_in_consent(tmp_path):
     exact_url = "https://user:password@example.test/data.csv?token=secret#fragment"
     dataset = dataset_result(source="tavily", dataset_id=exact_url, url=exact_url)
     session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(dataset, "configured-tavily")
     session.register_dataset_result(dataset, "configured-tavily")
     prompts = []
 
@@ -216,6 +234,7 @@ def test_arbitrary_scheme_ids_and_titles_are_sanitized_in_consent(
     dataset = dataset_result(source="tavily", dataset_id=exact_url, url=exact_url)
     dataset.title = f"Dataset at {exact_url}"
     session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(dataset, "configured-tavily")
     session.register_dataset_result(dataset, "configured-tavily")
     prompts = []
 
@@ -241,6 +260,7 @@ def test_consent_operation_only_issues_for_exact_y_or_yes(tmp_path, response):
 
     dataset = dataset_result()
     session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(dataset, "configured-ckan")
     session.register_dataset_result(dataset, "configured-ckan")
 
     authorization = session.request_authorization(
@@ -260,6 +280,7 @@ def test_consent_input_exceptions_issue_nothing(tmp_path, exception):
 
     dataset = dataset_result()
     session = LoadingPolicySession(download_enabled=True)
+    bind_dataset_assessment(dataset, "configured-ckan")
     session.register_dataset_result(dataset, "configured-ckan")
 
     def interrupt(_prompt):
@@ -427,6 +448,7 @@ def test_direct_manual_writer_rejects_before_retrieval_or_connect(monkeypatch, t
         status="ok",
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=classify_tabular_structure([{"name": "value", "type": "BIGINT"}], 1),
     )
     retrieval = Mock(side_effect=AssertionError("unauthorized retrieval"))
     connect = Mock(side_effect=AssertionError("unauthorized connect"))
@@ -646,16 +668,17 @@ def test_adapter_probe_connection_closes_after_success_or_failure(monkeypatch, s
             "columns": [{"name": "value", "type": "INTEGER"}],
             "sample": [[1]],
             "row_count": 1,
+            "assessment": classify_tabular_structure([{"name": "value", "type": "BIGINT"}], 1),
         },
     )
     monkeypatch.setattr("duckdb.connect", connect)
     monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.safe_download", download)
-    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.probe_csv_url", probe)
+    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.inspect_csv_resource", probe)
     tool = _probe_adapter_tool(source)
 
     result = _probe_adapter_resource(tool, source, "https://example.test/data.csv")
 
-    expected_status = ("found" if source == "ckan" else "failed") if probe_fails else "probed"
+    expected_status = "failed" if probe_fails else "probed"
     assert result.status == expected_status
     connect.assert_called_once_with()
     download.assert_called_once()
@@ -672,7 +695,7 @@ def test_adapter_probe_connection_closes_when_keyboard_interrupt_propagates(monk
         Mock(side_effect=guarded_resource),
     )
     monkeypatch.setattr(
-        f"dataset_prober.tools.{source}_tool.probe_csv_url",
+        f"dataset_prober.tools.{source}_tool.inspect_csv_resource",
         Mock(side_effect=KeyboardInterrupt()),
     )
     tool = _probe_adapter_tool(source)
@@ -690,7 +713,7 @@ def test_adapter_probe_connection_creation_failure_does_not_attempt_cleanup(monk
     probe = Mock(side_effect=AssertionError("probe ran without a connection"))
     monkeypatch.setattr("duckdb.connect", connect)
     monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.safe_download", download)
-    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.probe_csv_url", probe)
+    monkeypatch.setattr(f"dataset_prober.tools.{source}_tool.inspect_csv_resource", probe)
     tool = _probe_adapter_tool(source)
 
     result = _probe_adapter_resource(tool, source, "https://example.test/data.csv")
@@ -735,7 +758,7 @@ def test_failed_real_adapter_inspection_cannot_authorize_or_persist(monkeypatch,
         Mock(side_effect=guarded_resource),
     )
     monkeypatch.setattr(
-        f"dataset_prober.tools.{source}_tool.probe_csv_url",
+        f"dataset_prober.tools.{source}_tool.inspect_csv_resource",
         Mock(side_effect=RuntimeError("probe failed")),
     )
     load = Mock(side_effect=AssertionError("failed inspection reached persistent loading"))
@@ -773,8 +796,10 @@ def test_failed_real_adapter_inspection_cannot_authorize_or_persist(monkeypatch,
     )
 
     assert inspected["status"] != "probed"
-    assert "not an inspected candidate" in denied["error"]
-    assert found_datasets == []
+    assert "has not passed inspection" in denied["error"]
+    assert len(found_datasets) == 1
+    assert found_datasets[0].assessment.load_eligible is False
+    assert found_datasets[0].assessment.reason.value == "inspection_failed"
     authorization.assert_not_called()
     load.assert_not_called()
     connect.assert_called_once_with()
@@ -990,6 +1015,15 @@ def test_persistent_sql_failure_closes_connection_and_consumes(monkeypatch, tmp_
         lambda url, **_kwargs: guarded_resource(url, csv_path),
     )
     monkeypatch.setattr(base, "csv_scan_expr", lambda _connection, _url: "read_csv_auto(?)")
+    monkeypatch.setattr(
+        base,
+        "require_eligible_csv_payload",
+        Mock(
+            return_value={
+                "assessment": classify_tabular_structure([{"name": "value", "type": "BIGINT"}], 1)
+            }
+        ),
+    )
     monkeypatch.setattr("duckdb.connect", Mock(return_value=connection))
 
     returned = tool.download(dataset, destination, authorization)
@@ -1007,12 +1041,19 @@ def test_keyboard_interrupt_consumes_before_propagating(monkeypatch, tmp_path):
     from dataset_prober import prober
     from dataset_prober.loading_policy import AuthorizationState, LoadingPolicySession
 
+    retrieval_url = "https://example.test/data.csv"
     result = ProbeResult(
-        url="https://example.test/data.csv",
+        url=retrieval_url,
         name="data",
         status="ok",
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id=retrieval_url,
+            retrieval_url=retrieval_url,
+        ),
     )
     destination = tmp_path / "datasets.duckdb"
     session = LoadingPolicySession(download_enabled=True)
@@ -1055,8 +1096,8 @@ def test_real_adapter_format_admission_denies_before_probe_or_load(
     dataset = dataset_result(source=source, url=url, resource_format=resource_format)
     probe = Mock(side_effect=AssertionError("unsupported resource reached CSV probe"))
     connect = Mock(side_effect=AssertionError("unsupported resource reached DuckDB"))
-    monkeypatch.setattr("dataset_prober.tools.ckan_tool.probe_csv_url", probe)
-    monkeypatch.setattr("dataset_prober.tools.tavily_tool.probe_csv_url", probe)
+    monkeypatch.setattr("dataset_prober.tools.ckan_tool.inspect_csv_resource", probe)
+    monkeypatch.setattr("dataset_prober.tools.tavily_tool.inspect_csv_resource", probe)
     monkeypatch.setattr("duckdb.connect", connect)
     tool = (
         CKANTool({"name": "Configured CKAN", "base_url": "https://catalog.test"})

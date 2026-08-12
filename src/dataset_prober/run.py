@@ -163,15 +163,21 @@ def display_results(results):
     table.add_column("Status", style="bold")
     table.add_column("Rows", justify="right")
     table.add_column("Columns", justify="right")
+    table.add_column("Assessment")
     table.add_column("Error")
 
     for r in results:
-        status_color = "green" if r.status == "ok" else "red"
+        status_color = "green" if r.assessment.load_eligible else "yellow"
         table.add_row(
             sanitize_url_text(r.name),
             f"[{status_color}]{r.status}[/{status_color}]",
             str(r.row_count) if r.row_count else "-",
             str(len(r.columns)) if r.columns else "-",
+            (
+                "verified"
+                if r.assessment.load_eligible
+                else f"report-only: {r.assessment.reason.value}"
+            ),
             sanitize_url_text(r.error[:60]) if r.error else "",
         )
 
@@ -215,7 +221,7 @@ def main() -> None:
         sys.exit(0)
 
     # Run prober
-    console.print(f"\n[bold]Probing {len(sources)} dataset(s)...[/bold]\n")
+    console.print(f"\n[bold]Probing {len(sources)} resource candidate(s)...[/bold]\n")
     results = probe_all(sources)
 
     # Display results
@@ -224,7 +230,7 @@ def main() -> None:
     # Ask user which datasets to download
     loadable_results = []
     for result in results:
-        if result.status != "ok":
+        if result.status != "ok" or not result.assessment.load_eligible:
             continue
         try:
             loading_session.register_probe_result(result)

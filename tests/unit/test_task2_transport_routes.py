@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from dataset_prober.tools.base import DatasetResult
+from tests.conftest import eligible_assessment_for_candidate
 
 
 class FakeHttpResult:
@@ -75,6 +76,13 @@ def fake_download(local_path: Path, *, source_url="https://public.example/data.c
 def authorize(dataset, adapter_identity, destination):
     from dataset_prober.loading_policy import LoadingPolicySession
 
+    if not dataset.assessment.load_eligible:
+        dataset.assessment = eligible_assessment_for_candidate(
+            source_key=dataset.source,
+            adapter_identity=adapter_identity,
+            resource_id=dataset.id,
+            retrieval_url=dataset.download_url,
+        )
     session = LoadingPolicySession(download_enabled=True)
     session.register_dataset_result(dataset, adapter_identity)
     authorization = session.request_authorization(
@@ -390,7 +398,8 @@ def test_csv_writer_downloads_guarded_copy_before_persistent_connect(monkeypatch
 
     assert loaded.status == "downloaded"
     assert events[0] == ("retrieval", resource_url)
-    assert events[1] == ("connect", str(destination.resolve()))
+    assert events[1] == ("connect", None)
+    assert events[2] == ("connect", str(destination.resolve()))
 
 
 def test_remote_url_never_reaches_duckdb_csv_scanner(monkeypatch, tmp_path):
@@ -400,6 +409,7 @@ def test_remote_url_never_reaches_duckdb_csv_scanner(monkeypatch, tmp_path):
     local_path.write_text("value\n1\n", encoding="utf-8")
     connection = Mock()
     connection.execute.return_value.fetchall.return_value = [("value", "BIGINT")]
+    connection.execute.return_value.fetchone.return_value = (1,)
     scanner = Mock(return_value="read_csv_auto(?)")
     monkeypatch.setattr(base, "csv_scan_expr", scanner)
 

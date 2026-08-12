@@ -50,6 +50,14 @@ class UnsafeResourceError(ValueError):
     """A safely retrieved resource is not suitable for the intended data path."""
 
 
+class RejectedContentTypeError(UnsafeResourceError):
+    """A guarded retrieval declared content unsuitable for dataset inspection."""
+
+    def __init__(self, content_type: str) -> None:
+        self.content_type = content_type
+        super().__init__(f"safely retrieved resource declares {content_type} content")
+
+
 class SafeTransportError(RuntimeError):
     """A validated destination could not be reached or returned an HTTP error."""
 
@@ -692,7 +700,7 @@ class SafeHttpClient:
                 "Dataset download",
             )
             if reject_html and _is_html(response.headers):
-                raise UnsafeResourceError("safely retrieved resource declares HTML content")
+                raise RejectedContentTypeError("HTML")
             suffix = Path(urlsplit(target.url).path).suffix[:16] or ".download"
             temporary = tempfile.NamedTemporaryFile(
                 mode="wb",

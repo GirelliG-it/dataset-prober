@@ -12,6 +12,9 @@ to the source. For the latter, read `git log`.
 
 ### Added
 
+- Deterministic resource assessments now distinguish verified non-empty tabular
+  data from documentary, erroneous, empty, unsupported, contradictory, and
+  ambiguous resources using stable machine-readable reason codes.
 - Interactive directory descent for autoindex sources. A source URL that serves
   a folder listing (Apache/nginx style, as used by RIVM and INSPIRE portals) is
   now walked before probing: pick a subfolder, descend, pick files. Chosen files
@@ -23,6 +26,12 @@ to the source. For the latter, read `git log`.
 
 ### Changed
 
+- Only deterministically verified, supported, non-empty tabular resources may
+  enter selection and consent. The actual CSV or CBS payload is assessed again
+  before persistent DuckDB access; report-only candidates remain visible in
+  summaries with their assessment reason.
+- Classifier-issued assessment evidence is bound to the canonical candidate
+  identity, so one resource's assessment cannot authorize another resource.
 - The CSV dialect decision is now made once and shared by probing and
   downloading. European-dialect files (`;` delimited, `#` comment preamble,
   ragged rows) previously failed at probe time and never reached download.

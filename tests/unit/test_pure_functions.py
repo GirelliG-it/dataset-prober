@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import eligible_assessment_for_candidate
+
 
 @contextmanager
 def _guarded_local_download(url, **_kwargs):
@@ -38,6 +40,12 @@ def _authorized_manual_load(monkeypatch, url, destination, *, name="dataset"):
         status="ok",
         columns=[{"name": "value", "type": "INTEGER"}],
         format="CSV",
+        assessment=eligible_assessment_for_candidate(
+            source_key="manual",
+            adapter_identity="Manual URL",
+            resource_id=str(url),
+            retrieval_url=str(url),
+        ),
     )
     session = LoadingPolicySession(download_enabled=True)
     session.register_probe_result(result)

@@ -11,7 +11,20 @@ All configuration comes from the profile — no hardcoded values.
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
-from dataset_prober.loading_policy import AuthorizedLoad, claims_for_dataset, sanitize_url_text
+from dataset_prober.loading_policy import (
+    AuthorizedLoad,
+    canonical_candidate_identity,
+    claims_for_dataset,
+    sanitize_url_text,
+)
+from dataset_prober.resource_classification import (
+    InspectionOutcome,
+    ResourceClassificationError,
+    classify_record_payload,
+    error_response_assessment,
+    inspection_error_assessment,
+    is_error_envelope,
+)
 from dataset_prober.tools.base import (
     AuthorizedDuckDBConnection,
     DatasetResult,
@@ -141,7 +154,18 @@ class CBSTool(DataSourceTool):
                 params={"$format": "json"},
                 timeout=timeout,
             )
-            meta_values = meta_resp.json().get("value", [{}])
+            meta_payload = meta_resp.json()
+            if is_error_envelope(meta_payload):
+                result = self._error_result(
+                    id=dataset_id,
+                    title=dataset_id,
+                    error="CBS metadata response contains an error envelope",
+                )
+                result.assessment = error_response_assessment(
+                    "CBS metadata response contains an explicit error envelope"
+                )
+                return result
+            meta_values = meta_payload.get("value", [{}])
             meta = meta_values[0] if meta_values else {}
             title = meta.get("Title", dataset_id)
             modified = meta.get("Modified", "")
@@ -154,14 +178,21 @@ class CBSTool(DataSourceTool):
                 params={"$top": int(sample_rows), "$format": "json"},
                 timeout=timeout,
             )
-            sample_data = sample_resp.json().get("value", [])
-
-            if not sample_data:
-                return self._error_result(
-                    id=dataset_id, title=title, error=f"No sample data returned for {dataset_id}"
-                )
-
-            columns = [{"name": k, "type": "string"} for k in sample_data[0].keys()]
+            sample_payload = sample_resp.json()
+            retrieval_url = f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet?$format=json"
+            candidate_identity = canonical_candidate_identity(
+                self.source_type,
+                self.adapter_identity,
+                dataset_id,
+                retrieval_url,
+            )
+            assessment, sample_data = classify_record_payload(
+                sample_payload,
+                candidate_identity=candidate_identity,
+            )
+            columns = (
+                [{"name": key, "type": "string"} for key in sample_data[0]] if sample_data else []
+            )
 
             return DatasetResult(
                 id=dataset_id,
@@ -170,7 +201,7 @@ class CBSTool(DataSourceTool):
                 source=self.source_type,
                 source_name=self.source_name,
                 url=f"https://opendata.cbs.nl/statline/#/CBS/nl/dataset/{dataset_id}",
-                download_url=(f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet?$format=json"),
+                download_url=retrieval_url,
                 format="OData",
                 modified=modified_display,
                 frequency=meta.get("Frequency"),
@@ -181,11 +212,19 @@ class CBSTool(DataSourceTool):
                 sample=sample_data[:3],
                 language="nl",
                 tags=[],
-                status="probed",
+                status=(
+                    "probed"
+                    if assessment.inspection_outcome is InspectionOutcome.SUCCEEDED
+                    else "failed"
+                ),
+                error=None if assessment.load_eligible else assessment.explanation,
+                assessment=assessment,
             )
 
         except Exception as e:
-            return self._error_result(id=dataset_id, title=dataset_id, error=str(e))
+            result = self._error_result(id=dataset_id, title=dataset_id, error=str(e))
+            result.assessment = inspection_error_assessment(e)
+            return result
 
     def download(
         self,
@@ -208,8 +247,14 @@ class CBSTool(DataSourceTool):
                     actual_claims.retrieval_url,
                     timeout=self.config.get("download_timeout_seconds", 30),
                 )
-                if not data:
-                    raise ValueError("No data returned from CBS")
+                payload_assessment, data = classify_record_payload(
+                    {"value": data},
+                    candidate_identity=actual_claims.candidate_identity,
+                )
+                if not payload_assessment.load_eligible:
+                    raise ResourceClassificationError(
+                        f"Actual CBS load payload is report-only: {payload_assessment.reason.value}"
+                    )
 
                 dataframe = pd.DataFrame(data)
                 with AuthorizedDuckDBConnection(permit, destination) as connection:

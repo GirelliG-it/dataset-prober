@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from dataset_prober.resource_classification import (
+    AssessmentReason,
+    ResourceAssessment,
+    _classifier_evidence_token_for_candidate,
+)
+
 
 class SourceKey(StrEnum):
     """Closed set of v0.1 loading sources."""
@@ -34,6 +40,8 @@ class ResourceFormat(StrEnum):
     PARQUET = "PARQUET"
     XLSX = "XLSX"
     XLS = "XLS"
+    PDF = "PDF"
+    HTML = "HTML"
     ODATA = "ODATA"
     ODATA_CSV = "ODATA/CSV"
     UNKNOWN = "UNKNOWN"
@@ -81,6 +89,9 @@ _FORMAT_BY_SUFFIX = {
     ".parquet": ResourceFormat.PARQUET,
     ".xlsx": ResourceFormat.XLSX,
     ".xls": ResourceFormat.XLS,
+    ".pdf": ResourceFormat.PDF,
+    ".html": ResourceFormat.HTML,
+    ".htm": ResourceFormat.HTML,
 }
 
 _CSV_SOURCES = frozenset({SourceKey.MANUAL, SourceKey.CKAN, SourceKey.TAVILY})
@@ -178,6 +189,31 @@ def configured_adapter_identity(source: str | SourceKey, config: dict[str, Any])
     return name
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateIdentity:
+    """Canonical immutable identity of one inspected loading candidate."""
+
+    source_key: SourceKey
+    adapter_identity: str
+    resource_id: str
+    retrieval_url: str
+
+
+def canonical_candidate_identity(
+    source: str | SourceKey,
+    adapter_identity: str,
+    resource_id: str,
+    retrieval_url: str,
+) -> CandidateIdentity:
+    """Construct candidate identity using the loading policy's authoritative rules."""
+    return CandidateIdentity(
+        source_key=_source_key(source),
+        adapter_identity=str(adapter_identity),
+        resource_id=str(resource_id),
+        retrieval_url=str(retrieval_url),
+    )
+
+
 def canonicalize_destination(destination: str | Path) -> str:
     """Resolve a destination without creating it or opening DuckDB."""
     return str(Path(destination).expanduser().resolve(strict=False))
@@ -212,6 +248,16 @@ class LoadClaims:
     loader_kind: LoaderKind
     database_path: str
     planned_table_name: str
+    assessment: ResourceAssessment
+
+    @property
+    def candidate_identity(self) -> CandidateIdentity:
+        return canonical_candidate_identity(
+            self.source_key,
+            self.adapter_identity,
+            self.resource_id,
+            self.retrieval_url,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,11 +268,13 @@ class _InspectedSnapshot:
     retrieval_url: str
     verified_format: ResourceFormat
     display_title: str
+    assessment: ResourceAssessment
 
 
 @dataclass(slots=True)
 class _AuthorizationRecord:
     claims: LoadClaims
+    assessment_evidence: object
     state: AuthorizationState = AuthorizationState.ISSUED
     active_token: object | None = None
 
@@ -238,23 +286,34 @@ def _claims(
     resource_id: str,
     retrieval_url: str,
     verified_format: str | ResourceFormat | None,
+    assessment: ResourceAssessment,
     destination: str | Path,
 ) -> LoadClaims:
-    source = _source_key(source_key)
-    adapter = str(adapter_identity)
-    identifier = str(resource_id)
-    exact_url = str(retrieval_url)
+    identity = canonical_candidate_identity(
+        source_key,
+        adapter_identity,
+        resource_id,
+        retrieval_url,
+    )
     normalized_format = _resource_format(verified_format)
-    loader = loader_for_resource(source, normalized_format, exact_url)
+    if not isinstance(assessment, ResourceAssessment):
+        raise InspectedResourceError("Deterministic resource assessment is missing")
+    loader = loader_for_resource(identity.source_key, normalized_format, identity.retrieval_url)
     return LoadClaims(
-        source_key=source,
-        adapter_identity=adapter,
-        resource_id=identifier,
-        retrieval_url=exact_url,
+        source_key=identity.source_key,
+        adapter_identity=identity.adapter_identity,
+        resource_id=identity.resource_id,
+        retrieval_url=identity.retrieval_url,
         verified_format=normalized_format,
         loader_kind=loader,
         database_path=canonicalize_destination(destination),
-        planned_table_name=derive_table_name(source, adapter, identifier, exact_url),
+        planned_table_name=derive_table_name(
+            identity.source_key,
+            identity.adapter_identity,
+            identity.resource_id,
+            identity.retrieval_url,
+        ),
+        assessment=assessment,
     )
 
 
@@ -266,6 +325,7 @@ def claims_for_probe(result: Any, destination: str | Path) -> LoadClaims:
         resource_id=result.url,
         retrieval_url=result.url,
         verified_format=getattr(result, "format", None),
+        assessment=getattr(result, "assessment", None),
         destination=destination,
     )
 
@@ -278,6 +338,7 @@ def claims_for_dataset(dataset: Any, adapter_identity: str, destination: str | P
         resource_id=dataset.id,
         retrieval_url=dataset.download_url or "",
         verified_format=dataset.format,
+        assessment=getattr(dataset, "assessment", None),
         destination=destination,
     )
 
@@ -435,6 +496,7 @@ class LoadingPolicySession:
             retrieval_url=str(result.url),
             verified_format=_resource_format(getattr(result, "format", None)),
             display_title=str(result.name),
+            assessment=getattr(result, "assessment", None),
         )
         self._register(snapshot)
 
@@ -449,10 +511,31 @@ class LoadingPolicySession:
             retrieval_url=str(dataset.download_url or ""),
             verified_format=_resource_format(dataset.format),
             display_title=str(dataset.title),
+            assessment=getattr(dataset, "assessment", None),
         )
         self._register(snapshot)
 
     def _register(self, snapshot: _InspectedSnapshot) -> None:
+        if not isinstance(snapshot.assessment, ResourceAssessment):
+            raise InspectedResourceError("Deterministic resource assessment is missing")
+        if not snapshot.assessment.load_eligible:
+            if snapshot.assessment.reason is AssessmentReason.VERIFIED_TABULAR_DATA:
+                raise InspectedResourceError(
+                    "Eligible-looking assessment is not classifier-issued inspection evidence"
+                )
+            raise InspectedResourceError(
+                f"Resource is report-only: {snapshot.assessment.reason.value}"
+            )
+        identity = canonical_candidate_identity(
+            snapshot.source_key,
+            snapshot.adapter_identity,
+            snapshot.resource_id,
+            snapshot.retrieval_url,
+        )
+        if _classifier_evidence_token_for_candidate(snapshot.assessment, identity) is None:
+            raise InspectedResourceError(
+                "Classifier-issued assessment does not match the inspected candidate"
+            )
         loader = loader_for_resource(
             snapshot.source_key, snapshot.verified_format, snapshot.retrieval_url
         )
@@ -497,6 +580,7 @@ class LoadingPolicySession:
             resource_id=snapshot.resource_id,
             retrieval_url=snapshot.retrieval_url,
             verified_format=snapshot.verified_format,
+            assessment=snapshot.assessment,
             destination=destination,
         )
         if claims.loader_kind is LoaderKind.UNSUPPORTED:
@@ -511,8 +595,19 @@ class LoadingPolicySession:
             return None
 
         nonce = secrets.token_urlsafe(32)
+        assessment_evidence = _classifier_evidence_token_for_candidate(
+            claims.assessment,
+            claims.candidate_identity,
+        )
+        if assessment_evidence is None:
+            raise InspectedResourceError(
+                "Classifier-issued assessment no longer matches the inspected candidate"
+            )
         with self.__lock:
-            self.__records[nonce] = _AuthorizationRecord(claims=claims)
+            self.__records[nonce] = _AuthorizationRecord(
+                claims=claims,
+                assessment_evidence=assessment_evidence,
+            )
         return AuthorizedLoad(self, nonce, _AUTHORIZED_LOAD_ISSUER)
 
     @staticmethod
@@ -525,6 +620,9 @@ class LoadingPolicySession:
             f"  Title: {sanitize_url_text(snapshot.display_title)}\n"
             f"  Retrieval URL: {safe_url_identity(claims.retrieval_url)}\n"
             f"  Verified format: {claims.verified_format.value}\n"
+            f"  Classification: {claims.assessment.resource_kind.value}\n"
+            f"  Queryability: {claims.assessment.queryability_outcome.value}\n"
+            f"  Assessment reason: {claims.assessment.reason.value}\n"
             f"  Loader: {claims.loader_kind.value}\n"
             f"  DuckDB destination: {claims.database_path}\n"
             f"  Planned table: {claims.planned_table_name}\n"
@@ -547,13 +645,27 @@ class LoadingPolicySession:
                 raise AuthorizationStateError(
                     f"Authorization cannot activate from {record.state.value}"
                 )
-            if record.claims != actual_claims:
+            if not self._claims_match(record, actual_claims):
                 record.state = AuthorizationState.REJECTED
                 raise AuthorizationMismatchError("Actual load claims do not match consent")
             token = object()
             record.active_token = token
             record.state = AuthorizationState.ACTIVE
         return _ActivePermit(self, nonce, token, _AUTHORIZED_LOAD_ISSUER)
+
+    @staticmethod
+    def _claims_match(record: _AuthorizationRecord, actual_claims: LoadClaims) -> bool:
+        if not isinstance(actual_claims, LoadClaims):
+            return False
+        if record.claims != actual_claims:
+            return False
+        if record.claims.assessment is not actual_claims.assessment:
+            return False
+        actual_evidence = _classifier_evidence_token_for_candidate(
+            actual_claims.assessment,
+            actual_claims.candidate_identity,
+        )
+        return actual_evidence is record.assessment_evidence
 
     def _validate_active(
         self,
@@ -572,7 +684,10 @@ class LoadingPolicySession:
             )
             if not valid:
                 raise AuthorizationStateError("Active permit is no longer valid")
-            mismatch = actual_claims is not None and actual_claims != record.claims
+            mismatch = actual_claims is not None and not self._claims_match(
+                record,
+                actual_claims,
+            )
             mismatch = mismatch or (
                 destination is not None and destination != record.claims.database_path
             )
