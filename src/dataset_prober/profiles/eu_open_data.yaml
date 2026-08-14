@@ -1,12 +1,15 @@
 # config/profiles/eu_open_data.yaml
 #
-# Profile for European Union open data discovery.
-# Sources: European Data Portal, Eurostat, EU Open Data Portal.
+# Disabled descriptor for the promised EU open-data profile.
 
 name: EU Open Data
-description: European Union and Eurostat open data sources
+description: Disabled pending compatible EU Hub and Eurostat adapters
 language: en
 cost_warning: false
+status: disabled
+reason: >-
+  The data.europa.eu route is incompatible with the generic /action/* CKAN adapter, and no
+  Eurostat adapter is registered.
 
 # Geographic scope
 scope:
@@ -15,12 +18,8 @@ scope:
     - EU institutions (Eurostat, European Commission)
     - European Economic Area (EEA)
   instruction: >
-    You are operating as the EU Open Data profile.
-    ONLY search for data from EU institutions and Eurostat.
-    DO NOT attempt to find data from individual country sources
-    unless they are EU member state contributions to EU datasets.
-    If the user's prompt requests data from multiple regions,
-    you handle ONLY the EU/Eurostat portion.
+    This disabled descriptor records intended EU geographic selection guidance. It does
+    not expose a catalog transport and does not deterministically verify geography.
 
 # Budget limits
 budget:
@@ -38,32 +37,10 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 
-# Catalog sources
-catalogs:
-  - name: EU Open Data Portal
-    type: ckan
-    base_url: https://data.europa.eu/api/hub/search
-    api_key_env: null
-    timeout_seconds: 30
-    priority: 1
-
-  - name: Eurostat
-    type: eurostat
-    base_url: https://ec.europa.eu/eurostat/api/dissemination
-    api_key_env: null
-    timeout_seconds: 30
-    priority: 2
-
-# Trusted domains
-trusted_domains:
-  - europa.eu
-  - data.europa.eu
-  - ec.europa.eu
-  - eurostat.ec.europa.eu
-  - eea.europa.eu
-
-# Blocked sources
-blocked_sources: []
+# No active catalog or host policy is exposed while this profile is disabled.
+catalogs: []
+trusted_hosts: []
+blocked_hosts: []
 
 # License preferences
 # EU data typically uses CC-BY 4.0

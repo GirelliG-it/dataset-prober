@@ -186,6 +186,8 @@ name: Test Profile
 description: Minimal profile for testing
 language: en
 cost_warning: false
+status: enabled
+reason: null
 scope:
   regions:
     - Test Region
@@ -203,17 +205,22 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 catalogs:
-  - name: Test CBS
-    type: cbs
+  - catalog_id: test_cbs
+    adapter: cbs
+    name: Test CBS
     base_url: https://opendata.cbs.nl/ODataCatalog
     api_key_env: null
     timeout_seconds: 10
     priority: 1
-trusted_domains:
-  - example.com
-  - test.gov
-blocked_sources:
-  - blocked.example.com
+    required: true
+trusted_hosts:
+  - hostname: example.com
+    include_subdomains: true
+  - hostname: test.gov
+    include_subdomains: false
+blocked_hosts:
+  - hostname: blocked.example.com
+    include_subdomains: true
 license_preference:
   - CC0
   - CC-BY
@@ -229,6 +236,8 @@ description: Global test profile
 language: auto
 cost_warning: true
 warning_message: "Test warning"
+status: disabled
+reason: No supported test discovery transport is available.
 scope:
   regions:
     - Worldwide
@@ -246,8 +255,8 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 catalogs: []
-trusted_domains: []
-blocked_sources: []
+trusted_hosts: []
+blocked_hosts: []
 license_preference:
   - CC0
 license_warn:

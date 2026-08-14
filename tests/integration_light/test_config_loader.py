@@ -8,14 +8,14 @@ No network calls — tests only the file loading and validation logic.
 import pytest
 
 
-class TestConfigLoaderListProfiles:
-    """Tests for ConfigLoader.list_profiles()."""
+class TestConfigLoaderConfiguredProfileIds:
+    """Tests for ConfigLoader.configured_profile_ids()."""
 
     def test_lists_available_profiles(self, profiles_dir):
         from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles_dir)
-        profiles = loader.list_profiles()
+        profiles = loader.configured_profile_ids()
         assert "test_profile" in profiles
         assert "global" in profiles
 
@@ -25,13 +25,13 @@ class TestConfigLoaderListProfiles:
         empty = tmp_path / "profiles"
         empty.mkdir()
         loader = ConfigLoader(empty)
-        assert loader.list_profiles() == []
+        assert loader.configured_profile_ids() == []
 
     def test_nonexistent_directory_returns_empty_list(self, tmp_path):
         from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(tmp_path / "nonexistent")
-        assert loader.list_profiles() == []
+        assert loader.configured_profile_ids() == []
 
     def test_ignores_underscore_prefixed_files(self, tmp_path):
         profiles = tmp_path / "profiles"
@@ -42,6 +42,8 @@ name: Real Profile
 description: test
 language: en
 cost_warning: false
+status: disabled
+reason: Test profile is not runnable.
 scope:
   regions: [test]
   instruction: test
@@ -58,8 +60,8 @@ pricing:
   output_per_million: 15.0
   cache_read_per_million: 0.3
 catalogs: []
-trusted_domains: []
-blocked_sources: []
+trusted_hosts: []
+blocked_hosts: []
 license_preference: [CC0]
 license_warn: []
 license_reject: []
@@ -67,7 +69,7 @@ license_reject: []
         from dataset_prober.config_loader import ConfigLoader
 
         loader = ConfigLoader(profiles)
-        profiles_list = loader.list_profiles()
+        profiles_list = loader.configured_profile_ids()
         assert "real_profile" in profiles_list
         assert "_internal" not in profiles_list
 
@@ -81,6 +83,8 @@ class TestConfigLoaderLoad:
         loader = ConfigLoader(profiles_dir)
         profile = loader.load("test_profile")
         assert profile.name == "Test Profile"
+        assert profile.profile_id == "test_profile"
+        assert profile.contract.profile_id == "test_profile"
 
     def test_missing_profile_raises_file_not_found(self, profiles_dir):
         from dataset_prober.config_loader import ConfigLoader
@@ -140,9 +144,12 @@ class TestProfileAttributes:
     def test_catalog_loaded(self, test_profile):
         assert len(test_profile.catalogs) == 1
         catalog = test_profile.catalogs[0]
+        assert catalog.catalog_id == "test_cbs"
+        assert catalog.adapter == "cbs"
         assert catalog.name == "Test CBS"
         assert catalog.type == "cbs"
         assert catalog.priority == 1
+        assert catalog.required is True
 
 
 class TestProfileMethods:
@@ -156,9 +163,8 @@ class TestProfileMethods:
         assert test_profile.is_source_blocked("https://blocked.example.com/data") is True
         assert test_profile.is_source_blocked("https://allowed.example.com/data") is False
 
-    def test_global_profile_trusts_all_domains(self, global_profile):
-        """Global profile has no trusted_domains list — should trust everything."""
-        assert global_profile.is_domain_trusted("https://any-domain-at-all.com") is True
+    def test_empty_trusted_hosts_trust_nothing(self, global_profile):
+        assert global_profile.is_domain_trusted("https://any-domain-at-all.com") is False
 
     def test_has_catalog_type(self, test_profile):
         assert test_profile.has_catalog_type("cbs") is True
@@ -167,13 +173,13 @@ class TestProfileMethods:
 
     def test_system_prompt_context_contains_scope(self, test_profile):
         ctx = test_profile.system_prompt_context()
-        assert "SCOPE RESTRICTION" in ctx
+        assert "SCOPE GUIDANCE" in ctx
         assert "Test scope only." in ctx
 
     def test_system_prompt_context_scope_appears_first(self, test_profile):
         """Scope restriction must appear before catalog sources."""
         ctx = test_profile.system_prompt_context()
-        scope_pos = ctx.find("SCOPE RESTRICTION")
+        scope_pos = ctx.find("SCOPE GUIDANCE")
         catalog_pos = ctx.find("AVAILABLE CATALOG SOURCES")
         assert scope_pos < catalog_pos
 

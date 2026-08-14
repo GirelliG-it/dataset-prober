@@ -1,15 +1,17 @@
 # config/profiles/dutch_government.yaml
 #
-# Profile for Dutch government open data discovery.
-# Sources: CBS (Statistics Netherlands), data.overheid.nl, RIVM, RDW,
-#          Den Haag Open Data, OpenDataSoft gemeente portals.
+# Manual-only profile for the supported CBS StatLine OData v3 route.
 
-name: Dutch Government
-description: Official Dutch government open data sources
+name: Dutch Government (CBS only)
+description: Manual-only discovery through the supported CBS StatLine OData v3 catalog
 language: nl
 cost_warning: false
+status: manual_only
+reason: >-
+  Only the supported CBS StatLine OData v3 route is exposed; broader Dutch catalogue
+  discovery awaits repair and certification.
 
-# Geographic scope — agent only searches within this scope
+# Geographic scope is selection guidance, not deterministic semantic verification.
 scope:
   regions:
     - Netherlands
@@ -17,11 +19,9 @@ scope:
     - Dutch provinces (provincies)
     - Kingdom of the Netherlands (including Caribbean municipalities)
   instruction: >
-    You are operating as the Dutch Government profile.
-    ONLY search for data from Dutch government sources.
-    DO NOT attempt to find data from US, EU, or other non-Dutch sources.
-    If the user's prompt requests data from multiple countries,
-    you handle ONLY the Dutch portion — other profiles handle the rest.
+    This profile exposes only the configured CBS StatLine catalog. Treat the requested
+    Dutch geographic scope as selection guidance and report the deterministic assessment
+    for every inspected resource.
 
 # Budget limits — all values controlled by end-user via CLI flags
 # These are profile suggestions, not enforced defaults
@@ -40,42 +40,22 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 
-# Catalog sources — searched in order
+# Active catalog sources — searched in order
 catalogs:
-  - name: CBS Statistics Netherlands
-    type: cbs
+  - catalog_id: cbs_statline
+    adapter: cbs
+    name: CBS Statistics Netherlands
     base_url: https://opendata.cbs.nl/ODataCatalog
     api_key_env: null
     timeout_seconds: 30
     priority: 1
+    required: true
 
-  - name: data.overheid.nl
-    type: ckan
-    base_url: https://data.overheid.nl
-    api_key_env: null
-    timeout_seconds: 30
-    priority: 2
-
-# Trusted domains — agent prefers results from these
-trusted_domains:
-  - cbs.nl
-  - opendata.cbs.nl
-  - rivm.nl
-  - rdw.nl
-  - data.overheid.nl
-  - overheid.nl
-  - den-haag-opendata.opendatasoft.com
-  - denhaag.dataplatform.nl
-  - geoportaal-ddh.opendata.arcgis.com
-
-# Blocked sources — agent will not attempt to access these
-blocked_sources:
-  - denhaag.incijfers.nl  # blocks automated access (robots.txt)
-
-# OpenDataSoft gemeente portals
-# CSV export URL pattern: https://<host>/api/explore/v2.1/catalog/datasets/<id>/exports/csv
-opendatasoft_portals:
-  - den-haag-opendata.opendatasoft.com
+# Host rules support catalog guidance only; guarded transport remains authoritative.
+trusted_hosts:
+  - hostname: opendata.cbs.nl
+    include_subdomains: false
+blocked_hosts: []
 
 # License preferences (CCREL/ODRL)
 # Agent will flag datasets not matching preferred licenses

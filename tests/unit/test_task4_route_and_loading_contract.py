@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from contextlib import contextmanager
 from copy import copy, deepcopy
@@ -474,6 +475,8 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
     assert candidate_b.assessment.load_eligible is False
 
     system_prompt = client.messages.create.call_args_list[0].kwargs["system"].lower()
+    model_tools = client.messages.create.call_args_list[0].kwargs["tools"]
+    rendered_tools = json.dumps(model_tools).lower()
     assert "verified/load-eligible" in system_prompt
     assert "report-only/ineligible" in system_prompt
     assert "canonical assessment category" in system_prompt
@@ -482,6 +485,14 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
     assert "never recommend a report-only resource for download" in system_prompt
     assert "discovery metadata, filenames, snippets, catalog metadata" in system_prompt
     assert "model prose cannot grant loading authority" in system_prompt
+    assert "table_id" in rendered_tools
+    for inactive_claim in ("ckan", "tavily", "web search", "download_url", "csv"):
+        assert inactive_claim not in rendered_tools
+        assert inactive_claim not in system_prompt
+    for definition in model_tools:
+        source = definition["input_schema"]["properties"].get("source")
+        if source is not None:
+            assert source["enum"] == ["cbs"]
 
 
 def test_timeout_batch_cannot_select_registration_downgrade(monkeypatch, tmp_path):

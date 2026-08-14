@@ -26,6 +26,9 @@ to the source. For the latter, read `git log`.
 
 ### Changed
 
+- Bundled profiles now load through the immutable static profile contract and fail closed
+  according to explicit lifecycle status: Dutch CBS is manual-only, while US, EU and Global
+  discovery remain disabled until their promised transports are repaired and certified.
 - Only deterministically verified, supported, non-empty tabular resources may
   enter selection and consent. The actual CSV or CBS payload is assessed again
   before persistent DuckDB access; report-only candidates remain visible in

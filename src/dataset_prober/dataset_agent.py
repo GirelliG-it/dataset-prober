@@ -56,7 +56,11 @@ from dataset_prober.loading_policy import (  # noqa: E402
 )
 from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
 from dataset_prober.paths import AppPaths  # noqa: E402
-from dataset_prober.prompt_interpreter import PromptInterpreter  # noqa: E402
+from dataset_prober.profile_contract import ProfileStatus  # noqa: E402
+from dataset_prober.prompt_interpreter import (  # noqa: E402
+    ProfileInterpretationError,
+    PromptInterpreter,
+)
 from dataset_prober.resource_classification import unknown_assessment  # noqa: E402
 from dataset_prober.tools import DatasetResult, tools_for_profile  # noqa: E402
 
@@ -184,7 +188,10 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
     Build Claude tool definitions dynamically from profile.
     No hardcoded tool descriptions — profile context is injected at runtime.
     """
-    catalog_types = list(dict.fromkeys(c.type for c in profile.catalogs if c.type != "tavily"))
+    profile.require_runnable()
+    catalog_types = list(
+        dict.fromkeys(catalog.adapter for catalog in profile.agent_usable_catalogs)
+    )
     has_cbs = "cbs" in catalog_types
     has_ckan = "ckan" in catalog_types
 
@@ -199,6 +206,13 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
     if not catalog_desc:
         catalog_desc.append("no source catalog enabled under the v0.1 URL-safety policy")
     available_catalogs = ", ".join(catalog_types) or "none under the current safety policy"
+    identifier_guidance = "Dataset identifier from the selected active catalog"
+    if has_cbs and not has_ckan:
+        identifier_guidance = "CBS table identifier (for example, '37230ned')"
+    elif has_ckan and not has_cbs:
+        identifier_guidance = "CKAN package name or identifier"
+    elif has_cbs and has_ckan:
+        identifier_guidance = "CBS table identifier or CKAN package identifier"
 
     tools.append(
         {
@@ -206,8 +220,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
             "description": (
                 f"Search for datasets using available catalogs: {', '.join(catalog_desc)}. "
                 f"The source parameter determines which catalog to use. "
-                f"Use multiple searches with different keywords to maximize coverage. "
-                f"Always prefer catalog APIs over web search when available."
+                f"Use multiple searches with different keywords to maximize coverage."
             ),
             "input_schema": {
                 "type": "object",
@@ -236,9 +249,8 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
         {
             "name": "fetch_dataset",
             "description": (
-                "Fetch full metadata and sample data for a specific dataset by its ID. "
-                "For CBS: use the table ID (e.g. '37230ned'). "
-                "For CKAN: use the package name or ID. "
+                "Fetch full metadata and sample data for a specific identifier through "
+                "the selected active catalog. "
                 "Always fetch before downloading to verify quality and freshness."
             ),
             "input_schema": {
@@ -246,7 +258,7 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                 "properties": {
                     "dataset_id": {
                         "type": "string",
-                        "description": "Dataset identifier (CBS table ID, CKAN package name, or URL)",
+                        "description": identifier_guidance,
                     },
                     "source": {
                         "type": "string",
@@ -294,6 +306,32 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
     )
 
     # download_dataset
+    download_properties = {
+        "dataset_id": {"type": "string", "description": "Dataset identifier"},
+        "title": {
+            "type": "string",
+            "description": "Human-readable dataset title (used as DuckDB table name)",
+        },
+        "source": {
+            "type": "string",
+            "enum": catalog_types,
+            "description": "Which active catalog tool should request loading",
+        },
+    }
+    download_guidance: list[str] = []
+    if has_cbs:
+        download_properties["table_id"] = {
+            "type": "string",
+            "description": "CBS table identifier",
+        }
+        download_guidance.append("For CBS, provide the table_id.")
+    if has_ckan:
+        download_properties["download_url"] = {
+            "type": "string",
+            "description": "Inspected direct resource URL",
+        }
+        download_guidance.append("For CKAN resources, provide the inspected download_url.")
+
     tools.append(
         {
             "name": "download_dataset",
@@ -302,31 +340,11 @@ def build_tool_definitions(profile: Profile) -> list[dict]:
                 "This tool call does not grant permission: deterministic code asks the user "
                 "to confirm this exact resource, and denial stops before the loader. "
                 "Only request approval after freshness and quality checks. "
-                "For CBS datasets, provide the table_id. "
-                "For CSV datasets, provide the download_url."
+                + " ".join(download_guidance)
             ),
             "input_schema": {
                 "type": "object",
-                "properties": {
-                    "dataset_id": {"type": "string", "description": "Dataset identifier"},
-                    "title": {
-                        "type": "string",
-                        "description": "Human-readable dataset title (used as DuckDB table name)",
-                    },
-                    "source": {
-                        "type": "string",
-                        "enum": catalog_types,
-                        "description": "Which tool to use for downloading",
-                    },
-                    "download_url": {
-                        "type": "string",
-                        "description": "Direct file URL for CSV downloads (omit for CBS)",
-                    },
-                    "table_id": {
-                        "type": "string",
-                        "description": "CBS table ID for CBS downloads (omit for CSV)",
-                    },
-                },
+                "properties": download_properties,
                 "required": ["dataset_id", "title", "source"],
             },
         }
@@ -560,6 +578,8 @@ def run_profile(
     Accepts optional initial_message from orchestrator (replaces full history).
     Returns ProfileResult with found/downloaded datasets and cost tracking.
     """
+    profile.require_runnable()
+
     from dataset_prober.orchestrator import ProfileResult as PR
 
     profile_result = PR(
@@ -598,7 +618,7 @@ BEHAVIOUR RULES:
 BUDGET AWARENESS:
 - You have {budget.max_searches} searches, {budget.max_crawls} crawls, {budget.max_probes} probes.
 - Use them efficiently — don't repeat the same search twice.
-- Prioritize catalog APIs over web search when available.
+- Use only the active catalog tools supplied for this profile.
 
 LICENSE EVALUATION (CCREL/ODRL):
 - CC0 / Public Domain → ✅ Grade A — unrestricted
@@ -902,19 +922,54 @@ def main():
         "max_tokens": args.max_tokens,
     }
 
-    # Load available profiles
+    # Load validated profile descriptors before constructing any model or tool boundary.
     loader = ConfigLoader()
-    available_profiles = loader.list_profiles()
+    configured_profile_ids = loader.configured_profile_ids()
 
     if args.list_profiles:
-        console.print("\n[bold]Available profiles:[/bold]")
-        for name in available_profiles:
-            profile = loader.load(name)
-            console.print(f"  [cyan]{name}[/cyan] — {profile.description}")
+        console.print("\n[bold]Configured profiles:[/bold]")
+        for profile in loader.profile_descriptors():
+            console.print(
+                f"  [cyan]{profile.profile_id}[/cyan] "
+                f"({profile.status.value}) — {profile.description}",
+                soft_wrap=True,
+            )
+            if profile.status is not ProfileStatus.ENABLED:
+                console.print(f"    {profile.reason}", soft_wrap=True)
         console.print()
         return
 
-    paths = AppPaths.resolve()
+    selected_profile: Profile | None = None
+    enabled_profiles: list[Profile] = []
+    if args.profile:
+        if args.profile not in configured_profile_ids:
+            console.print(f"[red]Profile '{args.profile}' is not configured.[/red]")
+            console.print(f"Configured: {', '.join(configured_profile_ids)}")
+            return
+        selected_profile = loader.load(args.profile)
+        if selected_profile.status is ProfileStatus.DISABLED:
+            console.print(
+                f"[red]Profile '{args.profile}' is disabled:[/red] {selected_profile.reason}",
+                soft_wrap=True,
+            )
+            return
+        if selected_profile.status is ProfileStatus.MANUAL_ONLY:
+            console.print(
+                f"[yellow]Profile '{args.profile}' is manual_only:[/yellow] "
+                f"{selected_profile.reason}",
+                soft_wrap=True,
+            )
+    else:
+        enabled_profiles = [
+            loader.load(profile_id) for profile_id in loader.automatically_selectable_profile_ids()
+        ]
+        if not enabled_profiles:
+            console.print(
+                "[yellow]Automatic profile selection is unavailable because no profile "
+                "is enabled. Use --list-profiles to inspect configured statuses or "
+                "explicitly select a manual-only profile.[/yellow]"
+            )
+            return
 
     # Get user prompt
     console.print("\n[bold cyan]Dataset Discovery Agent[/bold cyan]")
@@ -924,6 +979,8 @@ def main():
     if not user_prompt:
         console.print("[red]No prompt provided. Exiting.[/red]")
         return
+
+    paths = AppPaths.resolve()
 
     loading_session = LoadingPolicySession(download_enabled=args.download)
 
@@ -938,17 +995,20 @@ def main():
 
     # Determine profiles to run
     if args.profile:
-        # Manual profile override
-        if args.profile not in available_profiles:
-            console.print(f"[red]Profile '{args.profile}' not found.[/red]")
-            console.print(f"Available: {', '.join(available_profiles)}")
-            return
+        # The explicit descriptor was validated and admitted before prompting.
         profile_names = [args.profile]
         console.print(f"[dim]Using profile: {args.profile}[/dim]\n")
     else:
         # Auto-detect via prompt interpreter
-        interpreter = PromptInterpreter(available_profiles)
-        interpretation = interpreter.interpret(user_prompt)
+        try:
+            interpreter = PromptInterpreter(enabled_profiles)
+            interpretation = interpreter.interpret(user_prompt)
+        except ProfileInterpretationError as exc:
+            console.print(
+                f"[red]Profile interpretation failed:[/red] {sanitize_url_text(str(exc))}",
+                soft_wrap=True,
+            )
+            return
         session_cost.interpreter_cost_usd = interpretation.cost_usd
 
         confirmed = interpreter.present_and_confirm(interpretation, None)

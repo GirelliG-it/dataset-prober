@@ -33,10 +33,12 @@ CSV and CBS/OData loading paths; other candidates remain visible as report-only 
 
 ## Discovery and verification are different
 
-The agentic workflow uses Claude to interpret a natural-language request, choose source
-profiles, plan searches and call source tools. CBS and CKAN integrations can then return
-candidate resources. Model output, search snippets, filenames and catalog metadata
-are discovery evidence; none of them prove that a resource is a dataset.
+When an enabled profile is available, the agentic workflow can use Claude to interpret a
+natural-language request and choose among the enabled descriptors. In the current degraded
+mode there are no enabled profiles; the Dutch manual-only profile can instead be named
+explicitly to plan CBS searches and return candidates. Model output, search snippets,
+filenames and catalog metadata are discovery evidence; none of them prove that a resource
+is a dataset.
 
 The deterministic part retrieves enabled resources through a guarded transport and
 classifies the inspected content before using DuckDB SQL to report row counts, column
@@ -57,9 +59,10 @@ cannot replace deterministic verification.
   concrete file.
 - The crawler follows relevant same-domain pages and collects links whose filenames look
   like data resources.
-- The agentic command can interpret a request, choose bundled geographic source profiles,
-  search CBS and CKAN catalogs, fetch candidates and present an aggregated result. The
-  Tavily adapter supports an explicitly supplied direct CSV resource, while Tavily
+- The agentic command can run the Dutch profile only when it is selected explicitly. That
+  manual-only profile exposes the supported CBS StatLine OData v3 catalog. Automatic
+  profile selection is temporarily unavailable because no bundled profile is enabled.
+- Direct resources remain available through the non-agentic manual prober. Tavily
   provider-side search and extraction remain disabled because their source-fetch transport
   is opaque to the application.
 - Supported CSV resources are retrieved through the application-owned guarded HTTP transport
@@ -91,7 +94,7 @@ The editable install exposes three console commands:
 ```bash
 # Agent-assisted candidate discovery
 dataset-prober --list-profiles
-dataset-prober
+dataset-prober --profile dutch_government
 
 # Manual URL probing and optional analysis
 dataset-prober-probe
@@ -119,8 +122,29 @@ The JSON input for `dataset-prober-probe --file` is a list of named URLs:
 load-eligible resource and answer `y` or `yes` to the consent prompt for that resource's
 displayed destination and table.
 
-Agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`. Tavily provider
-search and extraction remain disabled even when `TAVILY_API_KEY` is set. The optional local analysis path expects an Ollama server
+### Bundled profile availability
+
+Profile lifecycle is validated when configuration is loaded. `enabled` profiles may be
+selected automatically or explicitly, `manual_only` profiles require an explicit name,
+and `disabled` profiles cannot be selected or run. The current pre-release deliberately
+has no enabled profile:
+
+| Profile | Status | Active catalog |
+| --- | --- | --- |
+| `dutch_government` | `manual_only` | CBS StatLine OData v3 (`cbs`) |
+| `us_government` | `disabled` | None; Data.gov v4 needs a source-specific adapter |
+| `eu_open_data` | `disabled` | None; current EU routes lack compatible registered adapters |
+| `global` | `disabled` | None; no supported, certified safe discovery transport |
+
+Running `dataset-prober` without `--profile` therefore exits locally without constructing
+the prompt interpreter or agent tools. `dataset-prober --profile dutch_government` is the
+only bundled agentic route currently admitted and is clearly identified as manual-only.
+This temporary profile restriction does not affect `dataset-prober-probe`: a user can still
+supply a concrete URL directly for guarded deterministic inspection.
+
+Explicit Dutch agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`.
+Tavily provider search and extraction remain disabled even when `TAVILY_API_KEY` is set.
+The optional local analysis path expects an Ollama server
 at `http://localhost:11434` and the requested model to be available there. Environment
 variables can be placed in a repository-root `.env` file for the current checkout-based
 workflow.
@@ -168,7 +192,8 @@ Use the prototype on disposable outputs and review every candidate yourself.
   not prove byte-for-byte identity with the initially inspected payload. Checksums and
   durable retrieval identity remain deferred.
 - Profile freshness, license, scope and budget instructions are partly configuration or
-  model-prompt guidance rather than complete deterministic enforcement.
+  model-prompt guidance rather than complete deterministic enforcement. Geographic scope
+  wording guides selection; it does not prove semantic geographic relevance.
 - Output paths are centrally resolved, but artifact filenames and some runtime assumptions
   remain checkout-oriented. Repeated runs can replace result files or leave stale artifacts
   that look current.
