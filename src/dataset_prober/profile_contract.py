@@ -23,6 +23,13 @@ class ProfileStatus(StrEnum):
     DISABLED = "disabled"
 
 
+class CKANDialect(StrEnum):
+    """Closed CKAN protocol and landing-route shapes."""
+
+    CKAN_ACTION = "ckan_action"
+    EU_HUB = "eu_hub"
+
+
 @dataclass(frozen=True, slots=True)
 class ContractIssue:
     """One deterministic static-contract validation issue."""
@@ -63,6 +70,10 @@ _CATALOG_FIELDS = (
     "timeout_seconds",
     "priority",
     "required",
+)
+_CKAN_CATALOG_FIELDS = (
+    "ckan_dialect",
+    "landing_base_url",
 )
 _MALFORMED_PERCENT_PATTERN = r"%(?![0-9A-Fa-f]{2})"
 _MISSING = object()
@@ -210,6 +221,25 @@ def _url_issues(value: object, path: str) -> list[ContractIssue]:
     return issues
 
 
+def _landing_origin_issues(value: object, path: str) -> list[ContractIssue]:
+    issues = _url_issues(value, path)
+    if not isinstance(value, str):
+        return issues
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return issues
+    if parsed.path not in {"", "/"}:
+        issues.append(
+            _issue(
+                "url_path_not_allowed",
+                path,
+                "must contain only a public portal origin",
+            )
+        )
+    return issues
+
+
 def _catalog_issues(
     values: Mapping[str, object],
     path: str,
@@ -222,11 +252,28 @@ def _catalog_issues(
         if field not in values:
             issues.append(_issue("missing_field", f"{path}.{field}", "is required"))
 
+    adapter = values.get("adapter", _MISSING)
+    is_ckan = adapter == "ckan"
+    if is_ckan:
+        for field in _CKAN_CATALOG_FIELDS:
+            if field not in values:
+                issues.append(_issue("missing_field", f"{path}.{field}", "is required"))
+    elif isinstance(adapter, str) and adapter.strip():
+        for field in _CKAN_CATALOG_FIELDS:
+            value = values.get(field, _MISSING)
+            if value is not _MISSING and value is not None:
+                issues.append(
+                    _issue(
+                        "field_not_applicable",
+                        f"{path}.{field}",
+                        "is available only for CKAN catalogs",
+                    )
+                )
+
     catalog_id = values.get("catalog_id", _MISSING)
     if catalog_id is not _MISSING and not _valid_id(catalog_id):
         issues.append(_issue("invalid_id", f"{path}.catalog_id", "must use lowercase snake_case"))
 
-    adapter = values.get("adapter", _MISSING)
     if adapter is not _MISSING:
         if not isinstance(adapter, str) or not adapter.strip():
             issues.append(_issue("blank_value", f"{path}.adapter", "must be a nonblank string"))
@@ -246,6 +293,25 @@ def _catalog_issues(
     base_url = values.get("base_url", _MISSING)
     if base_url is not _MISSING:
         issues.extend(_url_issues(base_url, f"{path}.base_url"))
+
+    ckan_dialect = values.get("ckan_dialect", _MISSING)
+    if is_ckan and ckan_dialect is not _MISSING:
+        try:
+            if not isinstance(ckan_dialect, str):
+                raise TypeError
+            CKANDialect(ckan_dialect)
+        except (TypeError, ValueError):
+            issues.append(
+                _issue(
+                    "invalid_ckan_dialect",
+                    f"{path}.ckan_dialect",
+                    "must be ckan_action or eu_hub",
+                )
+            )
+
+    landing_base_url = values.get("landing_base_url", _MISSING)
+    if is_ckan and landing_base_url is not _MISSING:
+        issues.extend(_landing_origin_issues(landing_base_url, f"{path}.landing_base_url"))
 
     api_key_env = values.get("api_key_env", _MISSING)
     if (
@@ -326,6 +392,8 @@ class CatalogContract:
     timeout_seconds: int
     priority: int
     required: bool
+    ckan_dialect: CKANDialect | None = None
+    landing_base_url: str | None = None
 
     def __post_init__(self) -> None:
         issues = _catalog_issues(
@@ -338,12 +406,16 @@ class CatalogContract:
                 "timeout_seconds": self.timeout_seconds,
                 "priority": self.priority,
                 "required": self.required,
+                "ckan_dialect": self.ckan_dialect,
+                "landing_base_url": self.landing_base_url,
             },
             "catalog",
             supported_adapters=None,
         )
         if issues:
             raise ProfileContractError(issues)
+        if self.adapter == "ckan":
+            object.__setattr__(self, "ckan_dialect", CKANDialect(self.ckan_dialect))
 
 
 @dataclass(frozen=True, slots=True)
@@ -646,6 +718,8 @@ def _parse_catalogs(
                     timeout_seconds=catalog_values["timeout_seconds"],
                     priority=catalog_values["priority"],
                     required=catalog_values["required"],
+                    ckan_dialect=catalog_values.get("ckan_dialect"),
+                    landing_base_url=catalog_values.get("landing_base_url"),
                 )
             )
     return tuple(catalogs)
@@ -762,6 +836,7 @@ def build_profile_contract(
 
 __all__ = (
     "BudgetContract",
+    "CKANDialect",
     "CatalogContract",
     "ContractIssue",
     "HostRule",

@@ -645,7 +645,14 @@ def _probe_adapter_tool(source):
     from dataset_prober.tools.tavily_tool import TavilyTool
 
     if source == "ckan":
-        return CKANTool({"name": "Configured CKAN", "base_url": "https://catalog.test"})
+        return CKANTool(
+            {
+                "name": "Configured CKAN",
+                "base_url": "https://catalog.test/api/3",
+                "ckan_dialect": "ckan_action",
+                "landing_base_url": "https://catalog.test",
+            }
+        )
     return TavilyTool({"name": "Configured Tavily", "blocked_sources": []})
 
 

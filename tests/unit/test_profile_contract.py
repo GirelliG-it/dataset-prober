@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import UserString
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from dataset_prober.profile_contract import (
     BudgetContract,
     CatalogContract,
+    CKANDialect,
     HostRule,
     ProfileContract,
     ProfileContractError,
@@ -18,15 +20,18 @@ from dataset_prober.profile_contract import (
 
 
 def _catalog(**overrides: object) -> dict[str, object]:
+    adapter = overrides.get("adapter", "ckan")
     values: dict[str, object] = {
         "catalog_id": "primary_catalog",
-        "adapter": "ckan",
+        "adapter": adapter,
         "name": "Primary catalog",
         "base_url": "https://catalog.example/api/3",
         "api_key_env": None,
         "timeout_seconds": 30,
         "priority": 1,
         "required": True,
+        "ckan_dialect": "ckan_action" if adapter == "ckan" else None,
+        "landing_base_url": "https://catalog.example" if adapter == "ckan" else None,
     }
     values.update(overrides)
     return values
@@ -277,6 +282,125 @@ def test_all_catalog_fields_are_required(field):
 
     assert [(issue.code, issue.path) for issue in issues] == [
         ("missing_field", f"catalogs[0].{field}")
+    ]
+
+
+@pytest.mark.parametrize(
+    "dialect",
+    ["ckan_action", "eu_hub", CKANDialect.CKAN_ACTION, CKANDialect.EU_HUB],
+)
+def test_ckan_dialects_are_accepted_and_normalized(dialect):
+    contract = _build(catalogs=[_catalog(ckan_dialect=dialect)])
+
+    assert contract.catalogs[0].ckan_dialect is CKANDialect(dialect)
+
+
+@pytest.mark.parametrize("field", ["ckan_dialect", "landing_base_url"])
+def test_ckan_catalogs_require_route_fields_in_raw_declarations(field):
+    catalog = _catalog()
+    del catalog[field]
+
+    issues = _issues(catalogs=[catalog])
+
+    assert [(issue.code, issue.path) for issue in issues] == [
+        ("missing_field", f"catalogs[0].{field}")
+    ]
+
+
+@pytest.mark.parametrize(
+    "dialect",
+    [None, "", " ", 1, True, UserString("ckan_action"), "CKAN_ACTION", "EU_HUB", "unknown"],
+)
+def test_ckan_dialect_must_be_one_exact_declared_value(dialect):
+    issues = _issues(catalogs=[_catalog(ckan_dialect=dialect)])
+
+    assert [(issue.code, issue.path) for issue in issues] == [
+        ("invalid_ckan_dialect", "catalogs[0].ckan_dialect")
+    ]
+
+
+def test_direct_catalog_construction_validates_and_normalizes_ckan_dialect():
+    catalog = CatalogContract(**_catalog(ckan_dialect="eu_hub"))
+
+    assert catalog.ckan_dialect is CKANDialect.EU_HUB
+
+    with pytest.raises(ProfileContractError) as error:
+        CatalogContract(**_catalog(ckan_dialect="EU_HUB"))
+
+    assert [(issue.code, issue.path) for issue in error.value.issues] == [
+        ("invalid_ckan_dialect", "catalog.ckan_dialect")
+    ]
+
+    with pytest.raises(ProfileContractError) as error:
+        CatalogContract(**_catalog(ckan_dialect=UserString("ckan_action")))
+
+    assert [(issue.code, issue.path) for issue in error.value.issues] == [
+        ("invalid_ckan_dialect", "catalog.ckan_dialect")
+    ]
+
+
+def test_ckan_landing_origin_may_differ_from_api_host_and_accept_root_slash():
+    contract = _build(
+        catalogs=[
+            _catalog(
+                base_url="https://api.public.example/api/3",
+                landing_base_url="https://catalog.public.example/",
+            )
+        ]
+    )
+
+    assert contract.catalogs[0].base_url == "https://api.public.example/api/3"
+    assert contract.catalogs[0].landing_base_url == "https://catalog.public.example/"
+
+
+@pytest.mark.parametrize(
+    ("landing_base_url", "code"),
+    [
+        (None, "invalid_type"),
+        (7, "invalid_type"),
+        ("", "invalid_url_scheme"),
+        ("ftp://catalog.example", "invalid_url_scheme"),
+        ("https:///missing-host", "invalid_url_host"),
+        ("https://user:secret@catalog.example", "embedded_credentials"),
+        ("https://catalog.example:444", "disallowed_port"),
+        ("https://catalog.example/dataset", "url_path_not_allowed"),
+        ("https://catalog.example?view=data", "url_query_not_allowed"),
+        ("https://catalog.example#data", "url_fragment_not_allowed"),
+    ],
+)
+def test_ckan_landing_url_must_be_a_safe_origin(landing_base_url, code):
+    issues = _issues(catalogs=[_catalog(landing_base_url=landing_base_url)])
+
+    assert any(
+        issue.code == code and issue.path == "catalogs[0].landing_base_url" for issue in issues
+    )
+
+
+@pytest.mark.parametrize("include_null_fields", [False, True])
+def test_non_ckan_catalogs_do_not_require_ckan_route_fields(include_null_fields):
+    catalog = _catalog(adapter="cbs")
+    if not include_null_fields:
+        catalog.pop("ckan_dialect")
+        catalog.pop("landing_base_url")
+
+    contract = _build(catalogs=[catalog])
+
+    assert contract.catalogs[0].ckan_dialect is None
+    assert contract.catalogs[0].landing_base_url is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ckan_dialect", "ckan_action"),
+        ("landing_base_url", "https://catalog.example"),
+    ],
+)
+def test_non_ckan_catalogs_reject_non_null_ckan_route_fields(field, value):
+    issues = _issues(catalogs=[_catalog(adapter="cbs", **{field: value})])
+
+    assert [(issue.code, issue.path) for issue in issues] == [
+        ("field_not_applicable", f"catalogs[0].{field}")
     ]
 
 
@@ -688,6 +812,22 @@ def test_new_url_and_missing_field_issues_have_stable_aggregate_order():
 
     assert [(issue.code, issue.path) for issue in first] == [
         ("missing_field", "catalogs[0].api_key_env"),
+        ("url_control_character", "catalogs[0].base_url"),
+    ]
+    assert first == second
+
+
+def test_ckan_route_issues_have_stable_aggregate_order():
+    catalog = _catalog(base_url="https://catalog.example/%0aheader")
+    del catalog["ckan_dialect"]
+    del catalog["landing_base_url"]
+
+    first = _issues(catalogs=[catalog])
+    second = _issues(catalogs=[catalog])
+
+    assert [(issue.code, issue.path) for issue in first] == [
+        ("missing_field", "catalogs[0].ckan_dialect"),
+        ("missing_field", "catalogs[0].landing_base_url"),
         ("url_control_character", "catalogs[0].base_url"),
     ]
     assert first == second

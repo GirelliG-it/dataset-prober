@@ -19,6 +19,7 @@ import yaml
 
 from dataset_prober.loading_policy import sanitize_url_text
 from dataset_prober.profile_contract import (
+    CKANDialect,
     ContractIssue,
     HostRule,
     ProfileContract,
@@ -80,6 +81,8 @@ class CatalogConfig:
     timeout_seconds: int
     priority: int
     required: bool
+    ckan_dialect: CKANDialect | None = None
+    landing_base_url: str | None = None
 
     @property
     def type(self) -> str:
@@ -211,6 +214,8 @@ class Profile:
                 timeout_seconds=catalog.timeout_seconds,
                 priority=catalog.priority,
                 required=catalog.required,
+                ckan_dialect=catalog.ckan_dialect,
+                landing_base_url=catalog.landing_base_url,
             )
             for catalog in self.contract.catalogs
         )
@@ -392,6 +397,8 @@ _CATALOG_FIELDS = {
     "timeout_seconds",
     "priority",
     "required",
+    "ckan_dialect",
+    "landing_base_url",
 }
 _BUDGET_FIELDS = {
     "max_searches",

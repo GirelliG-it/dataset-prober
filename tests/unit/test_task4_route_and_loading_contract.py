@@ -1091,7 +1091,14 @@ def csv_adapter_harness(monkeypatch, tmp_path, request):
     monkeypatch.setattr(base, "safe_download", _local_download(load_payload, source_url))
 
     if source == "ckan":
-        tool = ckan_tool.CKANTool({"name": "Offline CKAN"})
+        tool = ckan_tool.CKANTool(
+            {
+                "name": "Offline CKAN",
+                "base_url": "https://catalog.public.example/api/3",
+                "ckan_dialect": "ckan_action",
+                "landing_base_url": "https://catalog.public.example",
+            }
+        )
 
         def inspect_candidate():
             candidate = tool._package_to_result(
@@ -1329,7 +1336,14 @@ def test_ckan_api_error_and_unsupported_package_are_reason_coded(monkeypatch):
     response.json.return_value = {"success": False, "error": {"message": "Denied"}}
     transport = Mock(return_value=response)
     monkeypatch.setattr(ckan_tool, "safe_http_get", transport)
-    tool = ckan_tool.CKANTool({"name": "CKAN"})
+    tool = ckan_tool.CKANTool(
+        {
+            "name": "CKAN",
+            "base_url": "https://catalog.public.example/api/3",
+            "ckan_dialect": "ckan_action",
+            "landing_base_url": "https://catalog.public.example",
+        }
+    )
 
     error_result = tool.fetch("resource-a", sample_rows=2)
     response.json.return_value = {
@@ -1358,7 +1372,14 @@ def test_ckan_outer_fetch_failure_uses_failed_unverified_assessment(monkeypatch)
         "safe_http_get",
         Mock(side_effect=RuntimeError(f"Transport failed for {sensitive_url}")),
     )
-    tool = ckan_tool.CKANTool({"name": "CKAN"})
+    tool = ckan_tool.CKANTool(
+        {
+            "name": "CKAN",
+            "base_url": "https://catalog.public.example/api/3",
+            "ckan_dialect": "ckan_action",
+            "landing_base_url": "https://catalog.public.example",
+        }
+    )
 
     result = tool.fetch("resource-a", sample_rows=2)
 

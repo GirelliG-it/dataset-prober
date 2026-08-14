@@ -73,6 +73,20 @@ def fake_download(local_path: Path, *, source_url="https://public.example/data.c
     return download
 
 
+def ckan_route_config(
+    *,
+    base_url="https://catalog.public.example/api/3",
+    landing_base_url="https://catalog.public.example",
+    ckan_dialect="ckan_action",
+):
+    return {
+        "name": "CKAN",
+        "base_url": base_url,
+        "landing_base_url": landing_base_url,
+        "ckan_dialect": ckan_dialect,
+    }
+
+
 def authorize(dataset, adapter_identity, destination):
     from dataset_prober.loading_policy import LoadingPolicySession
 
@@ -155,15 +169,238 @@ def test_ckan_catalogue_and_resource_use_guarded_transport(monkeypatch, tmp_path
     monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get, raising=False)
     monkeypatch.setattr(ckan_tool, "safe_download", safe_fetch, raising=False)
     assert not hasattr(ckan_tool, "ensure_httpfs")
-    tool = ckan_tool.CKANTool({"name": "CKAN", "base_url": "https://catalog.public.example/api/3"})
+    tool = ckan_tool.CKANTool(ckan_route_config())
 
     found = tool.search("resource", max_results=1)
     result = tool.fetch(found[0].id, sample_rows=3)
 
     assert result.status == "probed"
+    assert result.url == "https://catalog.public.example/dataset/resource-a"
     assert result.download_url == resource_url
+    assert safe_get.call_args_list[0].args[0] == (
+        "https://catalog.public.example/api/3/action/package_search"
+    )
+    assert safe_get.call_args_list[1].args[0] == (
+        "https://catalog.public.example/api/3/action/package_show"
+    )
     assert safe_get.call_count == 2
     safe_fetch.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("config", "search_url", "show_url", "landing_url"),
+    [
+        (
+            ckan_route_config(),
+            "https://catalog.public.example/api/3/action/package_search",
+            "https://catalog.public.example/api/3/action/package_show",
+            "https://catalog.public.example/dataset/resource-a",
+        ),
+        (
+            ckan_route_config(
+                base_url="https://api.gsa.gov/technology/datagov/v3",
+                landing_base_url="https://catalog.data.gov",
+            ),
+            "https://api.gsa.gov/technology/datagov/v3/action/package_search",
+            "https://api.gsa.gov/technology/datagov/v3/action/package_show",
+            "https://catalog.data.gov/dataset/resource-a",
+        ),
+        (
+            ckan_route_config(
+                base_url="https://data.europa.eu/api/hub/search",
+                landing_base_url="https://data.europa.eu",
+                ckan_dialect="eu_hub",
+            ),
+            "https://data.europa.eu/api/hub/search/ckan/package_search",
+            "https://data.europa.eu/api/hub/search/ckan/package_show",
+            "https://data.europa.eu/data/datasets/resource-a",
+        ),
+        (
+            ckan_route_config(
+                base_url="https://catalog.public.example/api/3/",
+                landing_base_url="https://catalog.public.example/",
+            ),
+            "https://catalog.public.example/api/3/action/package_search",
+            "https://catalog.public.example/api/3/action/package_show",
+            "https://catalog.public.example/dataset/resource-a",
+        ),
+    ],
+)
+def test_ckan_dialects_construct_exact_api_and_landing_urls(
+    monkeypatch,
+    config,
+    search_url,
+    show_url,
+    landing_url,
+):
+    from dataset_prober.tools import ckan_tool
+
+    package = {
+        "name": "resource-a",
+        "id": "ignored-id",
+        "title": "Resource A",
+        "url": "https://package-controlled.example/wrong",
+        "resources": [],
+    }
+    safe_get = Mock(
+        side_effect=[
+            FakeHttpResult(data={"success": True, "result": {"results": [package]}}),
+            FakeHttpResult(data={"success": True, "result": package}),
+        ]
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(config)
+
+    search_result = tool.search("resource", max_results=1)[0]
+    fetch_result = tool.fetch("resource-a", sample_rows=1)
+
+    assert safe_get.call_args_list[0].args[0] == search_url
+    assert safe_get.call_args_list[1].args[0] == show_url
+    assert search_result.url == landing_url
+    assert fetch_result.url == landing_url
+    assert "package-controlled.example" not in search_result.url
+    assert "package-controlled.example" not in fetch_result.url
+
+
+@pytest.mark.parametrize(
+    ("package", "expected_id", "expected_url"),
+    [
+        (
+            {"name": "preferred-name", "id": "fallback-id"},
+            "preferred-name",
+            "https://catalog.public.example/dataset/preferred-name",
+        ),
+        (
+            {"name": " ", "id": "fallback-id"},
+            "fallback-id",
+            "https://catalog.public.example/dataset/fallback-id",
+        ),
+        (
+            {"name": 7, "id": "fallback-id"},
+            "fallback-id",
+            "https://catalog.public.example/dataset/fallback-id",
+        ),
+        (
+            {"name": "folder/na?me#part%é", "id": "fallback-id"},
+            "folder/na?me#part%é",
+            ("https://catalog.public.example/dataset/folder%2Fna%3Fme%23part%25%C3%A9"),
+        ),
+        (
+            {"name": " resource ", "id": "fallback-id"},
+            " resource ",
+            "https://catalog.public.example/dataset/%20resource%20",
+        ),
+    ],
+)
+def test_ckan_landing_uses_stable_opaque_identifier(package, expected_id, expected_url):
+    from dataset_prober.tools.ckan_tool import CKANTool
+
+    package = {
+        **package,
+        "title": "Resource",
+        "url": "https://package-controlled.example/wrong",
+        "resources": [],
+    }
+
+    result = CKANTool(ckan_route_config())._package_to_result(package)
+
+    assert result.id == expected_id
+    assert result.url == expected_url
+    assert "package-controlled.example" not in result.url
+
+
+@pytest.mark.parametrize(
+    "package",
+    [
+        {},
+        {"name": "", "id": ""},
+        {"name": ".", "id": "fallback-id"},
+        {"name": "..", "id": "fallback-id"},
+        {"id": "."},
+        {"name": " ", "id": ".."},
+    ],
+)
+def test_ckan_package_requires_non_special_stable_identifier(package):
+    from dataset_prober.tools.ckan_tool import CKANTool
+
+    with pytest.raises(ValueError, match="identifier"):
+        CKANTool(ckan_route_config())._package_to_result(package)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {
+            "base_url": "https://catalog.public.example/api/3",
+            "landing_base_url": "https://catalog.public.example",
+        },
+        ckan_route_config(ckan_dialect="unknown"),
+        ckan_route_config(base_url=None),
+        ckan_route_config(landing_base_url=None),
+    ],
+)
+def test_invalid_ckan_route_configuration_stops_before_guarded_transport(monkeypatch, config):
+    from dataset_prober.tools import ckan_tool
+
+    safe_get = Mock(side_effect=AssertionError("invalid route reached guarded transport"))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+
+    with pytest.raises(ValueError, match="route configuration"):
+        ckan_tool.CKANTool(config).search("resource", max_results=1)
+
+    safe_get.assert_not_called()
+
+
+def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
+    from dataclasses import replace
+
+    from dataset_prober.profile_contract import CKANDialect, build_profile_contract
+    from dataset_prober.tools import tools_for_profile
+    from dataset_prober.tools.ckan_tool import CKANTool
+
+    source_contract = test_profile.contract
+    contract = build_profile_contract(
+        profile_id="synthetic_ckan",
+        status="enabled",
+        reason=None,
+        catalogs=[
+            {
+                "catalog_id": "synthetic_ckan",
+                "adapter": "ckan",
+                "name": "Synthetic CKAN",
+                "base_url": "https://api.public.example/api/3",
+                "api_key_env": None,
+                "timeout_seconds": 10,
+                "priority": 1,
+                "required": True,
+                "ckan_dialect": "ckan_action",
+                "landing_base_url": "https://catalog.public.example",
+            }
+        ],
+        budget={
+            field: getattr(source_contract.budget, field)
+            for field in (
+                "max_searches",
+                "max_crawls",
+                "max_probes",
+                "max_tokens",
+                "timeout_minutes",
+                "sample_rows",
+                "download_timeout_seconds",
+            )
+        },
+        supported_adapters={"ckan"},
+        trusted_hosts=[],
+        blocked_hosts=[],
+    )
+    profile = replace(test_profile, contract=contract)
+
+    [tool] = tools_for_profile(profile)
+
+    assert isinstance(tool, CKANTool)
+    assert profile.catalogs[0].ckan_dialect is CKANDialect.CKAN_ACTION
+    assert tool.config["ckan_dialect"] is CKANDialect.CKAN_ACTION
+    assert tool.config["landing_base_url"] == "https://catalog.public.example"
 
 
 def test_cbs_catalogue_sample_and_bulk_pages_use_guarded_transport(monkeypatch, tmp_path):
