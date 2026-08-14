@@ -1,40 +1,30 @@
 # config/profiles/global.yaml
 #
-# Profile for global open data discovery.
-# No preset sources. Provider-side Tavily discovery is disabled by the v0.1
-# URL-safety policy, so this profile currently has no enabled search transport.
-# WARNING: This profile is slower and more expensive than targeted profiles.
+# Disabled descriptor for the promised global-discovery profile.
 
 name: Global Discovery
 description: >
-  Unrestricted global open data discovery using web search.
-  No preset sources — the agent discovers authoritative sources from your prompt.
+  Disabled because no supported and certified safe discovery transport is available.
 language: auto
 cost_warning: true
+status: disabled
+reason: >-
+  No supported and certified safe discovery transport is available to the Global profile
+  in v0.1.
 
 # Geographic scope
 scope:
   regions:
     - Worldwide — no geographic restriction
   instruction: >
-    You are operating as the Global Discovery profile.
-    Search worldwide without geographic restriction.
-    Evaluate source credibility using the credibility_signals in this profile.
-    Prefer sources with high credibility signals (.gov, .org, UN, World Bank, WHO).
+    This disabled descriptor records worldwide selection guidance. It exposes no discovery
+    transport and does not deterministically verify geographic relevance or credibility.
 
 warning_message: |
   ⚠️  Global Discovery Mode
 
-  This profile uses web search to find data sources worldwide.
-  It may take significantly longer and consume more API credits
-  than a targeted profile (Dutch Government, US Government, etc.).
-
-  Estimated additional cost: 2-5x compared to targeted profiles.
-
-  If your data is from a specific country or organization,
-  consider using a targeted profile instead for better results.
-
-  Continue with Global Discovery? (Y/n):
+  This profile is disabled because no supported and certified safe discovery transport is
+  available in v0.1.
 
 # Budget limits — more generous for global search
 budget:
@@ -52,15 +42,10 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 
-# No preset catalogs; opaque provider-side discovery is disabled for v0.1.
+# No active catalog or host policy is exposed while this profile is disabled.
 catalogs: []
-
-# No preset trusted domains — agent evaluates source credibility
-trusted_domains: []
-
-# Blocked sources — known problematic sites
-blocked_sources:
-  - denhaag.incijfers.nl
+trusted_hosts: []
+blocked_hosts: []
 
 # License preferences
 license_preference:
@@ -71,22 +56,3 @@ license_warn:
   - CC-BY-SA
 license_reject:
   - CC-BY-NC
-
-# Source credibility signals — agent uses these to evaluate found sources
-credibility_signals:
-  high:
-    - .gov
-    - .gov.uk
-    - .gov.au
-    - europa.eu
-    - un.org
-    - worldbank.org
-    - who.int
-    - oecd.org
-  medium:
-    - .org
-    - github.com
-    - kaggle.com
-  low:
-    - .com
-    - unknown

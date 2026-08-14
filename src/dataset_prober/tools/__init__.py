@@ -2,7 +2,7 @@
 src/tools/__init__.py
 
 Tool factory — instantiates the correct DataSourceTool implementation
-based on catalog type from profile configuration.
+based on the catalog adapter from validated profile configuration.
 
 Adding a new data source:
     1. Create a new tool class in src/tools/your_tool.py
@@ -19,8 +19,8 @@ from dataset_prober.tools.cbs_tool import CBSTool
 from dataset_prober.tools.ckan_tool import CKANTool
 from dataset_prober.tools.tavily_tool import TavilyTool
 
-# Registry mapping catalog type → tool class
-# Add new tool types here as new sources are implemented
+# Registry mapping adapter name → tool class
+# Add new adapters here as new sources are implemented
 TOOL_REGISTRY: dict[str, type[DataSourceTool]] = {
     "cbs": CBSTool,
     "ckan": CKANTool,
@@ -33,7 +33,7 @@ def create_tool(catalog_type: str, config: dict) -> DataSourceTool:
     Instantiate a tool by catalog type.
 
     Args:
-        catalog_type: Type string from profile YAML (e.g. "cbs", "ckan")
+        catalog_type: Validated adapter string from profile YAML (e.g. "cbs", "ckan")
         config: Full catalog config dict from profile
 
     Returns:
@@ -60,6 +60,7 @@ def tools_for_profile(profile) -> list[DataSourceTool]:
     Returns:
         List of DataSourceTool instances sorted by catalog priority
     """
+    profile.require_runnable()
     tools = []
     catalogs = sorted(profile.catalogs, key=lambda c: c.priority)
 
@@ -67,13 +68,20 @@ def tools_for_profile(profile) -> list[DataSourceTool]:
         try:
             # Build tool config from catalog + profile settings
             tool_config = {
-                **catalog.__dict__,
+                "catalog_id": catalog.catalog_id,
+                "adapter": catalog.adapter,
+                "name": catalog.name,
+                "base_url": catalog.base_url,
+                "api_key_env": catalog.api_key_env,
+                "timeout_seconds": catalog.timeout_seconds,
+                "priority": catalog.priority,
+                "required": catalog.required,
                 "trusted_domains": profile.trusted_domains,
                 "blocked_sources": profile.blocked_sources,
                 "sample_rows": profile.budget.sample_rows,
                 "download_timeout_seconds": profile.budget.download_timeout_seconds,
             }
-            tool = create_tool(catalog.type, tool_config)
+            tool = create_tool(catalog.adapter, tool_config)
 
             if tool.is_available():
                 tools.append(tool)
@@ -91,23 +99,6 @@ def tools_for_profile(profile) -> list[DataSourceTool]:
                 f"[red]Failed to initialize tool '{sanitize_url_text(catalog.name)}': "
                 f"{sanitize_url_text(str(e))}[/red]"
             )
-
-    # Always add Tavily as fallback if available
-    tavily_config = {
-        "name": "Web Search (Tavily)",
-        "type": "tavily",
-        "base_url": "",
-        "api_key_env": "TAVILY_API_KEY",
-        "timeout_seconds": 30,
-        "priority": 99,
-        "trusted_domains": profile.trusted_domains,
-        "blocked_sources": profile.blocked_sources,
-        "sample_rows": profile.budget.sample_rows,
-        "download_timeout_seconds": profile.budget.download_timeout_seconds,
-    }
-    tavily = TavilyTool(tavily_config)
-    if tavily.is_available():
-        tools.append(tavily)
 
     return tools
 

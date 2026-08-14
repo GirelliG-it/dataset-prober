@@ -19,6 +19,7 @@ Flow:
 """
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +30,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from dataset_prober.config_loader import get_anthropic_api_key
+from dataset_prober.config_loader import Profile, get_anthropic_api_key
+from dataset_prober.profile_contract import ProfileStatus
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
@@ -106,58 +108,50 @@ class InterpretationResult:
         ]
 
 
-# System prompt for the interpreter — no profile-specific content
-INTERPRETER_SYSTEM_PROMPT = """You are a data source profile classifier for an open data discovery agent.
+class ProfileInterpretationError(ValueError):
+    """The model response did not select valid profiles from the enabled set."""
 
-Your job is to analyze a user's dataset request and determine which data source profile(s) to use.
 
-AVAILABLE PROFILES:
-- dutch_government: Official Dutch government sources (CBS, overheid.nl, RIVM, RDW, Den Haag Open Data)
-  → Use when: prompt mentions Netherlands, Dutch, NL, gemeente, provincie, CBS, overheid, or Dutch place names
-- us_government: US federal government sources (data.gov, SSA, Census Bureau, BLS, CDC)
-  → Use when: prompt mentions United States, US, USA, American, federal, SSA, Census, or US agencies
-- eu_open_data: European Union sources (EU Open Data Portal, Eurostat)
-  → Use when: prompt mentions EU, European Union, Eurostat, or cross-European data
-- global: Unrestricted web search — no preset sources
-  → Use when: prompt is truly international, mentions multiple non-EU/NL/US regions,
-    or explicitly asks for global data
+def _required_value(values: Mapping[str, object], field: str, path: str) -> object:
+    if field not in values:
+        raise ProfileInterpretationError(f"{path}.{field} is required")
+    return values[field]
 
-MULTI-PROFILE RULES:
-- If a prompt clearly mentions multiple specific countries/regions, select multiple profiles
-- Example: "Dutch and US social security data" → [dutch_government, us_government]
-- Execute profiles in the order they appear in the prompt
 
-CONFIDENCE LEVELS:
-- high: Clear geographic or source indicators in the prompt
-- medium: Implied by context but not explicitly stated
-- low: Ambiguous — could match multiple profiles
+def _required_string(values: Mapping[str, object], field: str, path: str) -> str:
+    value = _required_value(values, field, path)
+    if not isinstance(value, str):
+        raise ProfileInterpretationError(f"{path}.{field} must be a string")
+    return value
 
-RESPONSE FORMAT:
-Respond ONLY with valid JSON. No preamble, no explanation, no markdown fences.
 
-{
-  "profiles": [
-    {
-      "profile_name": "dutch_government",
-      "display_name": "Dutch Government",
-      "confidence": "high",
-      "reason": "Prompt explicitly mentions Dutch government and CBS",
-      "execution_order": 1,
-      "keywords_detected": ["Dutch", "government", "CBS"],
-      "language_detected": "en",
-      "objective": {
-        "what_to_find": "One official Dutch government dataset about social security",
-        "geographic_scope": "Netherlands only",
-        "topic": "social security",
-        "freshness_rule": "updated within 12 months",
-        "download_requested": true
-      }
-    }
-  ],
-  "is_global": false,
-  "is_multi_profile": false,
-  "interpreter_reasoning": "Brief explanation of classification decision"
-}"""
+def _profile_lines(profiles: Sequence[Profile]) -> list[str]:
+    lines: list[str] = []
+    for profile in profiles:
+        regions = ", ".join(str(region) for region in profile.scope_regions) or "unspecified"
+        lines.append(
+            f"- {profile.profile_id}: {profile.name}; {profile.description}; "
+            f"selection guidance regions: {regions}"
+        )
+    return lines
+
+
+def _system_prompt(profiles: Sequence[Profile]) -> str:
+    rendered_profiles = "\n".join(_profile_lines(profiles))
+    return f"""You select data-source profiles for an open-data discovery agent.
+
+Select only from these enabled profiles supplied by trusted application code:
+{rendered_profiles}
+
+Profile descriptions and regions are selection guidance, not deterministic semantic verification.
+Never invent, rename, or substitute a profile. Select each profile at most once and
+preserve the requested execution order.
+
+Respond only with one valid JSON object, without markdown fences. It must contain a
+non-empty `profiles` array. Each item must contain `profile_name`, `confidence`, `reason`,
+`execution_order`, `keywords_detected`, `language_detected`, and an `objective` object with
+`what_to_find`, `geographic_scope`, `topic`, `freshness_rule`, and `download_requested`.
+The response may also contain `interpreter_reasoning`."""
 
 
 class PromptInterpreter:
@@ -168,15 +162,29 @@ class PromptInterpreter:
 
     def __init__(
         self,
-        available_profiles: list[str],
+        available_profiles: Sequence[Profile],
         client: anthropic.Anthropic | None = None,
     ):
         """
         Args:
-            available_profiles: List of profile names available on disk
+            available_profiles: Validated enabled profile descriptors
             client: Optional Anthropic client supplied by the caller
         """
-        self.available_profiles = available_profiles
+        profiles = tuple(available_profiles)
+        if not profiles:
+            raise ProfileInterpretationError("At least one enabled profile is required")
+        for profile in profiles:
+            if profile.status is not ProfileStatus.ENABLED:
+                raise ProfileInterpretationError(
+                    f"Profile '{profile.profile_id}' is not enabled for automatic selection"
+                )
+        profile_ids = [profile.profile_id for profile in profiles]
+        if len(set(profile_ids)) != len(profile_ids):
+            raise ProfileInterpretationError("Enabled profile descriptors must have unique IDs")
+
+        self.available_profiles = profiles
+        self._profiles_by_id = {profile.profile_id: profile for profile in profiles}
+        self.system_prompt = _system_prompt(profiles)
         self.client = (
             client if client is not None else anthropic.Anthropic(api_key=get_anthropic_api_key())
         )
@@ -193,19 +201,46 @@ class PromptInterpreter:
         """
         console.print("\n[dim]🔎 Interpreting your request...[/dim]")
 
-        # Add available profiles context to the user message
         user_message = f"""User request: {user_prompt}
 
-Available profiles on this system: {", ".join(self.available_profiles)}
+Enabled profiles supplied for this decision:
+{chr(10).join(_profile_lines(self.available_profiles))}
 
 Classify this request and return JSON."""
 
         response = self.client.messages.create(
             model=INTERPRETER_MODEL,
             max_tokens=1024,
-            system=INTERPRETER_SYSTEM_PROMPT,
+            system=self.system_prompt,
             messages=[{"role": "user", "content": user_message}],
         )
+
+        content = getattr(response, "content", None)
+        if (
+            not isinstance(content, Sequence)
+            or isinstance(content, (str, bytes, bytearray))
+            or not content
+        ):
+            raise ProfileInterpretationError(
+                "Interpreter response content must be a non-empty sequence of text blocks"
+            )
+
+        text_fragments: list[str] = []
+        for block in content:
+            if getattr(block, "type", None) != "text":
+                raise ProfileInterpretationError(
+                    "Interpreter response content must contain only text blocks"
+                )
+            text = getattr(block, "text", None)
+            if not isinstance(text, str):
+                raise ProfileInterpretationError(
+                    "Interpreter response content text must be a string"
+                )
+            text_fragments.append(text)
+
+        raw_text = "".join(text_fragments).strip()
+        if not raw_text:
+            raise ProfileInterpretationError("Interpreter response content must not be empty")
 
         # Extract token usage
         usage = response.usage
@@ -221,66 +256,105 @@ Classify this request and return JSON."""
         )
 
         # Parse response
-        raw_text = response.content[0].text.strip()
-
         try:
             data = json.loads(raw_text)
-        except json.JSONDecodeError:
-            # Fallback: try to extract JSON from response
-            import re
+        except json.JSONDecodeError as exc:
+            raise ProfileInterpretationError(
+                "Interpreter response must be one valid JSON object"
+            ) from exc
+        if not isinstance(data, Mapping):
+            raise ProfileInterpretationError("Interpreter response must be a JSON object")
+        interpreter_reasoning = data.get("interpreter_reasoning", "")
+        if not isinstance(interpreter_reasoning, str):
+            raise ProfileInterpretationError("interpreter_reasoning must be a string")
 
-            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-            if match:
-                data = json.loads(match.group())
-            else:
-                # Last resort: default to global
-                data = {
-                    "profiles": [
-                        {
-                            "profile_name": "global",
-                            "display_name": "Global Discovery",
-                            "confidence": "low",
-                            "reason": "Could not parse interpreter response — defaulting to global",
-                            "execution_order": 1,
-                            "keywords_detected": [],
-                            "language_detected": "en",
-                        }
-                    ],
-                    "is_global": True,
-                    "is_multi_profile": False,
-                    "interpreter_reasoning": "Fallback to global due to parse error",
-                }
+        raw_profiles = data.get("profiles")
+        if not isinstance(raw_profiles, list) or not raw_profiles:
+            raise ProfileInterpretationError(
+                "Interpreter response must select at least one enabled profile"
+            )
 
-        # Validate profiles exist
-        profiles = []
-        for p in data.get("profiles", []):
-            name = p.get("profile_name", "global")
-            if name not in self.available_profiles:
-                name = "global"
-            obj = p.get("objective", {})
+        profiles: list[ProfileSelection] = []
+        seen_names: set[str] = set()
+        seen_orders: set[int] = set()
+        for index, item in enumerate(raw_profiles):
+            item_path = f"profiles[{index}]"
+            if not isinstance(item, Mapping):
+                raise ProfileInterpretationError(f"{item_path} must be an object")
+            name = _required_string(item, "profile_name", item_path)
+            if not isinstance(name, str) or name not in self._profiles_by_id:
+                raise ProfileInterpretationError(
+                    f"{item_path} selects a profile outside the enabled set"
+                )
+            if name in seen_names:
+                raise ProfileInterpretationError("Interpreter response contains duplicate profiles")
+            seen_names.add(name)
+
+            execution_order = _required_value(item, "execution_order", item_path)
+            if (
+                isinstance(execution_order, bool)
+                or not isinstance(execution_order, int)
+                or execution_order <= 0
+                or execution_order in seen_orders
+            ):
+                raise ProfileInterpretationError(
+                    f"profiles[{index}].execution_order must be a unique positive integer"
+                )
+            seen_orders.add(execution_order)
+
+            confidence = _required_string(item, "confidence", item_path)
+            if confidence not in {"high", "medium", "low"}:
+                raise ProfileInterpretationError(
+                    f"{item_path}.confidence must be high, medium, or low"
+                )
+            reason = _required_string(item, "reason", item_path)
+            keywords_detected = _required_value(item, "keywords_detected", item_path)
+            if not isinstance(keywords_detected, list) or not all(
+                isinstance(keyword, str) for keyword in keywords_detected
+            ):
+                raise ProfileInterpretationError(
+                    f"{item_path}.keywords_detected must be a list of strings"
+                )
+            language_detected = _required_string(item, "language_detected", item_path)
+
+            obj = _required_value(item, "objective", item_path)
+            if not isinstance(obj, Mapping):
+                raise ProfileInterpretationError(f"{item_path}.objective must be an object")
+            objective_path = f"{item_path}.objective"
+            what_to_find = _required_string(obj, "what_to_find", objective_path)
+            geographic_scope = _required_string(obj, "geographic_scope", objective_path)
+            topic = _required_string(obj, "topic", objective_path)
+            freshness_rule = _required_string(obj, "freshness_rule", objective_path)
+            download_requested = _required_value(obj, "download_requested", objective_path)
+            if not isinstance(download_requested, bool):
+                raise ProfileInterpretationError(
+                    f"{objective_path}.download_requested must be a Boolean"
+                )
+
+            authoritative_profile = self._profiles_by_id[name]
             profiles.append(
                 ProfileSelection(
                     profile_name=name,
-                    display_name=p.get("display_name", name),
-                    confidence=p.get("confidence", "medium"),
-                    reason=p.get("reason", ""),
-                    execution_order=p.get("execution_order", 1),
-                    keywords_detected=p.get("keywords_detected", []),
-                    language_detected=p.get("language_detected", "en"),
-                    what_to_find=obj.get("what_to_find", ""),
-                    geographic_scope=obj.get("geographic_scope", ""),
-                    topic=obj.get("topic", ""),
-                    freshness_rule=obj.get("freshness_rule", ""),
-                    download_requested=obj.get("download_requested", False),
+                    display_name=authoritative_profile.name,
+                    confidence=confidence,
+                    reason=reason,
+                    execution_order=execution_order,
+                    keywords_detected=keywords_detected,
+                    language_detected=language_detected,
+                    what_to_find=what_to_find,
+                    geographic_scope=geographic_scope,
+                    topic=topic,
+                    freshness_rule=freshness_rule,
+                    download_requested=download_requested,
                 )
             )
 
         return InterpretationResult(
             profiles=sorted(profiles, key=lambda p: p.execution_order),
-            is_global=data.get("is_global", False),
-            is_multi_profile=data.get("is_multi_profile", False),
+            is_global=any(profile.profile_name == "global" for profile in profiles),
+            is_multi_profile=len(profiles) > 1,
             raw_prompt=user_prompt,
-            interpreter_reasoning=data.get("interpreter_reasoning", ""),
+            interpreter_reasoning=interpreter_reasoning,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
@@ -336,19 +410,6 @@ Classify this request and return JSON."""
             f"cost: {cost_str}[/dim]"
         )
 
-        # Global warning
-        if result.is_global:
-            # Find global profile's warning message
-            console.print()
-            console.print(
-                "[yellow]⚠️  Global Discovery Mode\n\n"
-                "This profile uses web search to find data sources worldwide.\n"
-                "It may take significantly longer and consume more API credits\n"
-                "than a targeted profile.\n\n"
-                "Consider using a targeted profile if your data is from a\n"
-                "specific country or organization.[/yellow]"
-            )
-
         # Low confidence warning
         low_confidence = [p for p in result.profiles if p.confidence == "low"]
         if low_confidence:
@@ -368,10 +429,10 @@ Classify this request and return JSON."""
         return choice in ("", "y", "yes")
 
     def _show_available_profiles(self):
-        """Show all available profiles."""
-        console.print("\n[bold]Available profiles:[/bold]")
-        for name in self.available_profiles:
-            console.print(f"  - {name}")
+        """Show the enabled profiles supplied to this interpreter."""
+        console.print("\n[bold]Enabled profiles:[/bold]")
+        for profile in self.available_profiles:
+            console.print(f"  - {profile.profile_id}: {profile.name}")
         console.print()
 
     def manual_select(self) -> list[str]:
@@ -385,12 +446,12 @@ Classify this request and return JSON."""
         self._show_available_profiles()
         raw = console.input("[cyan]Enter profile name(s) separated by commas: [/cyan]").strip()
 
-        selected = []
+        selected: list[str] = []
         for name in raw.split(","):
             name = name.strip()
-            if name in self.available_profiles:
+            if name in self._profiles_by_id:
                 selected.append(name)
             else:
                 console.print(f"[red]Unknown profile: {name} — skipping[/red]")
 
-        return selected if selected else ["global"]
+        return selected

@@ -241,23 +241,126 @@ def test_tavily_provider_side_search_and_extraction_are_disabled(monkeypatch):
     client.extract.assert_not_called()
 
 
-def test_agent_tool_schema_does_not_advertise_disabled_tavily_provider():
-    from types import SimpleNamespace
+def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
+    monkeypatch,
+    tmp_path,
+    test_profile,
+):
+    import json
+    from dataclasses import replace
 
-    from dataset_prober.dataset_agent import build_tool_definitions
+    from dataset_prober import dataset_agent
+    from dataset_prober.loading_policy import LoadingPolicySession
+    from dataset_prober.paths import AppPaths
+    from dataset_prober.profile_contract import build_profile_contract
 
-    profile = SimpleNamespace(
-        catalogs=[SimpleNamespace(type="ckan"), SimpleNamespace(type="tavily")]
+    contract = test_profile.contract
+    catalogs = [
+        {
+            "catalog_id": catalog.catalog_id,
+            "adapter": catalog.adapter,
+            "name": catalog.name,
+            "base_url": catalog.base_url,
+            "api_key_env": catalog.api_key_env,
+            "timeout_seconds": catalog.timeout_seconds,
+            "priority": catalog.priority,
+            "required": catalog.required,
+        }
+        for catalog in contract.catalogs
+    ]
+    catalogs.append(
+        {
+            "catalog_id": "disabled_tavily",
+            "adapter": "tavily",
+            "name": "Disabled Tavily discovery",
+            "base_url": "https://api.tavily.com",
+            "api_key_env": "TAVILY_API_KEY",
+            "timeout_seconds": 10,
+            "priority": 2,
+            "required": False,
+        }
+    )
+    mixed_contract = build_profile_contract(
+        profile_id="mixed_profile",
+        status="enabled",
+        reason=None,
+        catalogs=catalogs,
+        budget={
+            field: getattr(contract.budget, field)
+            for field in (
+                "max_searches",
+                "max_crawls",
+                "max_probes",
+                "max_tokens",
+                "timeout_minutes",
+                "sample_rows",
+                "download_timeout_seconds",
+            )
+        },
+        supported_adapters={"cbs", "ckan", "tavily"},
+        trusted_hosts=[
+            {
+                "hostname": rule.hostname,
+                "include_subdomains": rule.include_subdomains,
+            }
+            for rule in contract.trusted_hosts
+        ],
+        blocked_hosts=[
+            {
+                "hostname": rule.hostname,
+                "include_subdomains": rule.include_subdomains,
+            }
+            for rule in contract.blocked_hosts
+        ],
+    )
+    profile = replace(test_profile, contract=mixed_contract)
+    assert [catalog.adapter for catalog in profile.catalogs] == ["cbs", "tavily"]
+    assert [catalog.adapter for catalog in profile.agent_usable_catalogs] == ["cbs"]
+
+    local_tools = Mock(return_value=[])
+    monkeypatch.setattr(dataset_agent, "tools_for_profile", local_tools)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", Mock(return_value="offline-key"))
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
+    response = SimpleNamespace(
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text="Done")],
+        usage=usage,
+    )
+    client = Mock()
+    client.messages.create.return_value = response
+    anthropic_factory = Mock(return_value=client)
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", anthropic_factory)
+
+    dataset_agent.run_profile(
+        user_prompt="Find population data",
+        profile=profile,
+        budget=dataset_agent.Budget.from_profile(profile.budget),
+        loading_session=LoadingPolicySession(download_enabled=False),
+        session_cost=dataset_agent.SessionCost(),
+        cli_overrides={},
+        paths=AppPaths(output_dir=tmp_path),
     )
 
-    definitions = build_tool_definitions(profile)
+    call = client.messages.create.call_args.kwargs
+    system = call["system"].lower()
+    definitions = call["tools"]
+    rendered = json.dumps(definitions).lower()
 
+    assert "cbs" in system
+    assert "tavily" not in system
+    assert "disabled tavily discovery" not in system
+    assert "api.tavily.com" not in system
     for definition in definitions:
         source = definition["input_schema"]["properties"].get("source")
         if source:
+            assert source["enum"] == ["cbs"]
             assert "tavily" not in source["enum"]
             assert "tavily" not in source["description"].lower()
         assert "tavily" not in definition["description"].lower()
+    assert "disabled tavily discovery" not in rendered
+    client.messages.create.assert_called_once()
+    anthropic_factory.assert_called_once_with(api_key="offline-key")
+    local_tools.assert_called_once_with(profile)
 
 
 def test_tavily_direct_resource_uses_guarded_local_copy(monkeypatch, tmp_path):

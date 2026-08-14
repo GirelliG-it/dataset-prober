@@ -1,361 +1,409 @@
-"""
-tests/unit/test_prompt_interpreter.py
+"""Offline tests for fail-closed profile interpretation."""
 
-Tests for PromptInterpreter JSON parsing, fallback chains, and profile validation.
-All Claude API calls are mocked — we test YOUR code's response to Claude's output,
-not Claude itself.
-
-Key behaviors under test:
-1. Valid JSON → correct ProfileSelection
-2. Malformed JSON → graceful fallback to global
-3. Unknown profile names → remapped to global
-4. to_objectives() mapping correctness
-5. Multi-profile detection
-"""
+from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from copy import deepcopy
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+_MISSING_CONTENT = object()
 
 
-def make_mock_response(json_payload: dict):
-    """Helper to create a mock Anthropic response with given JSON payload."""
-    mock = MagicMock()
-    mock.content = [MagicMock(text=json.dumps(json_payload), type="text")]
-    mock.usage = MagicMock(input_tokens=500, output_tokens=200, cache_read_input_tokens=0)
-    return mock
+def make_mock_response(payload: object, *, raw_text: str | None = None):
+    """Return one Anthropic-shaped response without making an API call."""
+
+    response = MagicMock()
+    text = raw_text if raw_text is not None else json.dumps(payload)
+    response.content = [MagicMock(text=text, type="text")]
+    response.usage = MagicMock(
+        input_tokens=500,
+        output_tokens=200,
+        cache_read_input_tokens=25,
+    )
+    return response
 
 
-def make_interpreter(available_profiles=None):
-    """Create a PromptInterpreter with mock Anthropic client."""
+def selection(profile_id: str, execution_order: int = 1) -> dict[str, object]:
+    return {
+        "profile_name": profile_id,
+        "display_name": "Model-supplied display name",
+        "confidence": "high",
+        "reason": f"The request matches {profile_id}",
+        "execution_order": execution_order,
+        "keywords_detected": [profile_id],
+        "language_detected": "en",
+        "objective": {
+            "what_to_find": f"Data for {profile_id}",
+            "geographic_scope": "Configured catalog scope",
+            "topic": "population",
+            "freshness_rule": "within 12 months",
+            "download_requested": True,
+        },
+    }
+
+
+def response_for(*profile_ids: str) -> dict[str, object]:
+    return {
+        "profiles": [
+            selection(profile_id, index) for index, profile_id in enumerate(profile_ids, 1)
+        ],
+        "is_global": False,
+        "is_multi_profile": len(profile_ids) > 1,
+        "interpreter_reasoning": "Selection uses only the supplied enabled profiles.",
+    }
+
+
+@pytest.fixture
+def second_enabled_profile(test_profile):
+    from dataset_prober.profile_contract import build_profile_contract
+
+    contract = test_profile.contract
+    second_contract = build_profile_contract(
+        profile_id="second_profile",
+        status="enabled",
+        reason=None,
+        catalogs=[
+            {
+                "catalog_id": catalog.catalog_id,
+                "adapter": catalog.adapter,
+                "name": catalog.name,
+                "base_url": catalog.base_url,
+                "api_key_env": catalog.api_key_env,
+                "timeout_seconds": catalog.timeout_seconds,
+                "priority": catalog.priority,
+                "required": catalog.required,
+            }
+            for catalog in contract.catalogs
+        ],
+        budget={
+            field: getattr(contract.budget, field)
+            for field in (
+                "max_searches",
+                "max_crawls",
+                "max_probes",
+                "max_tokens",
+                "timeout_minutes",
+                "sample_rows",
+                "download_timeout_seconds",
+            )
+        },
+        supported_adapters={"cbs", "ckan", "tavily"},
+        trusted_hosts=[
+            {
+                "hostname": rule.hostname,
+                "include_subdomains": rule.include_subdomains,
+            }
+            for rule in contract.trusted_hosts
+        ],
+        blocked_hosts=[
+            {
+                "hostname": rule.hostname,
+                "include_subdomains": rule.include_subdomains,
+            }
+            for rule in contract.blocked_hosts
+        ],
+    )
+    return replace(
+        test_profile,
+        contract=second_contract,
+        name="Second Test Profile",
+        description="A second enabled test profile",
+    )
+
+
+def make_interpreter(profiles, response):
     from dataset_prober.prompt_interpreter import PromptInterpreter
 
-    if available_profiles is None:
-        available_profiles = [
-            "dutch_government",
-            "us_government",
-            "eu_open_data",
-            "global",
-        ]
-
-    mock_client = MagicMock()
-    return PromptInterpreter(available_profiles, client=mock_client)
+    client = MagicMock()
+    client.messages.create.return_value = response
+    return PromptInterpreter(profiles, client=client), client
 
 
-VALID_DUTCH_RESPONSE = {
-    "profiles": [
-        {
-            "profile_name": "dutch_government",
-            "display_name": "Dutch Government",
-            "confidence": "high",
-            "reason": "Prompt mentions Dutch government",
-            "execution_order": 1,
-            "keywords_detected": ["Dutch", "government"],
-            "language_detected": "en",
-            "objective": {
-                "what_to_find": "Dutch social security dataset",
-                "geographic_scope": "Netherlands only",
-                "topic": "social security",
-                "freshness_rule": "within 12 months",
-                "download_requested": True,
-            },
-        }
+def test_actual_model_arguments_contain_only_supplied_enabled_profiles(test_profile):
+    interpreter, client = make_interpreter(
+        [test_profile],
+        make_mock_response(response_for(test_profile.profile_id)),
+    )
+
+    interpreter.interpret("Find population observations")
+
+    call = client.messages.create.call_args.kwargs
+    system = call["system"]
+    user = call["messages"][0]["content"]
+    for rendered in (system, user):
+        assert test_profile.profile_id in rendered
+        assert test_profile.name in rendered
+        assert "dutch_government" not in rendered
+        assert "us_government" not in rendered
+        assert "eu_open_data" not in rendered
+        assert "global" not in rendered.lower()
+    assert "selection guidance" in system.lower()
+    assert "deterministic semantic verification" in system.lower()
+
+
+def test_empty_enabled_profiles_fail_before_client_construction_or_call():
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError, PromptInterpreter
+
+    client = MagicMock()
+    with pytest.raises(ProfileInterpretationError, match="enabled profile"):
+        PromptInterpreter([], client=client)
+
+    client.messages.create.assert_not_called()
+
+
+def test_manual_only_or_disabled_descriptors_are_not_accepted(global_profile):
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError, PromptInterpreter
+
+    with pytest.raises(ProfileInterpretationError, match="not enabled"):
+        PromptInterpreter([global_profile], client=MagicMock())
+
+
+@pytest.mark.parametrize(
+    "raw_text",
+    [
+        "not JSON",
+        '```json\n{"profiles": []}\n```',
+        '{"profiles": [}',
     ],
-    "is_global": False,
-    "is_multi_profile": False,
-    "interpreter_reasoning": "Clear Dutch government request",
-}
+)
+def test_malformed_json_fails_closed(raw_text, test_profile):
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
 
-VALID_MULTI_RESPONSE = {
-    "profiles": [
-        {
-            "profile_name": "dutch_government",
-            "display_name": "Dutch Government",
-            "confidence": "high",
-            "reason": "Dutch mentioned",
-            "execution_order": 1,
-            "keywords_detected": ["Dutch"],
-            "language_detected": "en",
-            "objective": {
-                "what_to_find": "Dutch dataset",
-                "geographic_scope": "Netherlands",
-                "topic": "social security",
-                "freshness_rule": "within 12 months",
-                "download_requested": True,
-            },
-        },
-        {
-            "profile_name": "us_government",
-            "display_name": "US Government",
-            "confidence": "high",
-            "reason": "US mentioned",
-            "execution_order": 2,
-            "keywords_detected": ["US"],
-            "language_detected": "en",
-            "objective": {
-                "what_to_find": "US dataset",
-                "geographic_scope": "United States",
-                "topic": "social security",
-                "freshness_rule": "within 12 months",
-                "download_requested": True,
-            },
-        },
-    ],
-    "is_global": False,
-    "is_multi_profile": True,
-    "interpreter_reasoning": "Both Dutch and US requested",
-}
+    interpreter, _client = make_interpreter(
+        [test_profile],
+        make_mock_response({}, raw_text=raw_text),
+    )
 
-GLOBAL_RESPONSE = {
-    "profiles": [
-        {
-            "profile_name": "global",
-            "display_name": "Global Discovery",
-            "confidence": "medium",
-            "reason": "No specific country mentioned",
-            "execution_order": 1,
-            "keywords_detected": [],
-            "language_detected": "en",
-            "objective": {
-                "what_to_find": "Any dataset",
-                "geographic_scope": "Worldwide",
-                "topic": "population",
-                "freshness_rule": "no restriction",
-                "download_requested": False,
-            },
-        }
-    ],
-    "is_global": True,
-    "is_multi_profile": False,
-    "interpreter_reasoning": "Global search requested",
-}
+    with pytest.raises(ProfileInterpretationError, match="valid JSON"):
+        interpreter.interpret("Find data")
 
 
-class TestValidJSONParsing:
-    """Tests for correct parsing of well-formed Claude responses."""
-
-    def test_single_profile_detected(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch social security data")
-        assert len(result.profiles) == 1
-        assert result.profiles[0].profile_name == "dutch_government"
-
-    def test_confidence_level_preserved(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch data")
-        assert result.profiles[0].confidence == "high"
-
-    def test_multi_profile_detected(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_MULTI_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch and US social security data")
-        assert len(result.profiles) == 2
-        assert result.is_multi_profile is True
-
-    def test_execution_order_preserved(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_MULTI_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch and US data")
-        assert result.profiles[0].execution_order == 1
-        assert result.profiles[1].execution_order == 2
-
-    def test_profiles_sorted_by_execution_order(self):
-        interpreter = make_interpreter()
-        # Reverse the order in the response
-        reversed_response = {
-            **VALID_MULTI_RESPONSE,
-            "profiles": list(reversed(VALID_MULTI_RESPONSE["profiles"])),
-        }
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(reversed_response),
-        ):
-            result = interpreter.interpret("Find data")
-        assert result.profiles[0].execution_order < result.profiles[1].execution_order
-
-    def test_global_flag_set(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages, "create", return_value=make_mock_response(GLOBAL_RESPONSE)
-        ):
-            result = interpreter.interpret("Find any population data worldwide")
-        assert result.is_global is True
-
-    def test_cost_tracked(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find data")
-        assert result.cost_usd > 0
-        assert result.input_tokens > 0
-        assert result.output_tokens > 0
-
-
-class TestObjectiveExtraction:
-    """Tests for per-profile objective extraction from interpreter response."""
-
-    def test_what_to_find_extracted(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch social security data")
-        assert result.profiles[0].what_to_find == "Dutch social security dataset"
-
-    def test_geographic_scope_extracted(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch data")
-        assert result.profiles[0].geographic_scope == "Netherlands only"
-
-    def test_freshness_rule_extracted(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch data")
-        assert result.profiles[0].freshness_rule == "within 12 months"
-
-    def test_download_requested_extracted(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find and download Dutch data")
-        assert result.profiles[0].download_requested is True
-
-
-class TestFallbackBehavior:
-    """
-    Tests for fallback when Claude returns malformed or unexpected output.
-    These are the edge cases most likely to fail silently in production.
-    """
-
-    def test_malformed_json_falls_back_to_global(self):
-        interpreter = make_interpreter()
-        mock = MagicMock()
-        mock.content = [MagicMock(text="This is not JSON at all", type="text")]
-        mock.usage = MagicMock(input_tokens=100, output_tokens=50, cache_read_input_tokens=0)
-        with patch.object(interpreter.client.messages, "create", return_value=mock):
-            result = interpreter.interpret("Find data")
-        assert len(result.profiles) == 1
-        assert result.profiles[0].profile_name == "global"
-
-    def test_json_in_markdown_fences_parsed(self):
-        """Claude sometimes wraps JSON in ```json ... ``` — must handle gracefully."""
-        interpreter = make_interpreter()
-        wrapped = f"```json\n{json.dumps(VALID_DUTCH_RESPONSE)}\n```"
-        mock = MagicMock()
-        mock.content = [MagicMock(text=wrapped, type="text")]
-        mock.usage = MagicMock(input_tokens=100, output_tokens=50, cache_read_input_tokens=0)
-        with patch.object(interpreter.client.messages, "create", return_value=mock):
-            result = interpreter.interpret("Find Dutch data")
-        # Should either parse correctly or fall back gracefully — not crash
-        assert len(result.profiles) >= 1
-
-    def test_unknown_profile_name_remapped_to_global(self):
-        """Claude hallucinates 'netherlands_data' — must remap to global."""
-        interpreter = make_interpreter()
-        bad_profile_response = {
-            **VALID_DUTCH_RESPONSE,
-            "profiles": [
-                {
-                    **VALID_DUTCH_RESPONSE["profiles"][0],
-                    "profile_name": "netherlands_data",  # doesn't exist
-                }
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(_MISSING_CONTENT, id="missing-content"),
+        pytest.param(None, id="none-content"),
+        pytest.param("{}", id="string-content"),
+        pytest.param(b"{}", id="bytes-content"),
+        pytest.param(bytearray(b"{}"), id="bytearray-content"),
+        pytest.param(42, id="non-sequence-content"),
+        pytest.param([], id="empty-content"),
+        pytest.param(
+            [SimpleNamespace(type="tool_use", text="ignored")],
+            id="non-text-block",
+        ),
+        pytest.param([SimpleNamespace(text="{}")], id="missing-block-type"),
+        pytest.param([SimpleNamespace(type="text")], id="missing-text"),
+        pytest.param([SimpleNamespace(type="text", text=None)], id="none-text"),
+        pytest.param([SimpleNamespace(type="text", text=7)], id="non-string-text"),
+        pytest.param([SimpleNamespace(type="text", text="")], id="empty-text"),
+        pytest.param([SimpleNamespace(type="text", text=" \n\t")], id="whitespace-text"),
+        pytest.param(
+            [
+                SimpleNamespace(type="text", text="{}"),
+                SimpleNamespace(type="tool_use", text="ignored"),
             ],
-        }
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(bad_profile_response),
-        ):
-            result = interpreter.interpret("Find Dutch data")
-        assert result.profiles[0].profile_name == "global"
+            id="text-then-non-text",
+        ),
+        pytest.param(
+            [
+                SimpleNamespace(type="tool_use", text="ignored"),
+                SimpleNamespace(type="text", text="{}"),
+            ],
+            id="non-text-then-text",
+        ),
+    ],
+)
+def test_malformed_anthropic_content_envelopes_fail_closed(content, test_profile):
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
 
-    def test_empty_profiles_list_falls_back(self):
-        interpreter = make_interpreter()
-        empty_response = {
-            "profiles": [],
-            "is_global": False,
-            "is_multi_profile": False,
-            "interpreter_reasoning": "",
-        }
-        with patch.object(
-            interpreter.client.messages, "create", return_value=make_mock_response(empty_response)
-        ):
-            result = interpreter.interpret("Find data")
-        # Should not crash — either returns empty or falls back
-        assert isinstance(result.profiles, list)
+    response = SimpleNamespace()
+    if content is not _MISSING_CONTENT:
+        response.content = content
+    interpreter, _client = make_interpreter([test_profile], response)
+
+    with pytest.raises(ProfileInterpretationError, match="content"):
+        interpreter.interpret("Find data")
 
 
-class TestToObjectives:
-    """Tests for InterpretationResult.to_objectives() mapping."""
+def test_fragmented_text_content_is_concatenated_before_json_parsing(test_profile):
+    payload = json.dumps(response_for(test_profile.profile_id))
+    split_at = len(payload) // 2
+    response = make_mock_response({})
+    response.content = [
+        SimpleNamespace(type="text", text=payload[:split_at]),
+        SimpleNamespace(type="text", text=payload[split_at:]),
+    ]
+    interpreter, client = make_interpreter([test_profile], response)
 
-    def test_converts_to_profile_objectives(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch data")
-        objectives = result.to_objectives()
-        assert len(objectives) == 1
-        assert objectives[0].profile_name == "dutch_government"
+    result = interpreter.interpret("Find data")
 
-    def test_objective_preserves_what_to_find(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_DUTCH_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch data")
-        objectives = result.to_objectives()
-        assert objectives[0].what_to_find == "Dutch social security dataset"
+    assert result.profile_names == [test_profile.profile_id]
+    client.messages.create.assert_called_once()
 
-    def test_multi_profile_produces_multiple_objectives(self):
-        interpreter = make_interpreter()
-        with patch.object(
-            interpreter.client.messages,
-            "create",
-            return_value=make_mock_response(VALID_MULTI_RESPONSE),
-        ):
-            result = interpreter.interpret("Find Dutch and US data")
-        objectives = result.to_objectives()
-        assert len(objectives) == 2
-        profile_names = [o.profile_name for o in objectives]
-        assert "dutch_government" in profile_names
-        assert "us_government" in profile_names
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"profiles": []},
+        {"profiles": None},
+        {"profiles": [selection("unknown_profile")]},
+        {
+            "profiles": [
+                selection("test_profile", 1),
+                selection("test_profile", 2),
+            ]
+        },
+    ],
+)
+def test_missing_empty_unknown_and_duplicate_selections_fail_closed(payload, test_profile):
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
+
+    interpreter, _client = make_interpreter(
+        [test_profile],
+        make_mock_response(payload),
+    )
+
+    with pytest.raises(ProfileInterpretationError):
+        interpreter.interpret("Find data")
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("field_path", "value"),
+    [
+        (("profile_name",), _MISSING),
+        (("profile_name",), 1),
+        (("confidence",), _MISSING),
+        (("confidence",), 1),
+        (("confidence",), "certain"),
+        (("reason",), _MISSING),
+        (("reason",), None),
+        (("execution_order",), _MISSING),
+        (("execution_order",), "1"),
+        (("execution_order",), True),
+        (("keywords_detected",), _MISSING),
+        (("keywords_detected",), "population"),
+        (("keywords_detected",), ["population", 7]),
+        (("language_detected",), _MISSING),
+        (("language_detected",), 7),
+        (("objective",), _MISSING),
+        (("objective",), []),
+        (("objective", "what_to_find"), _MISSING),
+        (("objective", "what_to_find"), 7),
+        (("objective", "geographic_scope"), _MISSING),
+        (("objective", "geographic_scope"), False),
+        (("objective", "topic"), _MISSING),
+        (("objective", "topic"), ["population"]),
+        (("objective", "freshness_rule"), _MISSING),
+        (("objective", "freshness_rule"), 30),
+        (("objective", "download_requested"), _MISSING),
+        (("objective", "download_requested"), "yes"),
+        (("interpreter_reasoning",), 42),
+    ],
+)
+def test_required_model_fields_are_validated_without_coercion(
+    field_path,
+    value,
+    test_profile,
+):
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
+
+    payload = deepcopy(response_for(test_profile.profile_id))
+    target = payload
+    if field_path[0] != "interpreter_reasoning":
+        target = payload["profiles"][0]
+    for component in field_path[:-1]:
+        target = target[component]
+    if value is _MISSING:
+        target.pop(field_path[-1])
+    else:
+        target[field_path[-1]] = value
+
+    interpreter, _client = make_interpreter(
+        [test_profile],
+        make_mock_response(payload),
+    )
+
+    with pytest.raises(ProfileInterpretationError):
+        interpreter.interpret("Find data")
+
+
+def test_valid_single_profile_preserves_objective_and_cost(test_profile):
+    interpreter, _client = make_interpreter(
+        [test_profile],
+        make_mock_response(response_for(test_profile.profile_id)),
+    )
+
+    result = interpreter.interpret("Find data")
+
+    assert result.profile_names == [test_profile.profile_id]
+    assert result.profiles[0].display_name == test_profile.name
+    assert result.profiles[0].what_to_find == f"Data for {test_profile.profile_id}"
+    assert result.profiles[0].download_requested is True
+    assert result.input_tokens == 500
+    assert result.output_tokens == 200
+    assert result.cache_read_tokens == 25
+    assert result.cost_usd > 0
+    objective = result.to_objectives()[0]
+    assert objective.profile_name == test_profile.profile_id
+    assert objective.what_to_find == f"Data for {test_profile.profile_id}"
+
+
+def test_confirmation_has_no_hard_coded_global_web_search_claim(
+    monkeypatch,
+    test_profile,
+):
+    from dataset_prober import prompt_interpreter
+
+    interpreter, _client = make_interpreter(
+        [test_profile],
+        make_mock_response(response_for(test_profile.profile_id)),
+    )
+    result = interpreter.interpret("Find data")
+    result.is_global = True
+    monkeypatch.setattr(prompt_interpreter.console, "input", MagicMock(return_value="n"))
+
+    with prompt_interpreter.console.capture() as capture:
+        assert interpreter.present_and_confirm(result) is False
+
+    rendered = capture.get().lower()
+    assert "uses web search" not in rendered
+    assert "worldwide" not in rendered
+
+
+def test_valid_multi_profile_response_preserves_order_and_objectives(
+    test_profile,
+    second_enabled_profile,
+):
+    payload = response_for(test_profile.profile_id, second_enabled_profile.profile_id)
+    payload["profiles"] = list(reversed(payload["profiles"]))
+    interpreter, _client = make_interpreter(
+        [test_profile, second_enabled_profile],
+        make_mock_response(payload),
+    )
+
+    result = interpreter.interpret("Find data from both configured scopes")
+
+    assert result.profile_names == [test_profile.profile_id, second_enabled_profile.profile_id]
+    assert result.is_multi_profile is True
+    assert [objective.execution_order for objective in result.to_objectives()] == [1, 2]
+
+
+def test_model_cannot_expand_the_trusted_enabled_set(test_profile):
+    payload = response_for(test_profile.profile_id, "global")
+    interpreter, client = make_interpreter([test_profile], make_mock_response(payload))
+
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
+
+    with pytest.raises(ProfileInterpretationError, match="outside the enabled set"):
+        interpreter.interpret("Find data")
+
+    client.messages.create.assert_called_once()

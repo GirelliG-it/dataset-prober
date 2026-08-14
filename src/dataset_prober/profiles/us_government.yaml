@@ -1,12 +1,15 @@
 # config/profiles/us_government.yaml
 #
-# Profile for US federal government open data discovery.
-# Sources: data.gov (CKAN), SSA, Census Bureau, BLS, CDC.
+# Disabled descriptor for the promised US government profile.
 
 name: US Government
-description: Official US federal government open data sources
+description: Disabled pending a bounded Data.gov v4 adapter and certification
 language: en
 cost_warning: false
+status: disabled
+reason: >-
+  Data.gov v4 requires a source-specific adapter; the legacy v3 CKAN route is not the
+  normal v0.1 release target.
 
 # Geographic scope
 scope:
@@ -16,16 +19,8 @@ scope:
     - US states and territories
     - US counties and municipalities
   instruction: >
-    You are operating as the US Government profile.
-    ONLY search for data from US federal or state government sources.
-    DO NOT attempt to find data from Dutch, EU, or other non-US sources.
-    If the user's prompt requests data from multiple countries,
-    you handle ONLY the US portion — other profiles handle the rest.
-    For CBS, overheid.nl, or other Dutch sources — ignore them in this profile.
-    IMPORTANT: ssa.gov is blocked — do NOT probe ssa.gov URLs.
-    For social security data, use these alternative agencies instead:
-    Census Bureau (data.census.gov), CMS (data.cms.gov),
-    BLS (bls.gov), HHS (hhs.gov), or DOL (data.dol.gov).
+    This disabled descriptor records intended US geographic selection guidance. It does
+    not expose a catalog transport and does not deterministically verify geography.
 
 # Budget limits
 budget:
@@ -43,35 +38,10 @@ pricing:
   output_per_million: 15.00
   cache_read_per_million: 0.30
 
-# Catalog sources
-catalogs:
-  - name: Data.gov
-    type: ckan
-    base_url: https://api.gsa.gov/technology/datagov/v3
-    api_key_env: DATAGOV_API_KEY
-    timeout_seconds: 30
-    priority: 1
-
-# Trusted domains
-# Note: ssa.gov is blocked (server-side access controls) — use alternative agencies below
-trusted_domains:
-  - .gov
-  - data.gov
-  - census.gov
-  - data.census.gov
-  - bls.gov
-  - cdc.gov
-  - data.cdc.gov
-  - hhs.gov
-  - data.cms.gov
-  - cms.gov
-  - dol.gov
-  - data.dol.gov
-
-# Blocked sources
-# ssa.gov blocks all server-side HTTP access — agent must use alternative agencies
-blocked_sources:
-  - ssa.gov
+# No active catalog or host policy is exposed while this profile is disabled.
+catalogs: []
+trusted_hosts: []
+blocked_hosts: []
 
 # License preferences
 # US federal government works are public domain by default (17 U.S.C. § 105)
