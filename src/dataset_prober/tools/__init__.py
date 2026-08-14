@@ -76,6 +76,8 @@ def tools_for_profile(profile) -> list[DataSourceTool]:
                 "timeout_seconds": catalog.timeout_seconds,
                 "priority": catalog.priority,
                 "required": catalog.required,
+                "ckan_dialect": catalog.ckan_dialect,
+                "landing_base_url": catalog.landing_base_url,
                 "trusted_domains": profile.trusted_domains,
                 "blocked_sources": profile.blocked_sources,
                 "sample_rows": profile.budget.sample_rows,

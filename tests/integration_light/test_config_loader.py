@@ -6,6 +6,59 @@ No network calls — tests only the file loading and validation logic.
 """
 
 import pytest
+import yaml
+
+
+def _write_ckan_profile(tmp_path, *, dialect="ckan_action", extra_catalog_fields=None):
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    catalog = {
+        "catalog_id": "synthetic_ckan",
+        "adapter": "ckan",
+        "name": "Synthetic CKAN",
+        "base_url": "https://api.public.example/api/3",
+        "api_key_env": None,
+        "timeout_seconds": 10,
+        "priority": 1,
+        "required": True,
+        "ckan_dialect": dialect,
+        "landing_base_url": "https://catalog.public.example",
+    }
+    catalog.update(extra_catalog_fields or {})
+    raw = {
+        "name": "Synthetic CKAN Profile",
+        "description": "Offline CKAN route contract",
+        "language": "en",
+        "cost_warning": False,
+        "status": "enabled",
+        "reason": None,
+        "scope": {"regions": ["Synthetic"], "instruction": "Synthetic only."},
+        "budget": {
+            "max_searches": 1,
+            "max_crawls": 1,
+            "max_probes": 1,
+            "max_tokens": 512,
+            "timeout_minutes": 1,
+            "sample_rows": 2,
+            "download_timeout_seconds": 30,
+        },
+        "pricing": {
+            "input_per_million": 3.0,
+            "output_per_million": 15.0,
+            "cache_read_per_million": 0.3,
+        },
+        "catalogs": [catalog],
+        "trusted_hosts": [],
+        "blocked_hosts": [],
+        "license_preference": ["CC0"],
+        "license_warn": [],
+        "license_reject": [],
+    }
+    (profiles / "synthetic_ckan.yaml").write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    return profiles
 
 
 class TestConfigLoaderConfiguredProfileIds:
@@ -190,3 +243,38 @@ class TestProfileMethods:
     def test_system_prompt_context_contains_license_rules(self, test_profile):
         ctx = test_profile.system_prompt_context()
         assert "LICENSE RULES" in ctx
+
+
+@pytest.mark.parametrize("dialect", ["ckan_action", "eu_hub"])
+def test_ckan_route_fields_remain_typed_without_contract_runtime_divergence(tmp_path, dialect):
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.profile_contract import CKANDialect
+
+    profile = ConfigLoader(_write_ckan_profile(tmp_path, dialect=dialect)).load("synthetic_ckan")
+    contract_catalog = profile.contract.catalogs[0]
+    runtime_catalog = profile.catalogs[0]
+
+    assert contract_catalog.ckan_dialect is CKANDialect(dialect)
+    assert runtime_catalog.ckan_dialect is contract_catalog.ckan_dialect
+    assert runtime_catalog.landing_base_url == contract_catalog.landing_base_url
+    assert runtime_catalog.landing_base_url == "https://catalog.public.example"
+
+
+@pytest.mark.parametrize("field", ["search_path", "show_path", "landing_template"])
+def test_ckan_arbitrary_route_and_template_fields_remain_rejected(tmp_path, field):
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.profile_contract import ProfileContractError
+
+    loader = ConfigLoader(
+        _write_ckan_profile(
+            tmp_path,
+            extra_catalog_fields={field: "arbitrary/value"},
+        )
+    )
+
+    with pytest.raises(ProfileContractError) as error:
+        loader.load("synthetic_ckan")
+
+    assert ("unknown_field", f"catalogs[0].{field}") in [
+        (issue.code, issue.path) for issue in error.value.issues
+    ]

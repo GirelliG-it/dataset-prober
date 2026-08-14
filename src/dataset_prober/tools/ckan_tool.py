@@ -9,6 +9,7 @@ CKAN API reference: https://docs.ckan.org/en/latest/api/
 """
 
 from pathlib import Path
+from urllib.parse import quote
 
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
@@ -19,6 +20,7 @@ from dataset_prober.loading_policy import (
     loader_for_resource,
     sanitize_url_text,
 )
+from dataset_prober.profile_contract import CKANDialect
 from dataset_prober.resource_classification import (
     InspectionOutcome,
     error_response_assessment,
@@ -46,6 +48,19 @@ LICENSE_MAP = {
     "other-pd": "CC0",
     "notspecified": "unknown",
     "other-license-specified": "other",
+}
+
+_CKAN_DIALECT_ROUTES: dict[CKANDialect, tuple[str, str, str]] = {
+    CKANDialect.CKAN_ACTION: (
+        "action/package_search",
+        "action/package_show",
+        "dataset",
+    ),
+    CKANDialect.EU_HUB: (
+        "ckan/package_search",
+        "ckan/package_show",
+        "data/datasets",
+    ),
 }
 
 
@@ -83,8 +98,46 @@ class CKANTool(DataSourceTool):
                 headers["x-api-key"] = key
         return headers
 
-    def _base_url(self) -> str:
-        return self.config.get("base_url", "").rstrip("/")
+    def _route_configuration(self) -> tuple[str, str, tuple[str, str, str]]:
+        """Return one validated closed CKAN route shape without network access."""
+
+        raw_dialect = self.config.get("ckan_dialect")
+        try:
+            dialect = CKANDialect(raw_dialect)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("CKAN route configuration requires a supported ckan_dialect") from exc
+
+        api_base = self.config.get("base_url")
+        landing_base = self.config.get("landing_base_url")
+        if (
+            not isinstance(api_base, str)
+            or not api_base.strip()
+            or api_base != api_base.strip()
+            or not isinstance(landing_base, str)
+            or not landing_base.strip()
+            or landing_base != landing_base.strip()
+        ):
+            raise ValueError("CKAN route configuration requires API and landing base URLs")
+
+        return (
+            api_base.rstrip("/"),
+            landing_base.rstrip("/"),
+            _CKAN_DIALECT_ROUTES[dialect],
+        )
+
+    @staticmethod
+    def _package_identifier(pkg: dict) -> str:
+        """Select and validate one stable CKAN identifier for identity and landing URLs."""
+
+        identifier = None
+        for field in ("name", "id"):
+            value = pkg.get(field)
+            if isinstance(value, str) and value.strip():
+                identifier = value
+                break
+        if identifier is None or identifier in {".", ".."}:
+            raise ValueError("CKAN package requires a non-special stable identifier")
+        return identifier
 
     def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
         """
@@ -92,7 +145,10 @@ class CKANTool(DataSourceTool):
         Filters for CSV resources only.
         """
         timeout = self.config.get("timeout_seconds", 30)
-        url = f"{self._base_url()}/action/package_search"
+        api_base, _landing_base, (search_path, _show_path, _landing_path) = (
+            self._route_configuration()
+        )
+        url = f"{api_base}/{search_path}"
 
         try:
             resp = safe_http_get(
@@ -137,7 +193,10 @@ class CKANTool(DataSourceTool):
         Fetch full metadata for a CKAN package and probe its CSV resource.
         """
         timeout = self.config.get("timeout_seconds", 30)
-        url = f"{self._base_url()}/action/package_show"
+        api_base, _landing_base, (_search_path, show_path, _landing_path) = (
+            self._route_configuration()
+        )
+        url = f"{api_base}/{show_path}"
 
         try:
             resp = safe_http_get(
@@ -240,8 +299,14 @@ class CKANTool(DataSourceTool):
         with authorization.activate(actual_claims) as permit:
             return download_csv_dataset(dataset, self.adapter_identity, destination, permit)
 
-    def _package_to_result(self, pkg: dict) -> DatasetResult | None:
+    def _package_to_result(self, pkg: dict) -> DatasetResult:
         """Convert a CKAN package dict to a DatasetResult."""
+        identifier = self._package_identifier(pkg)
+        _api_base, landing_base, (_search_path, _show_path, landing_path) = (
+            self._route_configuration()
+        )
+        landing_url = f"{landing_base}/{landing_path}/{quote(identifier, safe='')}"
+
         # Find best CSV resource
         resources = pkg.get("resources", [])
         csv_resource = None
@@ -277,12 +342,12 @@ class CKANTool(DataSourceTool):
             resource_format = "CSV" if catalog_format in ("CSV", "TEXT/CSV") else catalog_format
 
         return DatasetResult(
-            id=pkg.get("name", pkg.get("id", "")),
+            id=identifier,
             title=pkg.get("title", ""),
             description=description,
             source=self.source_type,
             source_name=f"{self.source_name} ({org_name})" if org_name else self.source_name,
-            url=f"https://catalog.data.gov/dataset/{pkg.get('name', '')}",
+            url=landing_url,
             download_url=csv_resource.get("url") if csv_resource else None,
             format=resource_format,
             modified=modified_display,
