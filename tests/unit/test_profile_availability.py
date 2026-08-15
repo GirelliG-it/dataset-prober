@@ -92,6 +92,19 @@ def write_profile(tmp_path, raw: object, profile_id: str = "synthetic_profile"):
     return profiles
 
 
+def resolve_with_fake_tools(profile):
+    """Resolve a validated test profile through deterministic local fake adapters."""
+    from dataset_prober.profile_resolution import resolve_profile
+
+    registry = {}
+    for catalog in profile.agent_usable_catalogs:
+        tool = Mock()
+        tool.source_type = catalog.adapter
+        tool.is_available.return_value = True
+        registry[catalog.adapter] = Mock(return_value=tool)
+    return resolve_profile(profile, registry=registry)
+
+
 def test_bundled_profiles_have_truthful_lifecycle_and_catalogs():
     from dataset_prober.config_loader import ConfigLoader
 
@@ -325,13 +338,14 @@ def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp
     from dataset_prober.config_loader import ConfigLoader
     from dataset_prober.loading_policy import LoadingPolicySession
     from dataset_prober.paths import AppPaths
+    from dataset_prober.profile_resolution import resolve_profile
+    from dataset_prober.tools.cbs_tool import CBSTool
 
     profile = ConfigLoader().load("dutch_government")
     assert [catalog.adapter for catalog in profile.catalogs] == ["cbs"]
     assert [catalog.adapter for catalog in profile.agent_usable_catalogs] == ["cbs"]
 
-    local_tools = Mock(return_value=[])
-    monkeypatch.setattr(dataset_agent, "tools_for_profile", local_tools)
+    resolved = resolve_profile(profile, registry={"cbs": CBSTool})
     monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", Mock(return_value="offline-key"))
     usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
     response = SimpleNamespace(
@@ -346,7 +360,7 @@ def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp
 
     dataset_agent.run_profile(
         user_prompt="Find Dutch population data",
-        profile=profile,
+        resolved_profile=resolved,
         budget=dataset_agent.Budget.from_profile(profile.budget),
         loading_session=LoadingPolicySession(download_enabled=False),
         session_cost=dataset_agent.SessionCost(),
@@ -370,40 +384,73 @@ def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp
     assert "cbs" in system
     client.messages.create.assert_called_once()
     anthropic_factory.assert_called_once_with(api_key="offline-key")
-    local_tools.assert_called_once_with(profile)
+    assert tuple(resolved.execution_map) == resolved.source_keys == ("cbs",)
+
+
+def test_resolved_system_and_model_context_omit_static_opendatasoft_portals(
+    monkeypatch,
+    tmp_path,
+):
+    from dataset_prober import dataset_agent
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.loading_policy import LoadingPolicySession
+    from dataset_prober.paths import AppPaths
+
+    raw = valid_raw_profile()
+    portal_url = "https://inactive.opendatasoft.example/catalog"
+    raw["opendatasoft_portals"] = [portal_url]
+    profile = ConfigLoader(write_profile(tmp_path, raw)).load("synthetic_profile")
+    resolved = resolve_with_fake_tools(profile)
+
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
+    client = Mock()
+    client.messages.create.return_value = SimpleNamespace(
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text="Done")],
+        usage=usage,
+    )
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", Mock(return_value="offline-key"))
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", Mock(return_value=client))
+
+    dataset_agent.run_profile(
+        user_prompt="Find synthetic data",
+        resolved_profile=resolved,
+        budget=dataset_agent.Budget.from_profile(profile.budget),
+        loading_session=LoadingPolicySession(download_enabled=False),
+        session_cost=dataset_agent.SessionCost(),
+        cli_overrides={},
+        paths=AppPaths(output_dir=tmp_path),
+    )
+
+    model_system = client.messages.create.call_args.kwargs["system"]
+    for rendered_context in (resolved.system_prompt_context, model_system):
+        assert "OPENDATASOFT PORTALS" not in rendered_context
+        assert portal_url not in rendered_context
+    assert profile.opendatasoft_portals == [portal_url]
+    assert profile.catalogs[0].name in resolved.system_prompt_context
+    assert profile.catalogs[0].base_url in model_system
 
 
 @pytest.mark.parametrize("profile_id", ["us_government", "eu_open_data", "global"])
-def test_disabled_profile_is_rejected_by_tool_and_execution_boundaries(profile_id, tmp_path):
+def test_disabled_profile_is_rejected_by_tool_and_execution_boundaries(profile_id):
     from dataset_prober.config_loader import ConfigLoader, ProfileUnavailableError
-    from dataset_prober.dataset_agent import build_tool_definitions, run_profile
-    from dataset_prober.tools import tools_for_profile
+    from dataset_prober.profile_resolution import resolve_profile
+    from dataset_prober.tools import TOOL_REGISTRY
 
     profile = ConfigLoader().load(profile_id)
 
     with pytest.raises(ProfileUnavailableError, match=re.escape(profile.reason)):
-        tools_for_profile(profile)
+        resolve_profile(profile, registry=TOOL_REGISTRY)
     with pytest.raises(ProfileUnavailableError, match=re.escape(profile.reason)):
-        build_tool_definitions(profile)
-    with pytest.raises(ProfileUnavailableError, match=re.escape(profile.reason)):
-        profile.system_prompt_context()
-    with pytest.raises(ProfileUnavailableError, match=re.escape(profile.reason)):
-        run_profile(
-            user_prompt="must not run",
-            profile=profile,
-            budget=None,
-            loading_session=None,
-            session_cost=None,
-            cli_overrides={},
-            paths=tmp_path,
-        )
+        profile.system_prompt_context(profile.catalogs)
 
 
 def install_cli_tripwires(monkeypatch, dataset_agent):
     blocked = Mock(side_effect=AssertionError("model or tool boundary was constructed"))
     monkeypatch.setattr(dataset_agent, "PromptInterpreter", blocked)
-    monkeypatch.setattr(dataset_agent, "tools_for_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", blocked)
     monkeypatch.setattr(dataset_agent, "run_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", blocked)
     monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", blocked)
     return blocked
 
@@ -447,7 +494,154 @@ def test_automatic_cli_with_no_enabled_profiles_stops_before_prompt_model_or_too
     blocked.assert_not_called()
 
 
-def test_interpreter_validation_error_stops_cli_before_tools_or_agent(
+def test_all_enabled_profiles_resolve_before_interpreter_construction(monkeypatch, tmp_path):
+    from dataset_prober import dataset_agent
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
+
+    profiles_dir = write_profile(tmp_path, valid_raw_profile(), "first_profile")
+    (profiles_dir / "second_profile.yaml").write_text(
+        yaml.safe_dump(valid_raw_profile(), sort_keys=False),
+        encoding="utf-8",
+    )
+    loader = ConfigLoader(profiles_dir)
+    original_load = loader.load
+    loaded_descriptors = []
+
+    def load_once(profile_id):
+        profile = original_load(profile_id)
+        loaded_descriptors.append(profile)
+        return profile
+
+    loader.load = Mock(side_effect=load_once)
+    loader.automatically_selectable_profile_ids = Mock(
+        side_effect=AssertionError("automatic mode reloaded profile IDs")
+    )
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+
+    events = []
+    resolved_descriptors = []
+    original_resolver = dataset_agent.resolve_profile
+
+    def tracked_resolver(profile, *, registry):
+        events.append(f"resolve:{profile.profile_id}")
+        resolved_descriptors.append(profile)
+        return original_resolver(profile, registry=registry)
+
+    monkeypatch.setattr(dataset_agent, "resolve_profile", tracked_resolver)
+
+    def interpreter_factory(profiles):
+        events.append("interpreter")
+        assert [profile.profile_id for profile in profiles] == [
+            "first_profile",
+            "second_profile",
+        ]
+        assert all(
+            interpreted is resolved
+            for interpreted, resolved in zip(profiles, resolved_descriptors, strict=True)
+        )
+        raise ProfileInterpretationError("synthetic stop after constructor ordering check")
+
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", interpreter_factory)
+    blocked = Mock(side_effect=AssertionError("ordering test reached profile agent"))
+    monkeypatch.setattr(dataset_agent, "run_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", blocked)
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", blocked)
+    monkeypatch.setattr(sys, "argv", ["dataset-prober"])
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    dataset_agent.main()
+
+    assert events == ["resolve:first_profile", "resolve:second_profile", "interpreter"]
+    assert [profile.profile_id for profile in loaded_descriptors] == [
+        "first_profile",
+        "second_profile",
+    ]
+    assert all(
+        resolved is loaded
+        for resolved, loaded in zip(resolved_descriptors, loaded_descriptors, strict=True)
+    )
+    assert loader.load.call_count == 2
+    loader.automatically_selectable_profile_ids.assert_not_called()
+    blocked.assert_not_called()
+
+
+def test_automatic_resolution_excludes_failed_candidate_before_interpreter(
+    monkeypatch,
+    tmp_path,
+):
+    from dataset_prober import dataset_agent
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.profile_resolution import ProfileResolutionError, ResolutionIssue
+    from dataset_prober.prompt_interpreter import ProfileInterpretationError
+
+    profiles_dir = write_profile(tmp_path, valid_raw_profile(), "failed_profile")
+    (profiles_dir / "successful_profile.yaml").write_text(
+        yaml.safe_dump(valid_raw_profile(), sort_keys=False),
+        encoding="utf-8",
+    )
+    source_loader = ConfigLoader(profiles_dir)
+    failed_profile = source_loader.load("failed_profile")
+    successful_profile = source_loader.load("successful_profile")
+    successful_resolved = resolve_with_fake_tools(successful_profile)
+
+    loader = Mock()
+    loader.configured_profile_ids.return_value = ["failed_profile", "successful_profile"]
+    loader.profile_descriptors.return_value = [failed_profile, successful_profile]
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+
+    failure = ProfileResolutionError(
+        (
+            ResolutionIssue(
+                code="adapter_unavailable",
+                catalog_id=failed_profile.catalogs[0].catalog_id,
+                adapter="cbs",
+                required=True,
+                blocking=True,
+                message="Adapter is not locally available.",
+            ),
+        )
+    )
+
+    def resolve_candidate(profile, *, registry):
+        assert registry is dataset_agent.TOOL_REGISTRY
+        if profile is failed_profile:
+            raise failure
+        assert profile is successful_profile
+        return successful_resolved
+
+    resolver = Mock(side_effect=resolve_candidate)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", resolver)
+
+    def interpreter_factory(profiles):
+        assert len(profiles) == 1
+        assert profiles[0] is successful_profile
+        raise ProfileInterpretationError("stop after successful-candidate identity check")
+
+    interpreter_factory_mock = Mock(side_effect=interpreter_factory)
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", interpreter_factory_mock)
+    blocked = Mock(side_effect=AssertionError("mixed preflight reached profile agent"))
+    monkeypatch.setattr(dataset_agent, "run_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", blocked)
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", blocked)
+    monkeypatch.setattr(sys, "argv", ["dataset-prober"])
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    with dataset_agent.console.capture() as capture:
+        dataset_agent.main()
+
+    rendered = capture.get()
+    assert "Excluding profile 'failed_profile'" in rendered
+    assert "adapter_unavailable" in rendered
+    assert resolver.call_args_list[0].args[0] is failed_profile
+    assert resolver.call_args_list[1].args[0] is successful_profile
+    interpreter_factory_mock.assert_called_once()
+    loader.profile_descriptors.assert_called_once_with()
+    loader.load.assert_not_called()
+    blocked.assert_not_called()
+
+
+def test_interpreter_validation_error_stops_cli_after_resolution_before_profile_agent(
     monkeypatch,
     test_profile,
 ):
@@ -456,9 +650,11 @@ def test_interpreter_validation_error_stops_cli_before_tools_or_agent(
 
     loader = Mock()
     loader.configured_profile_ids.return_value = [test_profile.profile_id]
-    loader.automatically_selectable_profile_ids.return_value = [test_profile.profile_id]
-    loader.load.return_value = test_profile
+    loader.profile_descriptors.return_value = [test_profile]
     monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+    resolved = resolve_with_fake_tools(test_profile)
+    resolver = Mock(return_value=resolved)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", resolver)
 
     interpreter = Mock()
     interpreter.interpret.side_effect = ProfileInterpretationError(
@@ -467,9 +663,9 @@ def test_interpreter_validation_error_stops_cli_before_tools_or_agent(
     interpreter_factory = Mock(return_value=interpreter)
     monkeypatch.setattr(dataset_agent, "PromptInterpreter", interpreter_factory)
 
-    downstream = Mock(side_effect=AssertionError("interpreter failure reached agent tools"))
-    monkeypatch.setattr(dataset_agent, "tools_for_profile", downstream)
+    downstream = Mock(side_effect=AssertionError("interpreter failure reached profile agent"))
     monkeypatch.setattr(dataset_agent, "run_profile", downstream)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", downstream)
     monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", downstream)
     monkeypatch.setattr(sys, "argv", ["dataset-prober"])
     monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find population data"))
@@ -484,10 +680,11 @@ def test_interpreter_validation_error_stops_cli_before_tools_or_agent(
     assert "fragment" not in rendered
     interpreter_factory.assert_called_once_with([test_profile])
     interpreter.interpret.assert_called_once_with("Find population data")
+    resolver.assert_called_once_with(test_profile, registry=dataset_agent.TOOL_REGISTRY)
     downstream.assert_not_called()
 
 
-def test_interpreter_constructor_error_stops_cli_before_tools_or_agent(
+def test_interpreter_constructor_error_stops_cli_after_resolution_before_profile_agent(
     monkeypatch,
     test_profile,
 ):
@@ -496,9 +693,11 @@ def test_interpreter_constructor_error_stops_cli_before_tools_or_agent(
 
     loader = Mock()
     loader.configured_profile_ids.return_value = [test_profile.profile_id]
-    loader.automatically_selectable_profile_ids.return_value = [test_profile.profile_id]
-    loader.load.return_value = test_profile
+    loader.profile_descriptors.return_value = [test_profile]
     monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+    resolved = resolve_with_fake_tools(test_profile)
+    resolver = Mock(return_value=resolved)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", resolver)
 
     interpreter_factory = Mock(
         side_effect=ProfileInterpretationError(
@@ -507,11 +706,11 @@ def test_interpreter_constructor_error_stops_cli_before_tools_or_agent(
     )
     monkeypatch.setattr(dataset_agent, "PromptInterpreter", interpreter_factory)
 
-    tool_factory = Mock(side_effect=AssertionError("constructor failure reached tools"))
     profile_runner = Mock(side_effect=AssertionError("constructor failure reached agent run"))
+    api_key = Mock(side_effect=AssertionError("constructor failure reached agent API key"))
     agent_client = Mock(side_effect=AssertionError("constructor failure reached agent client"))
-    monkeypatch.setattr(dataset_agent, "tools_for_profile", tool_factory)
     monkeypatch.setattr(dataset_agent, "run_profile", profile_runner)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", api_key)
     monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", agent_client)
     monkeypatch.setattr(sys, "argv", ["dataset-prober"])
     monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
@@ -526,9 +725,390 @@ def test_interpreter_constructor_error_stops_cli_before_tools_or_agent(
     assert "hidden" not in rendered
     assert "fragment" not in rendered
     interpreter_factory.assert_called_once_with([test_profile])
-    tool_factory.assert_not_called()
+    resolver.assert_called_once_with(test_profile, registry=dataset_agent.TOOL_REGISTRY)
     profile_runner.assert_not_called()
+    api_key.assert_not_called()
     agent_client.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("argv", "source_type", "available", "issue_code"),
+    [
+        (
+            ["dataset-prober", "--profile", "test_profile"],
+            "cbs",
+            False,
+            "adapter_unavailable",
+        ),
+        (["dataset-prober"], "cbs", False, "no_executable_sources"),
+        (["dataset-prober"], "ckan", True, "source_mismatch"),
+    ],
+)
+def test_fatal_resolution_stops_both_anthropic_boundaries(
+    monkeypatch,
+    test_profile,
+    argv,
+    source_type,
+    available,
+    issue_code,
+):
+    from dataset_prober import dataset_agent
+
+    loader = Mock()
+    loader.configured_profile_ids.return_value = [test_profile.profile_id]
+    loader.profile_descriptors.return_value = [test_profile]
+    loader.load.return_value = test_profile
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+
+    tool = Mock()
+    tool.source_type = source_type
+    tool.is_available.return_value = available
+    factory = Mock(return_value=tool)
+    monkeypatch.setattr(dataset_agent, "TOOL_REGISTRY", {"cbs": factory})
+    resolver = Mock(wraps=dataset_agent.resolve_profile)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", resolver)
+
+    blocked = Mock(side_effect=AssertionError("fatal resolution reached a model boundary"))
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", blocked)
+    monkeypatch.setattr(dataset_agent, "run_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", blocked)
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", blocked)
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    with dataset_agent.console.capture() as capture:
+        dataset_agent.main()
+
+    assert issue_code in capture.get()
+    resolver.assert_called_once_with(test_profile, registry=dataset_agent.TOOL_REGISTRY)
+    factory.assert_called_once()
+    assert tool.is_available.call_count == (0 if issue_code == "source_mismatch" else 1)
+    blocked.assert_not_called()
+
+
+def test_successful_automatic_execution_resolves_once_and_reuses_cached_object(
+    monkeypatch,
+    test_profile,
+    tmp_path,
+):
+    from dataset_prober import dataset_agent
+    from dataset_prober.prompt_interpreter import InterpretationResult, ProfileSelection
+
+    events = []
+    loader = Mock()
+    loader.configured_profile_ids.return_value = [test_profile.profile_id]
+    loader.profile_descriptors.return_value = [test_profile]
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+
+    resolved = resolve_with_fake_tools(test_profile)
+
+    def resolve_once(profile, *, registry):
+        assert profile is test_profile
+        assert registry is dataset_agent.TOOL_REGISTRY
+        events.append("resolution")
+        return resolved
+
+    resolver = Mock(side_effect=resolve_once)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", resolver)
+
+    interpretation = InterpretationResult(
+        profiles=[
+            ProfileSelection(
+                profile_name=test_profile.profile_id,
+                display_name=test_profile.name,
+                confidence="high",
+                reason="Synthetic selection",
+                execution_order=1,
+                keywords_detected=["data"],
+                language_detected="en",
+                what_to_find="Synthetic data",
+                geographic_scope="Test Region",
+                topic="data",
+                freshness_rule="none",
+                download_requested=False,
+            )
+        ],
+        is_global=False,
+        is_multi_profile=False,
+        raw_prompt="Find data",
+        interpreter_reasoning="Synthetic",
+    )
+    interpreter = Mock()
+
+    def interpret(_prompt):
+        events.append("interpreter_model")
+        return interpretation
+
+    interpreter.interpret.side_effect = interpret
+    interpreter.present_and_confirm.side_effect = lambda *_args: (
+        events.append("confirmation") or True
+    )
+
+    def interpreter_factory(profiles):
+        assert profiles == [test_profile]
+        events.append("interpreter_construction")
+        return interpreter
+
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", Mock(side_effect=interpreter_factory))
+
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
+    response = SimpleNamespace(
+        stop_reason="end_turn",
+        content=[SimpleNamespace(type="text", text="Done")],
+        usage=usage,
+    )
+    client = Mock()
+
+    def agent_model(**_kwargs):
+        events.append("agent_model")
+        return response
+
+    client.messages.create.side_effect = agent_model
+
+    def agent_factory(*, api_key):
+        assert api_key == "offline-key"
+        events.append("agent_construction")
+        return client
+
+    monkeypatch.setattr(
+        dataset_agent,
+        "get_anthropic_api_key",
+        Mock(side_effect=lambda: events.append("agent_api_key") or "offline-key"),
+    )
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", Mock(side_effect=agent_factory))
+
+    original_run_profile = dataset_agent.run_profile
+
+    def run_cached(**kwargs):
+        assert kwargs["resolved_profile"] is resolved
+        events.append("profile_run")
+        return original_run_profile(**kwargs)
+
+    monkeypatch.setattr(dataset_agent, "run_profile", run_cached)
+    monkeypatch.setattr(dataset_agent.AppPaths, "resolve", Mock(return_value=tmp_path))
+    monkeypatch.setattr(sys, "argv", ["dataset-prober"])
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    dataset_agent.main()
+
+    assert events == [
+        "resolution",
+        "interpreter_construction",
+        "interpreter_model",
+        "confirmation",
+        "profile_run",
+        "agent_api_key",
+        "agent_construction",
+        "agent_model",
+    ]
+    resolver.assert_called_once()
+    loader.profile_descriptors.assert_called_once_with()
+    loader.load.assert_not_called()
+    model_call = client.messages.create.call_args.kwargs
+    source_enums = [
+        definition["input_schema"]["properties"]["source"]["enum"]
+        for definition in model_call["tools"]
+        if "source" in definition["input_schema"]["properties"]
+    ]
+    assert source_enums and all(enum == list(resolved.source_keys) for enum in source_enums)
+    assert tuple(resolved.execution_map) == resolved.source_keys
+    assert test_profile.catalogs[0].name in model_call["system"]
+    assert test_profile.catalogs[0].base_url in model_call["system"]
+
+
+def test_optional_capability_warnings_are_printed_only_for_selected_profiles(
+    monkeypatch,
+    tmp_path,
+):
+    from dataset_prober import dataset_agent
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.orchestrator import ProfileResult
+    from dataset_prober.prompt_interpreter import InterpretationResult, ProfileSelection
+
+    first_raw = valid_raw_profile()
+    first_raw["catalogs"].append(
+        {
+            "catalog_id": "first_tavily",
+            "adapter": "tavily",
+            "name": "First excluded provider",
+            "base_url": "https://api.tavily.com",
+            "api_key_env": None,
+            "timeout_seconds": 10,
+            "priority": 2,
+            "required": False,
+        }
+    )
+    second_raw = copy.deepcopy(first_raw)
+    second_raw["catalogs"][1]["catalog_id"] = "second_tavily"
+    second_raw["catalogs"][1]["name"] = "Second excluded provider"
+
+    profiles_dir = write_profile(tmp_path, first_raw, "first_profile")
+    (profiles_dir / "second_profile.yaml").write_text(
+        yaml.safe_dump(second_raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    source_loader = ConfigLoader(profiles_dir)
+    first_profile = source_loader.load("first_profile")
+    second_profile = source_loader.load("second_profile")
+    first_resolved = resolve_with_fake_tools(first_profile)
+    second_resolved = resolve_with_fake_tools(second_profile)
+    assert first_resolved.issues[0].catalog_id == "first_tavily"
+    assert second_resolved.issues[0].catalog_id == "second_tavily"
+
+    loader = Mock()
+    loader.configured_profile_ids.return_value = ["first_profile", "second_profile"]
+    loader.profile_descriptors.return_value = [first_profile, second_profile]
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+
+    resolved_by_identity = {
+        id(first_profile): first_resolved,
+        id(second_profile): second_resolved,
+    }
+
+    def resolve_candidate(profile, *, registry):
+        assert registry is dataset_agent.TOOL_REGISTRY
+        return resolved_by_identity[id(profile)]
+
+    monkeypatch.setattr(dataset_agent, "resolve_profile", Mock(side_effect=resolve_candidate))
+
+    interpretation = InterpretationResult(
+        profiles=[
+            ProfileSelection(
+                profile_name="first_profile",
+                display_name=first_profile.name,
+                confidence="high",
+                reason="Synthetic selection",
+                execution_order=1,
+                keywords_detected=["data"],
+                language_detected="en",
+            )
+        ],
+        is_global=False,
+        is_multi_profile=False,
+        raw_prompt="Find data",
+        interpreter_reasoning="Synthetic",
+    )
+    interpreter = Mock()
+    interpreter.interpret.return_value = interpretation
+    interpreter.present_and_confirm.return_value = True
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", Mock(return_value=interpreter))
+
+    profile_runner = Mock(
+        return_value=ProfileResult(
+            profile_name="first_profile",
+            display_name=first_profile.name,
+            objective=None,
+        )
+    )
+    monkeypatch.setattr(dataset_agent, "run_profile", profile_runner)
+    monkeypatch.setattr(dataset_agent.AppPaths, "resolve", Mock(return_value=tmp_path))
+    monkeypatch.setattr(sys, "argv", ["dataset-prober"])
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    with dataset_agent.console.capture() as capture:
+        dataset_agent.main()
+
+    rendered = capture.get()
+    assert "policy_excluded (first_tavily)" in rendered
+    assert "second_tavily" not in rendered
+    assert profile_runner.call_count == 1
+    assert profile_runner.call_args.kwargs["resolved_profile"] is first_resolved
+
+
+def test_automatic_cancellation_resolves_but_never_starts_profile_agent(
+    monkeypatch,
+    test_profile,
+):
+    from dataset_prober import dataset_agent
+    from dataset_prober.prompt_interpreter import InterpretationResult, ProfileSelection
+
+    loader = Mock()
+    loader.configured_profile_ids.return_value = [test_profile.profile_id]
+    loader.profile_descriptors.return_value = [test_profile]
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+    resolved = resolve_with_fake_tools(test_profile)
+    resolver = Mock(return_value=resolved)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", resolver)
+
+    interpretation = InterpretationResult(
+        profiles=[
+            ProfileSelection(
+                profile_name=test_profile.profile_id,
+                display_name=test_profile.name,
+                confidence="high",
+                reason="Synthetic selection",
+                execution_order=1,
+                keywords_detected=["data"],
+                language_detected="en",
+            )
+        ],
+        is_global=False,
+        is_multi_profile=False,
+        raw_prompt="Find data",
+        interpreter_reasoning="Synthetic",
+    )
+    interpreter = Mock()
+    interpreter.interpret.return_value = interpretation
+    interpreter.present_and_confirm.return_value = False
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", Mock(return_value=interpreter))
+
+    blocked = Mock(side_effect=AssertionError("cancellation reached profile-agent boundary"))
+    monkeypatch.setattr(dataset_agent, "run_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", blocked)
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", blocked)
+    monkeypatch.setattr(sys, "argv", ["dataset-prober"])
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    dataset_agent.main()
+
+    resolver.assert_called_once_with(test_profile, registry=dataset_agent.TOOL_REGISTRY)
+    blocked.assert_not_called()
+
+
+def test_interpreted_unresolved_profile_is_never_substituted(monkeypatch, test_profile):
+    from dataset_prober import dataset_agent
+    from dataset_prober.prompt_interpreter import InterpretationResult, ProfileSelection
+
+    loader = Mock()
+    loader.configured_profile_ids.return_value = [test_profile.profile_id]
+    loader.profile_descriptors.return_value = [test_profile]
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
+    resolved = resolve_with_fake_tools(test_profile)
+    monkeypatch.setattr(dataset_agent, "resolve_profile", Mock(return_value=resolved))
+
+    interpretation = InterpretationResult(
+        profiles=[
+            ProfileSelection(
+                profile_name="unresolved_profile",
+                display_name="Unresolved",
+                confidence="high",
+                reason="Synthetic invalid selection",
+                execution_order=1,
+                keywords_detected=["data"],
+                language_detected="en",
+            )
+        ],
+        is_global=False,
+        is_multi_profile=False,
+        raw_prompt="Find data",
+        interpreter_reasoning="Synthetic",
+    )
+    interpreter = Mock()
+    interpreter.interpret.return_value = interpretation
+    monkeypatch.setattr(dataset_agent, "PromptInterpreter", Mock(return_value=interpreter))
+    blocked = Mock(side_effect=AssertionError("unresolved profile reached execution"))
+    monkeypatch.setattr(dataset_agent, "run_profile", blocked)
+    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", blocked)
+    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", blocked)
+    monkeypatch.setattr(sys, "argv", ["dataset-prober"])
+    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="Find data"))
+
+    with dataset_agent.console.capture() as capture:
+        dataset_agent.main()
+
+    assert "unresolved profile" in capture.get().lower()
+    interpreter.present_and_confirm.assert_not_called()
+    blocked.assert_not_called()
 
 
 def test_forced_disabled_cli_stops_before_prompt_model_or_tools(monkeypatch):

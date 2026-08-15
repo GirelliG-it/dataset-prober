@@ -225,24 +225,28 @@ class TestProfileMethods:
         assert test_profile.has_catalog_type("tavily") is False
 
     def test_system_prompt_context_contains_scope(self, test_profile):
-        ctx = test_profile.system_prompt_context()
+        ctx = test_profile.system_prompt_context(test_profile.agent_usable_catalogs)
         assert "SCOPE GUIDANCE" in ctx
         assert "Test scope only." in ctx
 
     def test_system_prompt_context_scope_appears_first(self, test_profile):
         """Scope restriction must appear before catalog sources."""
-        ctx = test_profile.system_prompt_context()
+        ctx = test_profile.system_prompt_context(test_profile.agent_usable_catalogs)
         scope_pos = ctx.find("SCOPE GUIDANCE")
         catalog_pos = ctx.find("AVAILABLE CATALOG SOURCES")
         assert scope_pos < catalog_pos
 
     def test_system_prompt_context_contains_blocked_sources(self, test_profile):
-        ctx = test_profile.system_prompt_context()
+        ctx = test_profile.system_prompt_context(test_profile.agent_usable_catalogs)
         assert "blocked.example.com" in ctx
 
     def test_system_prompt_context_contains_license_rules(self, test_profile):
-        ctx = test_profile.system_prompt_context()
+        ctx = test_profile.system_prompt_context(test_profile.agent_usable_catalogs)
         assert "LICENSE RULES" in ctx
+
+    def test_system_prompt_context_requires_explicit_catalog_collection(self, test_profile):
+        with pytest.raises(TypeError):
+            test_profile.system_prompt_context()
 
 
 @pytest.mark.parametrize("dialect", ["ckan_action", "eu_hub"])

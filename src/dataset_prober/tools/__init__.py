@@ -13,7 +13,6 @@ Adding a new data source:
 That's it. The agent, config loader, and prompt interpreter need no changes.
 """
 
-from dataset_prober.loading_policy import sanitize_url_text
 from dataset_prober.tools.base import DatasetResult, DataSourceTool
 from dataset_prober.tools.cbs_tool import CBSTool
 from dataset_prober.tools.ckan_tool import CKANTool
@@ -49,62 +48,6 @@ def create_tool(catalog_type: str, config: dict) -> DataSourceTool:
     return tool_class(config)
 
 
-def tools_for_profile(profile) -> list[DataSourceTool]:
-    """
-    Instantiate all tools for a given profile, in priority order.
-    Skips tools that are not available (missing dependencies or API keys).
-
-    Args:
-        profile: A Profile object from config_loader
-
-    Returns:
-        List of DataSourceTool instances sorted by catalog priority
-    """
-    profile.require_runnable()
-    tools = []
-    catalogs = sorted(profile.catalogs, key=lambda c: c.priority)
-
-    for catalog in catalogs:
-        try:
-            # Build tool config from catalog + profile settings
-            tool_config = {
-                "catalog_id": catalog.catalog_id,
-                "adapter": catalog.adapter,
-                "name": catalog.name,
-                "base_url": catalog.base_url,
-                "api_key_env": catalog.api_key_env,
-                "timeout_seconds": catalog.timeout_seconds,
-                "priority": catalog.priority,
-                "required": catalog.required,
-                "ckan_dialect": catalog.ckan_dialect,
-                "landing_base_url": catalog.landing_base_url,
-                "trusted_domains": profile.trusted_domains,
-                "blocked_sources": profile.blocked_sources,
-                "sample_rows": profile.budget.sample_rows,
-                "download_timeout_seconds": profile.budget.download_timeout_seconds,
-            }
-            tool = create_tool(catalog.adapter, tool_config)
-
-            if tool.is_available():
-                tools.append(tool)
-            else:
-                from rich.console import Console
-
-                Console().print(
-                    f"[yellow]⚠️  Tool '{catalog.name}' is not available "
-                    f"(missing dependencies or API key)[/yellow]"
-                )
-        except Exception as e:
-            from rich.console import Console
-
-            Console().print(
-                f"[red]Failed to initialize tool '{sanitize_url_text(catalog.name)}': "
-                f"{sanitize_url_text(str(e))}[/red]"
-            )
-
-    return tools
-
-
 __all__ = [
     "DataSourceTool",
     "DatasetResult",
@@ -113,5 +56,4 @@ __all__ = [
     "TavilyTool",
     "TOOL_REGISTRY",
     "create_tool",
-    "tools_for_profile",
 ]

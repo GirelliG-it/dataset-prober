@@ -305,7 +305,7 @@ class Profile:
         hostname = _url_hostname(url)
         return hostname is not None and self.contract.is_blocked_host(hostname)
 
-    def system_prompt_context(self) -> str:
+    def system_prompt_context(self, catalogs: Sequence[CatalogConfig]) -> str:
         """
         Generate a profile-specific context string for the agent system prompt.
         Injected into the system prompt at runtime — no hardcoded values in the agent.
@@ -330,7 +330,7 @@ class Profile:
             "AVAILABLE CATALOG SOURCES (in priority order):",
         ]
 
-        for cat in self.agent_usable_catalogs:
+        for cat in catalogs:
             lines.append(
                 f"  - {sanitize_url_text(cat.name)} (adapter: {cat.adapter}, "
                 f"url: {sanitize_url_text(cat.base_url)})"
@@ -355,12 +355,6 @@ class Profile:
         lines.append(f"  Preferred: {', '.join(self.license.preference)}")
         lines.append(f"  Warn: {', '.join(self.license.warn)}")
         lines.append(f"  Reject: {', '.join(self.license.reject)}")
-
-        if self.opendatasoft_portals:
-            lines.append("")
-            lines.append("OPENDATASOFT PORTALS (CSV URLs follow /exports/csv pattern):")
-            for portal in self.opendatasoft_portals:
-                lines.append(f"  - {portal}")
 
         return "\n".join(lines)
 
