@@ -2,15 +2,15 @@
 src/dataset_agent.py — Profile-driven agentic dataset discovery
 
 Architecture:
-    1. PromptInterpreter classifies user intent → selects profiles
-    2. User confirms the plan
-    3. For each profile (sequential):
-       a. ConfigLoader loads profile YAML
-       b. tools_for_profile() instantiates the right tools
-       c. Agent loop runs with Claude — tools and system prompt
+    1. Local capability resolution determines executable profiles
+    2. PromptInterpreter classifies user intent among resolved profiles
+    3. User confirms the plan
+    4. For each profile (sequential):
+       a. Reuse the locally resolved profile capabilities
+       b. Agent loop runs with Claude — tools and system prompt
           are injected from profile, no hardcoded values
-       d. Token and cost tracked per call
-    4. Results aggregated and saved
+       c. Token and cost tracked per call
+    5. Results aggregated and saved
 
 No hardcoded URLs, sources, or limits anywhere in this file.
 Everything comes from profiles in dataset_prober/profiles/*.yaml.
@@ -57,12 +57,17 @@ from dataset_prober.loading_policy import (  # noqa: E402
 from dataset_prober.orchestrator import AggregatedResult, Orchestrator, ProfileResult  # noqa: E402
 from dataset_prober.paths import AppPaths  # noqa: E402
 from dataset_prober.profile_contract import ProfileStatus  # noqa: E402
+from dataset_prober.profile_resolution import (  # noqa: E402
+    ProfileResolutionError,
+    ResolvedProfile,
+    resolve_profile,
+)
 from dataset_prober.prompt_interpreter import (  # noqa: E402
     ProfileInterpretationError,
     PromptInterpreter,
 )
 from dataset_prober.resource_classification import unknown_assessment  # noqa: E402
-from dataset_prober.tools import DatasetResult, tools_for_profile  # noqa: E402
+from dataset_prober.tools import TOOL_REGISTRY, DatasetResult  # noqa: E402
 
 console = Console()
 
@@ -183,15 +188,11 @@ class Budget:
 # ─── Dynamic tool definitions for Claude ────────────────────────────────────
 
 
-def build_tool_definitions(profile: Profile) -> list[dict]:
+def build_tool_definitions(resolved_profile: ResolvedProfile) -> list[dict]:
     """
-    Build Claude tool definitions dynamically from profile.
-    No hardcoded tool descriptions — profile context is injected at runtime.
+    Build Claude tool definitions from one authoritative resolved capability view.
     """
-    profile.require_runnable()
-    catalog_types = list(
-        dict.fromkeys(catalog.adapter for catalog in profile.agent_usable_catalogs)
-    )
+    catalog_types = list(resolved_profile.source_keys)
     has_cbs = "cbs" in catalog_types
     has_ckan = "ckan" in catalog_types
 
@@ -565,7 +566,7 @@ def execute_tool(
 
 def run_profile(
     user_prompt: str,
-    profile: Profile,
+    resolved_profile: ResolvedProfile,
     budget: Budget,
     loading_session: LoadingPolicySession,
     session_cost: SessionCost,
@@ -574,11 +575,32 @@ def run_profile(
     initial_message: Optional[str] = None,
 ) -> ProfileResult:
     """
-    Run the agent loop for a single profile.
+    Run the agent loop for a single already-resolved profile.
     Accepts optional initial_message from orchestrator (replaces full history).
     Returns ProfileResult with found/downloaded datasets and cost tracking.
     """
+    profile = resolved_profile.profile
     profile.require_runnable()
+
+    # Apply CLI overrides to budget.
+    budget_config = profile.budget.override(**cli_overrides)
+    budget = Budget.from_profile(budget_config)
+
+    # Build every model- and executor-facing capability surface from the same
+    # immutable resolved object before touching either profile-agent API boundary.
+    tool_map = resolved_profile.execution_map
+    tool_definitions = build_tool_definitions(resolved_profile)
+    system_context = resolved_profile.system_prompt_context
+    expected_sources = resolved_profile.source_keys
+    if tuple(tool_map.keys()) != expected_sources:
+        raise RuntimeError("Resolved execution-map keys do not match source keys")
+    source_enums = []
+    for definition in tool_definitions:
+        source = definition["input_schema"]["properties"].get("source")
+        if source is not None:
+            source_enums.append(tuple(source["enum"]))
+    if not source_enums or any(enum != expected_sources for enum in source_enums):
+        raise RuntimeError("Model source enums do not match resolved source keys")
 
     from dataset_prober.orchestrator import ProfileResult as PR
 
@@ -589,21 +611,10 @@ def run_profile(
     )
     client = anthropic.Anthropic(api_key=get_anthropic_api_key())
 
-    # Apply CLI overrides to budget
-    budget_config = profile.budget.override(**cli_overrides)
-    budget = Budget.from_profile(budget_config)
-
-    # Instantiate tools
-    tool_instances = tools_for_profile(profile)
-    tool_map = {t.source_type: t for t in tool_instances}
-
-    # Build dynamic tool definitions
-    tool_definitions = build_tool_definitions(profile)
-
     # Build dynamic system prompt — no hardcoded values
     system_prompt = f"""You are an autonomous dataset discovery agent.
 
-{profile.system_prompt_context()}
+{system_context}
 
 BEHAVIOUR RULES:
 1. Parse the user's prompt carefully — extract topic, geography, freshness rules, and download intent.
@@ -961,7 +972,9 @@ def main():
             )
     else:
         enabled_profiles = [
-            loader.load(profile_id) for profile_id in loader.automatically_selectable_profile_ids()
+            profile
+            for profile in loader.profile_descriptors()
+            if profile.status is ProfileStatus.ENABLED
         ]
         if not enabled_profiles:
             console.print(
@@ -980,6 +993,31 @@ def main():
         console.print("[red]No prompt provided. Exiting.[/red]")
         return
 
+    resolved_profiles: dict[str, ResolvedProfile] = {}
+    candidate_profiles = [selected_profile] if selected_profile is not None else enabled_profiles
+    for candidate in candidate_profiles:
+        try:
+            resolved_profiles[candidate.profile_id] = resolve_profile(
+                candidate,
+                registry=TOOL_REGISTRY,
+            )
+        except ProfileResolutionError as exc:
+            diagnostic = sanitize_url_text(str(exc))
+            if selected_profile is not None:
+                console.print(
+                    f"[red]Profile capability resolution failed:[/red] {diagnostic}",
+                    soft_wrap=True,
+                )
+                return
+            console.print(
+                f"[yellow]Excluding profile '{candidate.profile_id}':[/yellow] {diagnostic}",
+                soft_wrap=True,
+            )
+
+    if not resolved_profiles:
+        console.print("[yellow]No executable profile capabilities are available.[/yellow]")
+        return
+
     paths = AppPaths.resolve()
 
     loading_session = LoadingPolicySession(download_enabled=args.download)
@@ -996,12 +1034,14 @@ def main():
     # Determine profiles to run
     if args.profile:
         # The explicit descriptor was validated and admitted before prompting.
-        profile_names = [args.profile]
+        profile_names = [selected_profile.profile_id]
         console.print(f"[dim]Using profile: {args.profile}[/dim]\n")
     else:
         # Auto-detect via prompt interpreter
         try:
-            interpreter = PromptInterpreter(enabled_profiles)
+            interpreter = PromptInterpreter(
+                [resolved.profile for resolved in resolved_profiles.values()]
+            )
             interpretation = interpreter.interpret(user_prompt)
         except ProfileInterpretationError as exc:
             console.print(
@@ -1011,12 +1051,32 @@ def main():
             return
         session_cost.interpreter_cost_usd = interpretation.cost_usd
 
+        unresolved_selections = [
+            profile_name
+            for profile_name in interpretation.profile_names
+            if profile_name not in resolved_profiles
+        ]
+        if unresolved_selections:
+            console.print(
+                "[red]Profile interpretation selected an unresolved profile.[/red]",
+                soft_wrap=True,
+            )
+            return
+
         confirmed = interpreter.present_and_confirm(interpretation, None)
         if not confirmed:
             console.print("[yellow]Cancelled.[/yellow]")
             return
 
         profile_names = interpretation.profile_names
+
+    for profile_name in profile_names:
+        for issue in resolved_profiles[profile_name].issues:
+            console.print(
+                f"[yellow]Profile '{profile_name}' capability warning:[/yellow] "
+                f"{issue.code} ({issue.catalog_id or 'profile'})",
+                soft_wrap=True,
+            )
 
     # Build objectives from interpretation
     objectives = interpretation.to_objectives() if not args.profile else []
@@ -1037,7 +1097,8 @@ def main():
                 f"\n[bold]── Profile {i}/{len(profile_names)}: {profile_name} ──[/bold]\n"
             )
 
-        profile = loader.load(profile_name)
+        resolved_profile = resolved_profiles[profile_name]
+        profile = resolved_profile.profile
 
         # Show global warning
         if profile.cost_warning:
@@ -1066,7 +1127,7 @@ def main():
         budget = Budget.from_profile(profile.budget)
         profile_result = run_profile(
             user_prompt=user_prompt,
-            profile=profile,
+            resolved_profile=resolved_profile,
             budget=budget,
             loading_session=loading_session,
             session_cost=profile_session_cost,

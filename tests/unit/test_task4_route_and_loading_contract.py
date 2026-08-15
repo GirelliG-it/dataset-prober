@@ -427,26 +427,28 @@ def test_genuine_agentic_result_keeps_verified_inspection_facts(monkeypatch, tmp
 def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_path, test_profile):
     from dataset_prober import dataset_agent
     from dataset_prober.paths import AppPaths
+    from dataset_prober.profile_resolution import resolve_profile
 
-    adapter_identity = "Configured CKAN"
-    candidate_a = _dataset(adapter_identity=adapter_identity)
-    candidate_b = _dataset(adapter_identity=adapter_identity)
+    adapter_identity = "Configured CBS"
+    candidate_a = _dataset(source="cbs", adapter_identity=adapter_identity)
+    candidate_b = _dataset(source="cbs", adapter_identity=adapter_identity)
     candidate_b.id = "resource-b"
     candidate_b.url = "https://public.example/candidate-b.csv"
     candidate_b.download_url = candidate_b.url
     candidate_b.assessment = candidate_a.assessment
 
     tool = Mock()
-    tool.source_type = "ckan"
+    tool.source_type = "cbs"
     tool.adapter_identity = adapter_identity
     tool.fetch.return_value = candidate_b
-    monkeypatch.setattr(dataset_agent, "tools_for_profile", lambda _profile: [tool])
+    tool.is_available.return_value = True
+    resolved = resolve_profile(test_profile, registry={"cbs": Mock(return_value=tool)})
     monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", lambda: "test-key")
 
     tool_call = SimpleNamespace(
         type="tool_use",
         name="fetch_dataset",
-        input={"source": "ckan", "dataset_id": candidate_b.id, "sample_rows": 3},
+        input={"source": "cbs", "dataset_id": candidate_b.id, "sample_rows": 3},
         id="fetch-1",
     )
     usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
@@ -460,7 +462,7 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
 
     result = dataset_agent.run_profile(
         user_prompt="Find data",
-        profile=test_profile,
+        resolved_profile=resolved,
         budget=dataset_agent.Budget.from_profile(test_profile.budget),
         loading_session=LoadingPolicySession(download_enabled=True),
         session_cost=dataset_agent.SessionCost(),

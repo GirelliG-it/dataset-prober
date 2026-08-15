@@ -355,7 +355,8 @@ def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
     from dataclasses import replace
 
     from dataset_prober.profile_contract import CKANDialect, build_profile_contract
-    from dataset_prober.tools import tools_for_profile
+    from dataset_prober.profile_resolution import resolve_profile
+    from dataset_prober.tools import TOOL_REGISTRY
     from dataset_prober.tools.ckan_tool import CKANTool
 
     source_contract = test_profile.contract
@@ -395,7 +396,8 @@ def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
     )
     profile = replace(test_profile, contract=contract)
 
-    [tool] = tools_for_profile(profile)
+    resolved = resolve_profile(profile, registry=TOOL_REGISTRY)
+    [tool] = resolved.tools
 
     assert isinstance(tool, CKANTool)
     assert profile.catalogs[0].ckan_dialect is CKANDialect.CKAN_ACTION
@@ -490,6 +492,8 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
     from dataset_prober.loading_policy import LoadingPolicySession
     from dataset_prober.paths import AppPaths
     from dataset_prober.profile_contract import build_profile_contract
+    from dataset_prober.profile_resolution import resolve_profile
+    from dataset_prober.tools.cbs_tool import CBSTool
 
     contract = test_profile.contract
     catalogs = [
@@ -554,8 +558,11 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
     assert [catalog.adapter for catalog in profile.catalogs] == ["cbs", "tavily"]
     assert [catalog.adapter for catalog in profile.agent_usable_catalogs] == ["cbs"]
 
-    local_tools = Mock(return_value=[])
-    monkeypatch.setattr(dataset_agent, "tools_for_profile", local_tools)
+    tavily_factory = Mock(side_effect=AssertionError("policy-excluded Tavily was constructed"))
+    resolved = resolve_profile(
+        profile,
+        registry={"cbs": CBSTool, "tavily": tavily_factory},
+    )
     monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", Mock(return_value="offline-key"))
     usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
     response = SimpleNamespace(
@@ -570,7 +577,7 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
 
     dataset_agent.run_profile(
         user_prompt="Find population data",
-        profile=profile,
+        resolved_profile=resolved,
         budget=dataset_agent.Budget.from_profile(profile.budget),
         loading_session=LoadingPolicySession(download_enabled=False),
         session_cost=dataset_agent.SessionCost(),
@@ -595,9 +602,10 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
             assert "tavily" not in source["description"].lower()
         assert "tavily" not in definition["description"].lower()
     assert "disabled tavily discovery" not in rendered
+    assert resolved.source_keys == tuple(resolved.execution_map) == ("cbs",)
     client.messages.create.assert_called_once()
     anthropic_factory.assert_called_once_with(api_key="offline-key")
-    local_tools.assert_called_once_with(profile)
+    tavily_factory.assert_not_called()
 
 
 def test_tavily_direct_resource_uses_guarded_local_copy(monkeypatch, tmp_path):
