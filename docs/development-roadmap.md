@@ -1,5 +1,5 @@
 # Development roadmap
-# Last updated: 15 August 2026
+*Last updated: 15 August 2026*
 
 ```mermaid
 flowchart TB
@@ -10,23 +10,23 @@ flowchart TB
     end
 
     subgraph Step4["2 · Step 4 — Resolve capabilities once"]
-        S4 Initial["✅ Initial implementation<br/>ResolvedProfile boundary<br/>Adapters instantiated once<br/>Schema and execution map share one source"]
-        S4 Correction["✅ Correction pass complete<br/>Close resolved-object construction<br/>Remove unresolved OpenDataSoft context<br/>Load automatic descriptors once<br/>Strengthen mixed-path tests"]
-        S4 Gate{"✅ Step 4 gate passed<br/>Required failures stop locally<br/>Zero tools means no Anthropic<br/>Model enums equal executable sources<br/>Exact adapter instances are reused"}
-        S4 Initial --> S4 Correction --> S4 Gate
+        S4Initial["✅ Initial implementation<br/>ResolvedProfile boundary<br/>Adapters instantiated once<br/>Schema and execution map share one source"]
+        S4Correction["✅ Correction pass complete<br/>Close resolved-object construction<br/>Remove unresolved OpenDataSoft context<br/>Load automatic descriptors once<br/>Strengthen mixed-path tests"]
+        S4Gate{"✅ Step 4 gate passed<br/>Required failures stop locally<br/>Zero tools means no Anthropic<br/>Model enums equal executable sources<br/>Exact adapter instances are reused"}
+        S4Initial --> S4 Correction --> S4 Gate
     end
 
-    CKAN --> S4 Initial
-    S4 Gate -->|"All offline checks passed"| S4 Merge["✅ Step 4 implementation complete<br/>Commit f8822a5"]
+    CKAN --> S4Initial
+    S4Gate -->|"All offline checks passed"| S4Merge["✅ Step 4 implementation complete<br/>Commit f8822a5"]
 
     subgraph Step5["3 · Step 5 — Harden run budgets"]
-        S5 Work["⏳ Pending<br/>Apply CLI token override<br/>Add model-call ceiling<br/>Enforce total tokens between calls<br/>Use monotonic deadlines<br/>Pass remaining timeout to Anthropic<br/>Cap results and sample rows<br/>Remove unused crawl promise<br/>Repair timeout continuation"]
-        S5 Gate{"Step 5 gate<br/>Fake-client tests prove every ceiling<br/>No extra model call after exhaustion"}
-        S5 Work --> S5Gate
+        S5Work["⏳ Pending<br/>Apply CLI token override<br/>Add model-call ceiling<br/>Enforce total tokens between calls<br/>Use monotonic deadlines<br/>Pass remaining timeout to Anthropic<br/>Cap results and sample rows<br/>Remove unused crawl promise<br/>Repair timeout continuation"]
+        S5Gate{"Step 5 gate<br/>Fake-client tests prove every ceiling<br/>No extra model call after exhaustion"}
+        S5Work --> S5Gate
     end
 
-    S4 Merge --> S5 Work
-    S5 Gate -->|"Pass and merge"| Hardened["Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure"]
+    S4Merge --> S5Work
+    S5Gate -->|"Pass and merge"| Hardened["Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure"]
 
     subgraph Repairs["4 · Independent profile-repair branches"]
         Dutch["⏳ Dutch<br/>Keep CBS OData v3<br/>Correct data.overheid.nl to /data/api/3<br/>Remove OpenDataSoft promises<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
@@ -42,15 +42,15 @@ flowchart TB
     US --> ProfileGate
     EU --> ProfileGate
 
-    Global["⏸ Global profile remains disabled<br/>Requires a separate policy-compliant<br/>discovery design"]:::hold
+    Global["⏸ Global profile remains disabled<br/>Requires a separate policy-compliant<br/>discovery design"]
     Hardened -.-> Global
 
     ProfileGate --> Live["🎯 Controlled real end-to-end live test"]
     Live --> V01["Dataset Prober v0.1 readiness review"]
 
-    class P2A,CKAN,S4 Initial,S4 Correction,S4 Gate, S4 Merge done
-    class S5 Gate,ProfileGate gate
-    class S5 Work,Hardened,Dutch,US,EU,Live,V01 pending
+    class P2A,CKAN,S4Initial,S4Correction,S4Gate, S4Merge done
+    class S5Gate,ProfileGate gate
+    class S5Work,Hardened,Dutch,US,EU,Live,V01 pending
 
     classDef done fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef active fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:3px
