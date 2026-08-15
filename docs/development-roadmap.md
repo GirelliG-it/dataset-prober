@@ -13,7 +13,7 @@ flowchart TB
         S4Initial["✅ Initial implementation<br/>ResolvedProfile boundary<br/>Adapters instantiated once<br/>Schema and execution map share one source"]
         S4Correction["✅ Correction pass complete<br/>Close resolved-object construction<br/>Remove unresolved OpenDataSoft context<br/>Load automatic descriptors once<br/>Strengthen mixed-path tests"]
         S4Gate{"✅ Step 4 gate passed<br/>Required failures stop locally<br/>Zero tools means no Anthropic<br/>Model enums equal executable sources<br/>Exact adapter instances are reused"}
-        S4Initial --> S4 Correction --> S4 Gate
+        S4Initial --> S4Correction --> S4Gate
     end
 
     CKAN --> S4Initial
@@ -48,7 +48,7 @@ flowchart TB
     ProfileGate --> Live["🎯 Controlled real end-to-end live test"]
     Live --> V01["Dataset Prober v0.1 readiness review"]
 
-    class P2A,CKAN,S4Initial,S4Correction,S4Gate, S4Merge done
+    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge done
     class S5Gate,ProfileGate gate
     class S5Work,Hardened,Dutch,US,EU,Live,V01 pending
 
@@ -57,4 +57,5 @@ flowchart TB
     classDef pending fill:#e0e7ff,stroke:#4f46e5,color:#312e81
     classDef gate fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
     classDef hold fill:#e5e7eb,stroke:#6b7280,color:#374151
+    class Global hold
 ```
