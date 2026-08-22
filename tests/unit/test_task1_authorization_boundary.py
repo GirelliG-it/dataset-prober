@@ -777,11 +777,13 @@ def test_failed_real_adapter_inspection_cannot_authorize_or_persist(monkeypatch,
     budget = Mock()
     budget.can_probe.return_value = True
     budget.probes_used = 0
+    budget.sample_rows = 3
+    budget.time_remaining.return_value = 30
     paths = AppPaths(output_dir=tmp_path / "output")
 
     inspected = execute_tool(
         tool_name="fetch_dataset",
-        tool_input={"source": source, "dataset_id": resource_id, "sample_rows": 3},
+        tool_input={"source": source, "dataset_id": resource_id},
         tool_map={source: tool},
         budget=budget,
         profile=Mock(),

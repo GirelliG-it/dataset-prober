@@ -9,8 +9,23 @@ from unittest.mock import Mock
 
 import pytest
 
-from dataset_prober.tools.base import DatasetResult
+from dataset_prober.tools.base import DatasetResult, RunDeadlineExceeded
 from tests.conftest import eligible_assessment_for_candidate
+
+
+class FakeClock:
+    def __init__(self, value: float = 0.0) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
+def remaining_until(clock: FakeClock, deadline: float):
+    return lambda: max(0.0, deadline - clock())
 
 
 class FakeHttpResult:
@@ -185,6 +200,330 @@ def test_ckan_catalogue_and_resource_use_guarded_transport(monkeypatch, tmp_path
     )
     assert safe_get.call_count == 2
     safe_fetch.assert_called_once()
+
+
+@pytest.mark.parametrize("remaining_seconds", [2, 60])
+@pytest.mark.parametrize("source", ["cbs", "ckan"])
+def test_catalog_search_timeout_is_capped_by_fresh_run_allowance(
+    monkeypatch,
+    source,
+    remaining_seconds,
+):
+    clock = FakeClock()
+    remaining_time = remaining_until(clock, remaining_seconds)
+
+    if source == "cbs":
+        from dataset_prober.tools import cbs_tool
+
+        transport = Mock(return_value=FakeHttpResult(data={"value": []}))
+        monkeypatch.setattr(cbs_tool, "safe_http_get", transport)
+        tool = cbs_tool.CBSTool(
+            {
+                "name": "CBS",
+                "base_url": "https://opendata.cbs.nl/ODataCatalog",
+                "timeout_seconds": 30,
+            }
+        )
+    else:
+        from dataset_prober.tools import ckan_tool
+
+        transport = Mock(
+            return_value=FakeHttpResult(data={"success": True, "result": {"results": []}})
+        )
+        monkeypatch.setattr(ckan_tool, "safe_http_get", transport)
+        tool = ckan_tool.CKANTool(
+            {
+                **ckan_route_config(),
+                "timeout_seconds": 30,
+            }
+        )
+
+    tool.search("population", max_results=1, remaining_time=remaining_time)
+
+    expected_timeout = min(30, remaining_seconds)
+    assert transport.call_count == 1
+    assert transport.call_args.kwargs["timeout"] == expected_timeout
+
+
+@pytest.mark.parametrize("source", ["cbs", "ckan"])
+def test_catalog_search_preserves_exhausted_run_deadline_before_transport(
+    monkeypatch,
+    source,
+):
+    remaining_time = Mock(return_value=0)
+    transport = Mock(side_effect=AssertionError("expired search reached transport"))
+
+    if source == "cbs":
+        from dataset_prober.tools import cbs_tool
+
+        monkeypatch.setattr(cbs_tool, "safe_http_get", transport)
+        tool = cbs_tool.CBSTool(
+            {
+                "name": "CBS",
+                "base_url": "https://opendata.cbs.nl/ODataCatalog",
+                "timeout_seconds": 30,
+            }
+        )
+    else:
+        from dataset_prober.tools import ckan_tool
+
+        monkeypatch.setattr(ckan_tool, "safe_http_get", transport)
+        tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+
+    with pytest.raises(RunDeadlineExceeded, match="deadline exhausted"):
+        tool.search("population", max_results=1, remaining_time=remaining_time)
+
+    remaining_time.assert_called_once_with()
+    transport.assert_not_called()
+
+
+def test_cbs_fetch_recalculates_run_allowance_before_sample_request(monkeypatch):
+    from dataset_prober.tools import cbs_tool
+
+    clock = FakeClock()
+    remaining_time = remaining_until(clock, 60)
+    timeouts = []
+
+    def transport(_url, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        if len(timeouts) == 1:
+            clock.advance(58)
+            return FakeHttpResult(data={"value": [{"Title": "Population"}]})
+        return FakeHttpResult(data={"value": [{"Period": "2025", "Value": 1}]})
+
+    monkeypatch.setattr(cbs_tool, "safe_http_get", transport)
+    tool = cbs_tool.CBSTool({"name": "CBS", "timeout_seconds": 30})
+
+    result = tool.fetch("83583NED", sample_rows=1, remaining_time=remaining_time)
+
+    assert result.status == "probed"
+    assert timeouts == [30, 2]
+
+
+def test_cbs_fetch_does_not_start_sample_after_metadata_exhausts_deadline(monkeypatch):
+    from dataset_prober.tools import cbs_tool
+
+    clock = FakeClock()
+    remaining_time = remaining_until(clock, 60)
+    metadata = FakeHttpResult(data={"value": [{"Title": "Population"}]})
+
+    def transport(_url, **_kwargs):
+        clock.advance(60)
+        return metadata
+
+    safe_get = Mock(side_effect=transport)
+    monkeypatch.setattr(cbs_tool, "safe_http_get", safe_get)
+    tool = cbs_tool.CBSTool({"name": "CBS", "timeout_seconds": 30})
+
+    with pytest.raises(RunDeadlineExceeded, match="deadline exhausted"):
+        tool.fetch("83583NED", sample_rows=1, remaining_time=remaining_time)
+
+    assert safe_get.call_count == 1
+
+
+def test_ckan_fetch_recalculates_run_allowance_before_csv_retrieval(monkeypatch, tmp_path):
+    from dataset_prober.tools import ckan_tool
+    from dataset_prober.tools.guards import FetchedResource
+
+    resource_url = "https://files.public.example/data.csv"
+    package = {
+        "name": "resource-a",
+        "title": "Resource A",
+        "resources": [{"format": "CSV", "url": resource_url}],
+    }
+    clock = FakeClock()
+    remaining_time = remaining_until(clock, 60)
+    metadata_timeouts = []
+    retrieval_timeouts = []
+    csv_path = tmp_path / "ckan-deadline.csv"
+    csv_path.write_text("value\n1\n", encoding="utf-8")
+
+    def package_show(_url, **kwargs):
+        metadata_timeouts.append(kwargs["timeout"])
+        clock.advance(58)
+        return FakeHttpResult(data={"success": True, "result": package})
+
+    @contextmanager
+    def retrieve(url, **kwargs):
+        retrieval_timeouts.append(kwargs["timeout"])
+        yield FetchedResource(
+            source_url=url,
+            final_url=url,
+            path=str(csv_path),
+            headers={"Content-Type": "text/csv"},
+        )
+
+    monkeypatch.setattr(ckan_tool, "safe_http_get", package_show)
+    monkeypatch.setattr(ckan_tool, "safe_download", retrieve)
+    tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+
+    result = tool.fetch("resource-a", sample_rows=1, remaining_time=remaining_time)
+
+    assert result.status == "probed"
+    assert metadata_timeouts == [30]
+    assert retrieval_timeouts == [2]
+
+
+def test_ckan_fetch_does_not_start_csv_probe_after_metadata_exhausts_deadline(monkeypatch):
+    from dataset_prober.tools import ckan_tool
+
+    resource_url = "https://files.public.example/data.csv"
+    package = {
+        "name": "resource-a",
+        "title": "Resource A",
+        "resources": [{"format": "CSV", "url": resource_url}],
+    }
+    clock = FakeClock()
+    remaining_time = remaining_until(clock, 60)
+
+    def package_show(_url, **_kwargs):
+        clock.advance(60)
+        return FakeHttpResult(data={"success": True, "result": package})
+
+    safe_fetch = Mock(side_effect=AssertionError("expired fetch reached CSV retrieval"))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", package_show)
+    monkeypatch.setattr(ckan_tool, "safe_download", safe_fetch)
+    tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+
+    with pytest.raises(RunDeadlineExceeded, match="deadline exhausted"):
+        tool.fetch("resource-a", sample_rows=1, remaining_time=remaining_time)
+
+    safe_fetch.assert_not_called()
+
+
+def test_ckan_fetch_preserves_deadline_after_retrieval_before_duckdb(
+    monkeypatch,
+    tmp_path,
+):
+    from dataset_prober.tools import ckan_tool
+    from dataset_prober.tools.guards import FetchedResource
+
+    resource_url = "https://files.public.example/data.csv"
+    package = {
+        "name": "resource-a",
+        "title": "Resource A",
+        "resources": [{"format": "CSV", "url": resource_url}],
+    }
+    clock = FakeClock()
+    remaining_time = remaining_until(clock, 60)
+    csv_path = tmp_path / "ckan-deadline-cleanup.csv"
+    csv_path.write_text("value\n1\n", encoding="utf-8")
+    cleanup_observed = []
+    retrieval_calls = []
+
+    @contextmanager
+    def retrieve(url, **kwargs):
+        retrieval_calls.append((url, kwargs["timeout"]))
+        try:
+            clock.advance(60)
+            yield FetchedResource(
+                source_url=url,
+                final_url=url,
+                path=str(csv_path),
+                headers={"Content-Type": "text/csv"},
+            )
+        finally:
+            csv_path.unlink(missing_ok=True)
+            cleanup_observed.append(True)
+
+    package_show = Mock(return_value=FakeHttpResult(data={"success": True, "result": package}))
+    duckdb_connect = Mock(side_effect=AssertionError("expired probe opened DuckDB"))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", package_show)
+    monkeypatch.setattr(ckan_tool, "safe_download", retrieve)
+    monkeypatch.setattr("duckdb.connect", duckdb_connect)
+    tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+    candidate = tool._package_to_result(package)
+    monkeypatch.setattr(tool, "_package_to_result", Mock(return_value=candidate))
+
+    with pytest.raises(RunDeadlineExceeded, match="deadline exhausted"):
+        tool.fetch("resource-a", sample_rows=1, remaining_time=remaining_time)
+
+    assert package_show.call_count == 1
+    assert retrieval_calls == [(resource_url, 30)]
+    duckdb_connect.assert_not_called()
+    assert cleanup_observed == [True]
+    assert not csv_path.exists()
+    assert candidate.status == "found"
+    assert candidate.error is None
+
+
+@pytest.mark.parametrize("source", ["cbs", "ckan"])
+def test_catalog_search_transport_failure_remains_error_result(monkeypatch, source):
+    transport = Mock(side_effect=OSError("source transport failed"))
+
+    if source == "cbs":
+        from dataset_prober.tools import cbs_tool
+
+        monkeypatch.setattr(cbs_tool, "safe_http_get", transport)
+        tool = cbs_tool.CBSTool(
+            {
+                "name": "CBS",
+                "base_url": "https://opendata.cbs.nl/ODataCatalog",
+                "timeout_seconds": 30,
+            }
+        )
+    else:
+        from dataset_prober.tools import ckan_tool
+
+        monkeypatch.setattr(ckan_tool, "safe_http_get", transport)
+        tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+
+    results = tool.search("population", max_results=1, remaining_time=lambda: 60)
+
+    assert transport.call_count == 1
+    assert len(results) == 1
+    assert results[0].status == "failed"
+    assert "source transport failed" in results[0].error
+
+
+@pytest.mark.parametrize("source", ["cbs", "ckan"])
+def test_fetch_transport_failure_remains_failed_dataset_result(monkeypatch, source):
+    transport = Mock(side_effect=OSError("source transport failed"))
+
+    if source == "cbs":
+        from dataset_prober.tools import cbs_tool
+
+        monkeypatch.setattr(cbs_tool, "safe_http_get", transport)
+        tool = cbs_tool.CBSTool({"name": "CBS", "timeout_seconds": 30})
+    else:
+        from dataset_prober.tools import ckan_tool
+
+        monkeypatch.setattr(ckan_tool, "safe_http_get", transport)
+        tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+
+    dataset_id = "83583NED" if source == "cbs" else "resource-a"
+    result = tool.fetch(dataset_id, sample_rows=1, remaining_time=lambda: 60)
+
+    assert transport.call_count == 1
+    assert result.status == "failed"
+    assert "source transport failed" in result.error
+
+
+def test_ckan_csv_inspection_transport_failure_remains_failed_dataset_result(monkeypatch):
+    from dataset_prober.tools import ckan_tool
+
+    resource_url = "https://files.public.example/data.csv"
+    package = {
+        "name": "resource-a",
+        "title": "Resource A",
+        "resources": [{"format": "CSV", "url": resource_url}],
+    }
+    package_show = Mock(return_value=FakeHttpResult(data={"success": True, "result": package}))
+
+    @contextmanager
+    def failed_retrieval(_url, **_kwargs):
+        raise OSError("CSV retrieval failed")
+        yield
+
+    monkeypatch.setattr(ckan_tool, "safe_http_get", package_show)
+    monkeypatch.setattr(ckan_tool, "safe_download", failed_retrieval)
+    tool = ckan_tool.CKANTool({**ckan_route_config(), "timeout_seconds": 30})
+
+    result = tool.fetch("resource-a", sample_rows=1, remaining_time=lambda: 60)
+
+    assert package_show.call_count == 1
+    assert result.status == "failed"
+    assert "CSV retrieval failed" in result.error
 
 
 @pytest.mark.parametrize(
@@ -382,9 +721,11 @@ def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
             field: getattr(source_contract.budget, field)
             for field in (
                 "max_searches",
-                "max_crawls",
+                "max_results",
                 "max_probes",
+                "max_model_calls",
                 "max_tokens",
+                "max_total_tokens",
                 "timeout_minutes",
                 "sample_rows",
                 "download_timeout_seconds",
@@ -530,9 +871,11 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
             field: getattr(contract.budget, field)
             for field in (
                 "max_searches",
-                "max_crawls",
+                "max_results",
                 "max_probes",
+                "max_model_calls",
                 "max_tokens",
+                "max_total_tokens",
                 "timeout_minutes",
                 "sample_rows",
                 "download_timeout_seconds",
@@ -581,7 +924,6 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
         budget=dataset_agent.Budget.from_profile(profile.budget),
         loading_session=LoadingPolicySession(download_enabled=False),
         session_cost=dataset_agent.SessionCost(),
-        cli_overrides={},
         paths=AppPaths(output_dir=tmp_path),
     )
 
@@ -604,7 +946,7 @@ def test_agent_model_context_and_schema_exclude_disabled_tavily_provider(
     assert "disabled tavily discovery" not in rendered
     assert resolved.source_keys == tuple(resolved.execution_map) == ("cbs",)
     client.messages.create.assert_called_once()
-    anthropic_factory.assert_called_once_with(api_key="offline-key")
+    anthropic_factory.assert_called_once_with(api_key="offline-key", max_retries=0)
     tavily_factory.assert_not_called()
 
 

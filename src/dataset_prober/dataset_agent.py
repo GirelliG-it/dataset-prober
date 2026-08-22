@@ -25,6 +25,7 @@ Usage:
 import argparse
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -63,11 +64,13 @@ from dataset_prober.profile_resolution import (  # noqa: E402
     resolve_profile,
 )
 from dataset_prober.prompt_interpreter import (  # noqa: E402
+    InterpretationResult,
     ProfileInterpretationError,
     PromptInterpreter,
 )
 from dataset_prober.resource_classification import unknown_assessment  # noqa: E402
 from dataset_prober.tools import TOOL_REGISTRY, DatasetResult  # noqa: E402
+from dataset_prober.tools.base import RunDeadlineExceeded  # noqa: E402
 
 console = Console()
 
@@ -91,19 +94,54 @@ AGENT_MODEL = "claude-sonnet-4-6"
 
 @dataclass
 class SessionCost:
-    """Tracks token usage and cost across the entire session."""
+    """Tracks actual reported profile-agent usage and call outcomes."""
 
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
-    total_calls: int = 0
+    model_calls_attempted: int = 0
+    model_calls_completed: int = 0
+    model_calls_timed_out: int = 0
     interpreter_cost_usd: float = 0.0
 
-    def add(self, usage, pricing):
-        self.input_tokens += usage.input_tokens
-        self.output_tokens += usage.output_tokens
-        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
-        self.total_calls += 1
+    def record_attempt(self) -> None:
+        self.model_calls_attempted += 1
+
+    def record_usage(self, usage) -> int:
+        """Record one completed response and return its reported token total."""
+
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+        cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cache_creation_tokens += cache_creation_tokens
+        self.cache_read_tokens += cache_read_tokens
+        self.model_calls_completed += 1
+        return input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+
+    def record_timeout(self) -> None:
+        """Record an attempted call that returned no usage report."""
+
+        self.model_calls_timed_out += 1
+
+    @property
+    def total_calls(self) -> int:
+        """Compatibility view of attempted profile-agent calls."""
+
+        return self.model_calls_attempted
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_tokens
+            + self.cache_read_tokens
+        )
 
     def total_cost(self, pricing) -> float:
         return (
@@ -116,9 +154,9 @@ class SessionCost:
     def summary(self, pricing) -> str:
         cost = self.total_cost(pricing)
         return (
-            f"📊 Session: {self.total_calls} API calls | "
-            f"{self.input_tokens + self.output_tokens:,} tokens | "
-            f"cost: ${cost:.4f}"
+            f"📊 Session: {self.model_calls_attempted} attempted calls | "
+            f"{self.total_tokens:,} actual reported tokens | "
+            f"estimated cost: ${cost:.4f}"
         )
 
 
@@ -130,32 +168,51 @@ class Budget:
     """Runtime budget — enforces limits from profile, overrideable by CLI."""
 
     max_searches: int
-    max_crawls: int
+    max_results: int
     max_probes: int
+    max_model_calls: int
     max_tokens: int
+    max_total_tokens: int
     timeout_seconds: float
+    sample_rows: int
+    download_timeout_seconds: int
 
     searches_used: int = 0
-    crawls_used: int = 0
     probes_used: int = 0
+    model_calls_used: int = 0
     tokens_used: int = 0
-    start_time: float = field(default_factory=time.time)
+    clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
+    _interval_started_at: float = field(init=False, repr=False)
+    _deadline: float = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.reset_timer()
 
     @classmethod
-    def from_profile(cls, budget_config: BudgetConfig) -> "Budget":
+    def from_profile(
+        cls,
+        budget_config: BudgetConfig,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> "Budget":
         return cls(
             max_searches=budget_config.max_searches,
-            max_crawls=budget_config.max_crawls,
+            max_results=budget_config.max_results,
             max_probes=budget_config.max_probes,
+            max_model_calls=budget_config.max_model_calls,
             max_tokens=budget_config.max_tokens,
+            max_total_tokens=budget_config.max_total_tokens,
             timeout_seconds=budget_config.timeout_minutes * 60,
+            sample_rows=budget_config.sample_rows,
+            download_timeout_seconds=budget_config.download_timeout_seconds,
+            clock=clock,
         )
 
     def time_remaining(self) -> float:
-        return self.timeout_seconds - (time.time() - self.start_time)
+        return max(0.0, self._deadline - self.clock())
 
     def elapsed_minutes(self) -> float:
-        return (time.time() - self.start_time) / 60
+        return max(0.0, self.clock() - self._interval_started_at) / 60
 
     def timed_out(self) -> bool:
         return self.time_remaining() <= 0
@@ -163,11 +220,17 @@ class Budget:
     def can_search(self) -> bool:
         return self.searches_used < self.max_searches and not self.timed_out()
 
-    def can_crawl(self) -> bool:
-        return self.crawls_used < self.max_crawls and not self.timed_out()
-
     def can_probe(self) -> bool:
         return self.probes_used < self.max_probes and not self.timed_out()
+
+    def model_calls_exhausted(self) -> bool:
+        return self.model_calls_used >= self.max_model_calls
+
+    def total_tokens_exhausted(self) -> bool:
+        return self.tokens_used >= self.max_total_tokens
+
+    def remaining_token_allowance(self) -> int:
+        return max(0, self.max_total_tokens - self.tokens_used)
 
     def status_line(self) -> str:
         remaining = self.time_remaining()
@@ -176,19 +239,20 @@ class Budget:
         return (
             f"⏱  {mins}m{secs}s remaining | "
             f"🔍 {self.searches_used}/{self.max_searches} searches | "
-            f"🌐 {self.crawls_used}/{self.max_crawls} crawls | "
             f"📊 {self.probes_used}/{self.max_probes} probes | "
-            f"🔤 {self.tokens_used:,}/{self.max_tokens:,} tokens"
+            f"🤖 {self.model_calls_used}/{self.max_model_calls} calls | "
+            f"🔤 {self.tokens_used:,}/{self.max_total_tokens:,} reported-token stop threshold"
         )
 
-    def reset_timer(self):
-        self.start_time = time.time()
+    def reset_timer(self) -> None:
+        self._interval_started_at = self.clock()
+        self._deadline = self._interval_started_at + self.timeout_seconds
 
 
 # ─── Dynamic tool definitions for Claude ────────────────────────────────────
 
 
-def build_tool_definitions(resolved_profile: ResolvedProfile) -> list[dict]:
+def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) -> list[dict]:
     """
     Build Claude tool definitions from one authoritative resolved capability view.
     """
@@ -237,7 +301,9 @@ def build_tool_definitions(resolved_profile: ResolvedProfile) -> list[dict]:
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Number of results to return",
+                        "minimum": 1,
+                        "maximum": budget.max_results,
+                        "description": "Number of results to return within the configured cap",
                     },
                 },
                 "required": ["keyword", "source", "max_results"],
@@ -266,12 +332,8 @@ def build_tool_definitions(resolved_profile: ResolvedProfile) -> list[dict]:
                         "enum": catalog_types,
                         "description": "Which tool to use for fetching",
                     },
-                    "sample_rows": {
-                        "type": "integer",
-                        "description": "Number of sample rows to retrieve",
-                    },
                 },
-                "required": ["dataset_id", "source", "sample_rows"],
+                "required": ["dataset_id", "source"],
             },
         }
     )
@@ -374,9 +436,16 @@ def execute_tool(
     Returns JSON-serializable result dict.
     """
     if tool_name == "search_catalog":
+        requested_results = tool_input.get("max_results")
+        if (
+            isinstance(requested_results, bool)
+            or not isinstance(requested_results, int)
+            or requested_results <= 0
+        ):
+            return {"error": "max_results must be a positive integer"}
+        effective_results = min(requested_results, budget.max_results)
         source = tool_input["source"]
         keyword = tool_input["keyword"]
-        max_results = tool_input["max_results"]
 
         tool = tool_map.get(source)
         if not tool:
@@ -390,14 +459,26 @@ def execute_tool(
         )
         budget.searches_used += 1
 
-        results = tool.search(keyword, max_results)
+        try:
+            results = list(
+                tool.search(
+                    keyword,
+                    effective_results,
+                    remaining_time=budget.time_remaining,
+                )
+            )[:effective_results]
+        except RunDeadlineExceeded:
+            deadline_error = sanitize_url_text(
+                "Profile-agent run deadline exhausted before source operation completed"
+            )
+            console.print(f"    → ⏰ [yellow]{deadline_error}[/yellow]")
+            return {"error": deadline_error}
         console.print(f"    → Found {len(results)} results")
         return {"results": [r.to_dict() for r in results]}
 
     elif tool_name == "fetch_dataset":
         source = tool_input["source"]
         dataset_id = tool_input["dataset_id"]
-        sample_rows = tool_input["sample_rows"]
 
         tool = tool_map.get(source)
         if not tool:
@@ -412,7 +493,18 @@ def execute_tool(
         )
         budget.probes_used += 1
 
-        result = tool.fetch(dataset_id, sample_rows)
+        try:
+            result = tool.fetch(
+                dataset_id,
+                budget.sample_rows,
+                remaining_time=budget.time_remaining,
+            )
+        except RunDeadlineExceeded:
+            deadline_error = sanitize_url_text(
+                "Profile-agent run deadline exhausted before source operation completed"
+            )
+            console.print(f"    → ⏰ [yellow]{deadline_error}[/yellow]")
+            return {"error": deadline_error}
 
         found_datasets.append(result)
         if result.assessment.load_eligible:
@@ -570,7 +662,6 @@ def run_profile(
     budget: Budget,
     loading_session: LoadingPolicySession,
     session_cost: SessionCost,
-    cli_overrides: dict,
     paths: AppPaths,
     initial_message: Optional[str] = None,
 ) -> ProfileResult:
@@ -582,14 +673,10 @@ def run_profile(
     profile = resolved_profile.profile
     profile.require_runnable()
 
-    # Apply CLI overrides to budget.
-    budget_config = profile.budget.override(**cli_overrides)
-    budget = Budget.from_profile(budget_config)
-
     # Build every model- and executor-facing capability surface from the same
     # immutable resolved object before touching either profile-agent API boundary.
     tool_map = resolved_profile.execution_map
-    tool_definitions = build_tool_definitions(resolved_profile)
+    tool_definitions = build_tool_definitions(resolved_profile, budget)
     system_context = resolved_profile.system_prompt_context
     expected_sources = resolved_profile.source_keys
     if tuple(tool_map.keys()) != expected_sources:
@@ -609,7 +696,7 @@ def run_profile(
         display_name=profile.name,
         objective=None,  # set by orchestrator
     )
-    client = anthropic.Anthropic(api_key=get_anthropic_api_key())
+    client = anthropic.Anthropic(api_key=get_anthropic_api_key(), max_retries=0)
 
     # Build dynamic system prompt — no hardcoded values
     system_prompt = f"""You are an autonomous dataset discovery agent.
@@ -627,7 +714,11 @@ BEHAVIOUR RULES:
 8. Explain each decision briefly before each tool call.
 
 BUDGET AWARENESS:
-- You have {budget.max_searches} searches, {budget.max_crawls} crawls, {budget.max_probes} probes.
+- You have {budget.max_searches} searches, at most {budget.max_results} results per search,
+  and {budget.max_probes} probes.
+- You have {budget.max_model_calls} model-call attempts. The between-call reported-token
+  stop threshold is {budget.max_total_tokens}; a completed call may cross it because input
+  usage is reported afterward. Each call requests at most {budget.max_tokens} output tokens.
 - Use them efficiently — don't repeat the same search twice.
 - Use only the active catalog tools supplied for this profile.
 
@@ -678,8 +769,23 @@ REPORTING RULES:
     while True:
         iteration += 1
 
-        # Check timeout
-        if budget.timed_out():
+        if budget.model_calls_exhausted():
+            console.print(
+                "[yellow]Model-call budget exhausted; returning partial results.[/yellow]"
+            )
+            break
+        if budget.total_tokens_exhausted():
+            console.print(
+                "[yellow]Reported-token stop threshold reached; returning partial results.[/yellow]"
+            )
+            break
+
+        # Status every 3 iterations, before the fresh request timeout is captured.
+        if iteration % 3 == 0:
+            console.print(f"\n[dim]{budget.status_line()}[/dim]\n")
+
+        remaining_timeout = budget.time_remaining()
+        if remaining_timeout <= 0:
             console.print(
                 f"\n[yellow]⏰ Time limit reached after "
                 f"{budget.elapsed_minutes():.1f} minutes.[/yellow]"
@@ -687,47 +793,60 @@ REPORTING RULES:
             console.print(
                 f"[yellow]Found {len(found_datasets)} resource candidate(s) so far.[/yellow]\n"
             )
-            _handle_timeout(found_datasets, budget, tool_map, loading_session, paths)
+            if _handle_timeout(found_datasets, budget, tool_map, loading_session, paths):
+                continue
             break
 
-        # Status every 3 iterations
-        if iteration % 3 == 0:
-            console.print(f"\n[dim]{budget.status_line()}[/dim]\n")
+        output_allowance = min(budget.max_tokens, budget.remaining_token_allowance())
+        budget.model_calls_used += 1
+        session_cost.record_attempt()
+        try:
+            response = client.messages.create(
+                model=AGENT_MODEL,
+                max_tokens=output_allowance,
+                timeout=remaining_timeout,
+                system=system_prompt,
+                tools=tool_definitions,
+                messages=messages,
+            )
+        except anthropic.APITimeoutError:
+            session_cost.record_timeout()
+            console.print("[yellow]Model request timed out; returning partial results.[/yellow]")
+            break
 
-        # Call Claude
-        response = client.messages.create(
-            model=AGENT_MODEL,
-            max_tokens=profile.budget.max_tokens,
-            system=system_prompt,
-            tools=tool_definitions,
-            messages=messages,
-        )
-
-        # Track tokens and cost
-        session_cost.add(response.usage, profile.pricing)
-        budget.tokens_used += response.usage.input_tokens + response.usage.output_tokens
+        # Track actual usage reported by this completed response exactly once.
+        previous_input = session_cost.input_tokens
+        previous_output = session_cost.output_tokens
+        previous_cache_read = session_cost.cache_read_tokens
+        call_tokens = session_cost.record_usage(response.usage)
+        budget.tokens_used += call_tokens
 
         call_cost = profile.pricing.calculate_cost(
-            response.usage.input_tokens,
-            response.usage.output_tokens,
-            getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+            session_cost.input_tokens - previous_input,
+            session_cost.output_tokens - previous_output,
+            session_cost.cache_read_tokens - previous_cache_read,
         )
         console.print(
-            f"[dim]  tokens: {response.usage.input_tokens + response.usage.output_tokens:,} | "
-            f"call cost: {profile.pricing.format_cost(call_cost)} | "
-            f"session total: {profile.pricing.format_cost(session_cost.total_cost(profile.pricing))}[/dim]"
+            f"[dim]  actual reported tokens: {call_tokens:,} | "
+            f"estimated call cost: {profile.pricing.format_cost(call_cost)} | "
+            "estimated session cost: "
+            f"{profile.pricing.format_cost(session_cost.total_cost(profile.pricing))}[/dim]"
         )
 
         # Add response to history
         messages.append({"role": "assistant", "content": response.content})
 
-        # Check stop reason
+        # Check stop reason before executing any returned tool blocks.
         if response.stop_reason == "end_turn":
             for block in response.content:
                 if hasattr(block, "text") and block.text:
                     console.print(
                         f"\n[bold green]Agent Report:[/bold green]\n{sanitize_url_text(block.text)}"
                     )
+            break
+
+        if response.stop_reason == "max_tokens":
+            console.print("[yellow]Model output limit reached; returning partial results.[/yellow]")
             break
 
         if response.stop_reason != "tool_use":
@@ -767,9 +886,19 @@ REPORTING RULES:
     profile_result.datasets_found = found_datasets
     profile_result.datasets_downloaded = [d for d in found_datasets if d.status == "downloaded"]
     profile_result.datasets_failed = [d for d in found_datasets if d.status == "failed"]
-    profile_result.tokens_used = session_cost.input_tokens + session_cost.output_tokens
+    profile_result.input_tokens = session_cost.input_tokens
+    profile_result.output_tokens = session_cost.output_tokens
+    profile_result.cache_creation_input_tokens = session_cost.cache_creation_tokens
+    profile_result.cache_read_input_tokens = session_cost.cache_read_tokens
+    profile_result.model_calls_attempted = session_cost.model_calls_attempted
+    profile_result.model_calls_completed = session_cost.model_calls_completed
+    profile_result.model_calls_timed_out = session_cost.model_calls_timed_out
+    profile_result.token_stop_threshold = budget.max_total_tokens
     profile_result.cost_usd = session_cost.total_cost(profile.pricing)
-    profile_result.api_calls = session_cost.total_calls
+    if session_cost.model_calls_attempted != (
+        session_cost.model_calls_completed + session_cost.model_calls_timed_out
+    ):
+        raise AssertionError("Returned profile result has incomplete model-call accounting")
     return profile_result
 
 
@@ -779,18 +908,23 @@ def _handle_timeout(
     tool_map: dict,
     loading_session: LoadingPolicySession,
     paths: AppPaths,
-):
-    """Handle timeout — ask user what to do with partial results."""
+) -> bool:
+    """Handle timeout and return whether the agent loop should continue."""
     console.print("\n[bold yellow]What would you like to do?[/bold yellow]")
     console.print("  1. Continue searching (resets timer)")
     console.print("  2. Download what was found so far")
     console.print("  3. Show results and exit")
 
-    choice = console.input("\n[cyan]Your choice (1/2/3):[/cyan] ").strip()
+    try:
+        choice = console.input("\n[cyan]Your choice (1/2/3):[/cyan] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        _print_results_table(found_datasets)
+        return False
 
     if choice == "1":
         console.print("[green]Continuing...[/green]")
         budget.reset_timer()
+        return True
     elif choice == "2" and found_datasets and loading_session.download_enabled:
         candidates = [
             dataset
@@ -831,6 +965,7 @@ def _handle_timeout(
                 tool.download(dataset, str(paths.duckdb_path), authorization)
     else:
         _print_results_table(found_datasets)
+    return False
 
 
 def _print_results_table(datasets: list):
@@ -877,39 +1012,112 @@ def _print_results_table(datasets: list):
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 
+def _positive_budget_cli_value(raw_value: str) -> int:
+    """Parse one positive integer CLI budget override locally."""
+
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return value
+
+
+def _print_token_planning_estimate(
+    profile_names: list[str],
+    resolved_profiles: dict[str, ResolvedProfile],
+    effective_budget_configs: dict[str, BudgetConfig],
+    interpretation: InterpretationResult | None,
+) -> None:
+    """Display budget-based planning thresholds without starting runtime timers."""
+
+    interpreter_tokens = interpretation.total_tokens if interpretation is not None else 0
+    threshold_subtotal = sum(
+        effective_budget_configs[profile_name].max_total_tokens for profile_name in profile_names
+    )
+    console.print("\n[bold cyan]Token planning estimate[/bold cyan]")
+    console.print(
+        "[dim]This is a budget-based planning estimate, not predicted consumption or a "
+        "guaranteed maximum.[/dim]"
+    )
+    if interpretation is None:
+        console.print("  Interpreter: not used (explicit profile selection).")
+    else:
+        console.print(f"  Interpreter actual reported tokens already spent: {interpreter_tokens:,}")
+
+    for profile_name in profile_names:
+        profile = resolved_profiles[profile_name].profile
+        budget = effective_budget_configs[profile_name]
+        console.print(f"  {profile.name}:")
+        console.print(
+            f"    Between-call reported-token stop threshold: {budget.max_total_tokens:,}"
+        )
+        console.print(f"    Model-call attempts: {budget.max_model_calls:,}")
+        console.print(f"    Per-call requested output cap: {budget.max_tokens:,} tokens")
+
+    console.print(f"  Selected-profile threshold subtotal: {threshold_subtotal:,}")
+    console.print(
+        "  Nominal session planning figure: "
+        f"{interpreter_tokens + threshold_subtotal:,} "
+        f"({interpreter_tokens:,} interpreter actual + {threshold_subtotal:,} thresholds)"
+    )
+    console.print(
+        "[yellow]A final completed call can cross a profile's stop threshold because "
+        "input usage is reported only after the response.[/yellow]\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Profile-driven agentic dataset discovery")
     parser.add_argument("--profile", help="Force a specific profile (skips auto-detection)")
     parser.add_argument(
-        "--timeout", type=int, default=None, help="Timeout in minutes (overrides profile default)"
+        "--timeout",
+        type=_positive_budget_cli_value,
+        default=None,
+        help="Timeout in minutes (overrides profile default)",
     )
     parser.add_argument(
         "--max-searches",
-        type=int,
+        type=_positive_budget_cli_value,
         default=None,
         dest="max_searches",
         help="Maximum catalog searches (overrides profile default)",
     )
     parser.add_argument(
-        "--max-crawls",
-        type=int,
+        "--max-results",
+        type=_positive_budget_cli_value,
         default=None,
-        dest="max_crawls",
-        help="Maximum page extractions (overrides profile default)",
+        dest="max_results",
+        help="Maximum results returned by one catalog search",
     )
     parser.add_argument(
         "--max-probes",
-        type=int,
+        type=_positive_budget_cli_value,
         default=None,
         dest="max_probes",
         help="Maximum dataset probes (overrides profile default)",
     )
     parser.add_argument(
+        "--max-model-calls",
+        type=_positive_budget_cli_value,
+        default=None,
+        dest="max_model_calls",
+        help="Maximum profile-agent model-call attempts",
+    )
+    parser.add_argument(
         "--max-tokens",
-        type=int,
+        type=_positive_budget_cli_value,
         default=None,
         dest="max_tokens",
-        help="Maximum tokens per Claude call (overrides profile default)",
+        help="Per-call requested profile-agent output-token cap",
+    )
+    parser.add_argument(
+        "--max-total-tokens",
+        type=_positive_budget_cli_value,
+        default=None,
+        dest="max_total_tokens",
+        help="Between-call reported-token stop threshold for one profile run",
     )
     parser.add_argument(
         "--download",
@@ -928,9 +1136,11 @@ def main():
     cli_overrides = {
         "timeout_minutes": args.timeout,
         "max_searches": args.max_searches,
-        "max_crawls": args.max_crawls,
+        "max_results": args.max_results,
         "max_probes": args.max_probes,
+        "max_model_calls": args.max_model_calls,
         "max_tokens": args.max_tokens,
+        "max_total_tokens": args.max_total_tokens,
     }
 
     # Load validated profile descriptors before constructing any model or tool boundary.
@@ -1028,8 +1238,7 @@ def main():
             "affirmative consent[/yellow]\n"
         )
 
-    # Session cost tracker
-    session_cost = SessionCost()
+    interpretation: InterpretationResult | None = None
 
     # Determine profiles to run
     if args.profile:
@@ -1049,8 +1258,6 @@ def main():
                 soft_wrap=True,
             )
             return
-        session_cost.interpreter_cost_usd = interpretation.cost_usd
-
         unresolved_selections = [
             profile_name
             for profile_name in interpretation.profile_names
@@ -1062,13 +1269,26 @@ def main():
                 soft_wrap=True,
             )
             return
+        profile_names = interpretation.profile_names
 
+    effective_budget_configs = {
+        profile_name: resolved_profiles[profile_name].profile.budget.override(
+            **{key: value for key, value in cli_overrides.items() if value is not None}
+        )
+        for profile_name in profile_names
+    }
+    _print_token_planning_estimate(
+        profile_names,
+        resolved_profiles,
+        effective_budget_configs,
+        interpretation,
+    )
+
+    if interpretation is not None:
         confirmed = interpreter.present_and_confirm(interpretation, None)
         if not confirmed:
             console.print("[yellow]Cancelled.[/yellow]")
             return
-
-        profile_names = interpretation.profile_names
 
     for profile_name in profile_names:
         for issue in resolved_profiles[profile_name].issues:
@@ -1084,8 +1304,19 @@ def main():
     # Initialize orchestrator
     orchestrator = Orchestrator(objectives)
     aggregated = AggregatedResult(
-        interpreter_cost_usd=session_cost.interpreter_cost_usd,
-        interpreter_tokens=session_cost.input_tokens + session_cost.output_tokens,
+        interpreter_cost_usd=interpretation.cost_usd if interpretation is not None else 0.0,
+        interpreter_input_tokens=(interpretation.input_tokens if interpretation is not None else 0),
+        interpreter_output_tokens=(
+            interpretation.output_tokens if interpretation is not None else 0
+        ),
+        interpreter_cache_creation_input_tokens=(
+            interpretation.cache_creation_tokens if interpretation is not None else 0
+        ),
+        interpreter_cache_read_input_tokens=(
+            interpretation.cache_read_tokens if interpretation is not None else 0
+        ),
+        interpreter_model_calls_attempted=1 if interpretation is not None else 0,
+        interpreter_model_calls_completed=1 if interpretation is not None else 0,
     )
 
     # Run profiles sequentially with orchestrator handoffs
@@ -1124,14 +1355,13 @@ def main():
         profile_session_cost = SessionCost()
         profile_session_cost.interpreter_cost_usd = 0.0
 
-        budget = Budget.from_profile(profile.budget)
+        budget = Budget.from_profile(effective_budget_configs[profile_name])
         profile_result = run_profile(
             user_prompt=user_prompt,
             resolved_profile=resolved_profile,
             budget=budget,
             loading_session=loading_session,
             session_cost=profile_session_cost,
-            cli_overrides={k: v for k, v in cli_overrides.items() if v is not None},
             paths=paths,
             initial_message=initial_message,
         )

@@ -26,6 +26,16 @@ to the source. For the latter, read `git log`.
 
 ### Changed
 
+- Profile-agent runs now enforce explicit per-search result and model-call ceilings, a
+  between-call reported-token stop threshold, a per-call requested output cap and monotonic
+  request deadlines. CBS and CKAN discovery and inspection operations now cap configured
+  source timeouts by freshly remaining run time between sequential operations. Output-limited
+  model responses
+  return partial results without retrying or executing truncated tool calls. The unused crawl
+  budget was removed, and continuing after a timeout no longer resets any non-time budget.
+  Pre-run output labels thresholds as a budget-based planning estimate; final output reports
+  token usage returned by completed model responses and locally observed attempted, completed,
+  and timed-out call outcomes.
 - Bundled profiles now load through the immutable static profile contract and fail closed
   according to explicit lifecycle status: Dutch CBS is manual-only, while US, EU and Global
   discovery remain disabled until their promised transports are repaired and certified.

@@ -559,12 +559,20 @@ class TestBudgetOverride:
 
     def test_override_all_fields(self, test_profile):
         overridden = test_profile.budget.override(
-            max_searches=10, max_crawls=15, max_probes=20, max_tokens=8192, timeout_minutes=30
+            max_searches=10,
+            max_results=15,
+            max_probes=20,
+            max_model_calls=30,
+            max_tokens=8192,
+            max_total_tokens=90000,
+            timeout_minutes=30,
         )
         assert overridden.max_searches == 10
-        assert overridden.max_crawls == 15
+        assert overridden.max_results == 15
         assert overridden.max_probes == 20
+        assert overridden.max_model_calls == 30
         assert overridden.max_tokens == 8192
+        assert overridden.max_total_tokens == 90000
         assert overridden.timeout_minutes == 30
 
 

@@ -109,9 +109,11 @@ class BudgetConfig:
     """User-controlled budget limits for an agent run."""
 
     max_searches: int
-    max_crawls: int
+    max_results: int
     max_probes: int
+    max_model_calls: int
     max_tokens: int
+    max_total_tokens: int
     timeout_minutes: int
     sample_rows: int
     download_timeout_seconds: int
@@ -123,9 +125,11 @@ class BudgetConfig:
         """
         current = {
             "max_searches": self.max_searches,
-            "max_crawls": self.max_crawls,
+            "max_results": self.max_results,
             "max_probes": self.max_probes,
+            "max_model_calls": self.max_model_calls,
             "max_tokens": self.max_tokens,
+            "max_total_tokens": self.max_total_tokens,
             "timeout_minutes": self.timeout_minutes,
             "sample_rows": self.sample_rows,
             "download_timeout_seconds": self.download_timeout_seconds,
@@ -222,9 +226,11 @@ class Profile:
         budget = self.contract.budget
         self._budget = BudgetConfig(
             max_searches=budget.max_searches,
-            max_crawls=budget.max_crawls,
+            max_results=budget.max_results,
             max_probes=budget.max_probes,
+            max_model_calls=budget.max_model_calls,
             max_tokens=budget.max_tokens,
+            max_total_tokens=budget.max_total_tokens,
             timeout_minutes=budget.timeout_minutes,
             sample_rows=budget.sample_rows,
             download_timeout_seconds=budget.download_timeout_seconds,
@@ -396,9 +402,11 @@ _CATALOG_FIELDS = {
 }
 _BUDGET_FIELDS = {
     "max_searches",
-    "max_crawls",
+    "max_results",
     "max_probes",
+    "max_model_calls",
     "max_tokens",
+    "max_total_tokens",
     "timeout_minutes",
     "sample_rows",
     "download_timeout_seconds",
@@ -470,6 +478,9 @@ def _shape_issues(raw: Mapping[str, object]) -> list[ContractIssue]:
     budget = raw.get("budget")
     if isinstance(budget, Mapping):
         for field_name in budget:
+            if field_name == "max_crawls":
+                # The static contract owns this deterministic migration diagnostic.
+                continue
             if field_name not in _BUDGET_FIELDS:
                 issues.append(
                     ContractIssue(
@@ -585,6 +596,16 @@ class ConfigLoader:
             for issue in shape_issues
             if issue.code == "missing_field" and "." not in issue.path
         }
+        if missing_contract_fields:
+            budget = raw_profile.get("budget")
+            if isinstance(budget, Mapping) and "max_crawls" in budget:
+                shape_issues.append(
+                    ContractIssue(
+                        code="obsolete_field",
+                        path="budget.max_crawls",
+                        message="is obsolete and must be removed",
+                    )
+                )
         contract: ProfileContract | None = None
         contract_issues: tuple[ContractIssue, ...] = ()
         if not missing_contract_fields:

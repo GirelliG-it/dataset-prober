@@ -35,9 +35,11 @@ def _write_ckan_profile(tmp_path, *, dialect="ckan_action", extra_catalog_fields
         "scope": {"regions": ["Synthetic"], "instruction": "Synthetic only."},
         "budget": {
             "max_searches": 1,
-            "max_crawls": 1,
+            "max_results": 10,
             "max_probes": 1,
+            "max_model_calls": 24,
             "max_tokens": 512,
+            "max_total_tokens": 50000,
             "timeout_minutes": 1,
             "sample_rows": 2,
             "download_timeout_seconds": 30,
@@ -102,9 +104,11 @@ scope:
   instruction: test
 budget:
   max_searches: 1
-  max_crawls: 1
+  max_results: 10
   max_probes: 1
+  max_model_calls: 24
   max_tokens: 512
+  max_total_tokens: 50000
   timeout_minutes: 1
   sample_rows: 5
   download_timeout_seconds: 30
@@ -153,14 +157,61 @@ class TestConfigLoaderLoad:
         with pytest.raises(FileNotFoundError, match="test_profile"):
             loader.load("nonexistent_profile")
 
+    def test_obsolete_crawl_and_missing_new_budget_fields_are_reported_together(
+        self,
+        profiles_dir,
+    ):
+        from dataset_prober.config_loader import ConfigLoader
+        from dataset_prober.profile_contract import ProfileContractError
+
+        profile_path = profiles_dir / "test_profile.yaml"
+        raw = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+        for field in ("max_results", "max_model_calls", "max_total_tokens"):
+            del raw["budget"][field]
+        raw["budget"]["max_crawls"] = 3
+        profile_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+        with pytest.raises(ProfileContractError) as error:
+            ConfigLoader(profiles_dir).load("test_profile")
+
+        assert [(issue.code, issue.path) for issue in error.value.issues] == [
+            ("missing_field", "budget.max_results"),
+            ("missing_field", "budget.max_model_calls"),
+            ("missing_field", "budget.max_total_tokens"),
+            ("obsolete_field", "budget.max_crawls"),
+        ]
+
+    def test_obsolete_crawl_is_preserved_when_top_level_catalogs_is_missing(
+        self,
+        profiles_dir,
+    ):
+        from dataset_prober.config_loader import ConfigLoader
+        from dataset_prober.profile_contract import ProfileContractError
+
+        profile_path = profiles_dir / "test_profile.yaml"
+        raw = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+        del raw["catalogs"]
+        raw["budget"]["max_crawls"] = 3
+        profile_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+        with pytest.raises(ProfileContractError) as error:
+            ConfigLoader(profiles_dir).load("test_profile")
+
+        assert [(issue.code, issue.path) for issue in error.value.issues] == [
+            ("missing_field", "catalogs"),
+            ("obsolete_field", "budget.max_crawls"),
+        ]
+
 
 class TestProfileAttributes:
     """Tests for correctly parsed profile attributes."""
 
     def test_budget_values_loaded(self, test_profile):
         assert test_profile.budget.max_searches == 3
-        assert test_profile.budget.max_crawls == 3
+        assert test_profile.budget.max_results == 10
         assert test_profile.budget.max_probes == 5
+        assert test_profile.budget.max_model_calls == 24
+        assert test_profile.budget.max_total_tokens == 50000
         assert test_profile.budget.timeout_minutes == 5
 
     def test_pricing_loaded(self, test_profile):

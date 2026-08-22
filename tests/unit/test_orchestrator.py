@@ -255,3 +255,85 @@ class TestBuildInitialMessage:
         assert '"content"' not in msg
         # Should be reasonably compact
         assert len(msg) < 2000
+
+
+class TestActualUsageReporting:
+    def test_profile_result_derives_token_and_api_compatibility_views(self, dutch_objective):
+        import pytest
+
+        from dataset_prober.orchestrator import ProfileResult
+
+        result = ProfileResult(
+            "dutch_government",
+            "Dutch Government",
+            dutch_objective,
+            input_tokens=5,
+            output_tokens=7,
+            cache_creation_input_tokens=11,
+            cache_read_input_tokens=13,
+            model_calls_attempted=2,
+            model_calls_completed=1,
+            model_calls_timed_out=1,
+            token_stop_threshold=100,
+        )
+
+        assert result.tokens_used == 36
+        assert result.api_calls == 2
+        with pytest.raises(AttributeError):
+            result.tokens_used = 999
+        with pytest.raises(AttributeError):
+            result.api_calls = 999
+
+    def test_aggregate_reports_every_component_and_actual_session_totals(
+        self,
+        dutch_objective,
+    ):
+        from dataset_prober.orchestrator import AggregatedResult, ProfileResult
+
+        profile = ProfileResult(
+            "dutch_government",
+            "Dutch Government",
+            dutch_objective,
+            input_tokens=5,
+            output_tokens=7,
+            cache_creation_input_tokens=11,
+            cache_read_input_tokens=13,
+            model_calls_attempted=1,
+            model_calls_completed=1,
+            token_stop_threshold=100,
+            cost_usd=0.25,
+        )
+        aggregate = AggregatedResult(
+            profile_results=[profile],
+            interpreter_cost_usd=0.05,
+            interpreter_input_tokens=2,
+            interpreter_output_tokens=3,
+            interpreter_cache_creation_input_tokens=5,
+            interpreter_cache_read_input_tokens=7,
+            interpreter_model_calls_attempted=1,
+            interpreter_model_calls_completed=1,
+        )
+
+        rendered = aggregate.cost_summary()
+
+        assert "Actual reported model usage" in rendered
+        assert (
+            "Token usage below is reported by completed responses; call outcomes are observed "
+            "locally."
+        ) in rendered
+        assert "Counts below are actual reported usage from completed responses." not in rendered
+        assert "Total reported tokens: 17" in rendered
+        assert "Total reported tokens: 36" in rendered
+        assert "Total reported tokens: 53" in rendered
+        assert "attempted: 2 | completed: 2 | timed out: 0" in rendered
+        assert "Between-call reported-token stop threshold: 100 | used: 36.0%" in rendered
+        assert "Total estimated cost: $0.3000" in rendered
+        assert "Cache-creation cost is not represented" in rendered
+
+    def test_explicit_profile_aggregate_says_interpreter_was_not_used(self):
+        from dataset_prober.orchestrator import AggregatedResult
+
+        rendered = AggregatedResult().cost_summary()
+
+        assert "Interpreter: not used (explicit profile selection)." in rendered
+        assert "Total reported tokens: 0" in rendered

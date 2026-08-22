@@ -335,6 +335,8 @@ def test_agent_route_downgrades_transferred_evidence_before_selection_or_consent
     budget = Mock()
     budget.can_probe.return_value = True
     budget.probes_used = 0
+    budget.sample_rows = 3
+    budget.time_remaining.return_value = 30
     loading_session = LoadingPolicySession(download_enabled=True)
     found = []
     consent = Mock(side_effect=AssertionError("transferred evidence reached consent"))
@@ -342,7 +344,7 @@ def test_agent_route_downgrades_transferred_evidence_before_selection_or_consent
 
     fetched = dataset_agent.execute_tool(
         tool_name="fetch_dataset",
-        tool_input={"source": "ckan", "dataset_id": candidate_b.id, "sample_rows": 3},
+        tool_input={"source": "ckan", "dataset_id": candidate_b.id},
         tool_map={"ckan": tool},
         budget=budget,
         profile=Mock(),
@@ -388,6 +390,9 @@ def test_agent_route_downgrades_transferred_evidence_before_selection_or_consent
     assert fetched["download_url"] == candidate_b.download_url
     assert "has not passed inspection" in attempted["error"]
     consent.assert_not_called()
+    tool.fetch.assert_called_once()
+    assert tool.fetch.call_args.args == (candidate_b.id, 3)
+    assert tool.fetch.call_args.kwargs["remaining_time"]() == 30
     tool.download.assert_not_called()
 
 
@@ -403,11 +408,17 @@ def test_genuine_agentic_result_keeps_verified_inspection_facts(monkeypatch, tmp
     loading_session = LoadingPolicySession(download_enabled=True)
     found = []
 
+    budget = Mock(
+        can_probe=Mock(return_value=True),
+        probes_used=0,
+        sample_rows=3,
+        time_remaining=Mock(return_value=30),
+    )
     fetched = dataset_agent.execute_tool(
         tool_name="fetch_dataset",
-        tool_input={"source": "ckan", "dataset_id": candidate.id, "sample_rows": 3},
+        tool_input={"source": "ckan", "dataset_id": candidate.id},
         tool_map={"ckan": tool},
-        budget=Mock(can_probe=Mock(return_value=True), probes_used=0),
+        budget=budget,
         profile=Mock(),
         loading_session=loading_session,
         found_datasets=found,
@@ -422,6 +433,9 @@ def test_genuine_agentic_result_keeps_verified_inspection_facts(monkeypatch, tmp
     assert candidate.sample == [[1], [2]]
     assert candidate.error is None
     assert fetched["assessment"]["load_eligible"] is True
+    tool.fetch.assert_called_once()
+    assert tool.fetch.call_args.args == (candidate.id, 3)
+    assert tool.fetch.call_args.kwargs["remaining_time"]() == 30
 
 
 def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_path, test_profile):
@@ -448,7 +462,7 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
     tool_call = SimpleNamespace(
         type="tool_use",
         name="fetch_dataset",
-        input={"source": "cbs", "dataset_id": candidate_b.id, "sample_rows": 3},
+        input={"source": "cbs", "dataset_id": candidate_b.id},
         id="fetch-1",
     )
     usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
@@ -466,7 +480,6 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
         budget=dataset_agent.Budget.from_profile(test_profile.budget),
         loading_session=LoadingPolicySession(download_enabled=True),
         session_cost=dataset_agent.SessionCost(),
-        cli_overrides={},
         paths=AppPaths(output_dir=tmp_path),
     )
 
@@ -475,6 +488,9 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
     assert result.datasets_downloaded == []
     assert candidate_b.status == "failed"
     assert candidate_b.assessment.load_eligible is False
+    tool.fetch.assert_called_once()
+    assert tool.fetch.call_args.args == (candidate_b.id, test_profile.budget.sample_rows)
+    assert tool.fetch.call_args.kwargs["remaining_time"]() > 0
 
     system_prompt = client.messages.create.call_args_list[0].kwargs["system"].lower()
     model_tools = client.messages.create.call_args_list[0].kwargs["tools"]

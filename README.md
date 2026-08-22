@@ -191,9 +191,23 @@ Use the prototype on disposable outputs and review every candidate yourself.
 - Fresh load-time assessment verifies that the retrieved payload remains eligible; it does
   not prove byte-for-byte identity with the initially inspected payload. Checksums and
   durable retrieval identity remain deferred.
-- Profile freshness, license, scope and budget instructions are partly configuration or
-  model-prompt guidance rather than complete deterministic enforcement. Geographic scope
-  wording guides selection; it does not prove semantic geographic relevance.
+- Profile-agent run budgets deterministically enforce search-count, per-search result-count,
+  probe-count and model-call ceilings, and every profile-agent model request uses the
+  remaining time on a monotonic deadline. `max_tokens` is the requested output cap for one
+  call; a response stopped at that limit returns the partial results without an automatic
+  retry or execution of truncated tool requests. `max_total_tokens` is a between-call
+  reported-token stop threshold: once cumulative reported usage reaches it, no next call is
+  made. A completed call may cross that threshold because its input usage is learned only
+  afterward, and a timed-out attempt may have unknown server-side usage. Before each CBS or
+  CKAN discovery request, the configured source timeout is capped by freshly remaining run
+  time, and sequential inspection steps recheck that same monotonic deadline. No subsequent
+  discovery/inspection source operation or model operation starts after deadline exhaustion
+  is observed. Synchronous HTTP may not cancel at the mathematically exact deadline if data
+  continues arriving. A load authorized by explicit consent retains its separate
+  loading-timeout contract and is not governed by the profile-agent run deadline. Profile
+  freshness, licensing, and
+  geographic-scope instructions guide model selection, but do not prove semantic relevance
+  or complete policy compliance.
 - Output paths are centrally resolved, but artifact filenames and some runtime assumptions
   remain checkout-oriented. Repeated runs can replace result files or leave stale artifacts
   that look current.
