@@ -46,9 +46,11 @@ def valid_raw_profile() -> dict[str, object]:
         },
         "budget": {
             "max_searches": 1,
-            "max_crawls": 1,
+            "max_results": 10,
             "max_probes": 1,
+            "max_model_calls": 24,
             "max_tokens": 512,
+            "max_total_tokens": 50000,
             "timeout_minutes": 1,
             "sample_rows": 2,
             "download_timeout_seconds": 30,
@@ -364,7 +366,6 @@ def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp
         budget=dataset_agent.Budget.from_profile(profile.budget),
         loading_session=LoadingPolicySession(download_enabled=False),
         session_cost=dataset_agent.SessionCost(),
-        cli_overrides={},
         paths=AppPaths(output_dir=tmp_path),
     )
 
@@ -383,7 +384,7 @@ def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp
         assert inactive_claim not in system
     assert "cbs" in system
     client.messages.create.assert_called_once()
-    anthropic_factory.assert_called_once_with(api_key="offline-key")
+    anthropic_factory.assert_called_once_with(api_key="offline-key", max_retries=0)
     assert tuple(resolved.execution_map) == resolved.source_keys == ("cbs",)
 
 
@@ -418,7 +419,6 @@ def test_resolved_system_and_model_context_omit_static_opendatasoft_portals(
         budget=dataset_agent.Budget.from_profile(profile.budget),
         loading_session=LoadingPolicySession(download_enabled=False),
         session_cost=dataset_agent.SessionCost(),
-        cli_overrides={},
         paths=AppPaths(output_dir=tmp_path),
     )
 
@@ -865,8 +865,9 @@ def test_successful_automatic_execution_resolves_once_and_reuses_cached_object(
 
     client.messages.create.side_effect = agent_model
 
-    def agent_factory(*, api_key):
+    def agent_factory(*, api_key, max_retries):
         assert api_key == "offline-key"
+        assert max_retries == 0
         events.append("agent_construction")
         return client
 

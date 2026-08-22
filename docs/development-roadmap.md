@@ -20,13 +20,13 @@ flowchart TB
     S4Gate -->|"All offline checks passed"| S4Merge["✅ Step 4 implementation complete<br/>Commit f8822a5"]
 
     subgraph Step5["3 · Step 5 — Harden run budgets"]
-        S5Work["⏳ Pending<br/>Apply CLI token override<br/>Add model-call ceiling<br/>Enforce total tokens between calls<br/>Use monotonic deadlines<br/>Pass remaining timeout to Anthropic<br/>Cap results and sample rows<br/>Remove unused crawl promise<br/>Repair timeout continuation"]
-        S5Gate{"Step 5 gate<br/>Fake-client tests prove every ceiling<br/>No extra model call after exhaustion"}
+        S5Work["✅ Implementation complete<br/>CLI and profile limits share one budget<br/>Model-call ceiling and total-token stop threshold<br/>Monotonic deadlines and request timeouts<br/>Capped results and configured sample rows<br/>Unused crawl promise removed<br/>Timeout continuation repaired"]
+        S5Gate{"✅ Offline gate passed<br/>Fake-client tests prove each stop boundary<br/>No extra model call after exhaustion"}
         S5Work --> S5Gate
     end
 
     S4Merge --> S5Work
-    S5Gate -->|"Pass and merge"| Hardened["Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure"]
+    S5Gate -->|"Merge pending"| Hardened["⏳ Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure"]
 
     subgraph Repairs["4 · Independent profile-repair branches"]
         Dutch["⏳ Dutch<br/>Keep CBS OData v3<br/>Correct data.overheid.nl to /data/api/3<br/>Remove OpenDataSoft promises<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
@@ -48,9 +48,9 @@ flowchart TB
     ProfileGate --> Live["🎯 Controlled real end-to-end live test"]
     Live --> V01["Dataset Prober v0.1 readiness review"]
 
-    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge done
-    class S5Gate,ProfileGate gate
-    class S5Work,Hardened,Dutch,US,EU,Live,V01 pending
+    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge,S5Work,S5Gate done
+    class ProfileGate gate
+    class Hardened,Dutch,US,EU,Live,V01 pending
 
     classDef done fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef active fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:3px

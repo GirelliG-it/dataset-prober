@@ -194,9 +194,11 @@ scope:
   instruction: Test scope only.
 budget:
   max_searches: 3
-  max_crawls: 3
+  max_results: 10
   max_probes: 5
+  max_model_calls: 24
   max_tokens: 1024
+  max_total_tokens: 50000
   timeout_minutes: 5
   sample_rows: 5
   download_timeout_seconds: 60
@@ -244,9 +246,11 @@ scope:
   instruction: No geographic restriction.
 budget:
   max_searches: 5
-  max_crawls: 5
+  max_results: 20
   max_probes: 10
+  max_model_calls: 40
   max_tokens: 2048
+  max_total_tokens: 100000
   timeout_minutes: 10
   sample_rows: 10
   download_timeout_seconds: 120
@@ -345,9 +349,11 @@ def profile_result_met(dutch_objective, sample_dataset_result_downloaded):
     pr.datasets_found = [sample_dataset_result_downloaded]
     pr.datasets_downloaded = [sample_dataset_result_downloaded]
     pr.objective_met = True
-    pr.tokens_used = 5000
+    pr.input_tokens = 5000
     pr.cost_usd = 0.07
-    pr.api_calls = 4
+    pr.model_calls_attempted = 4
+    pr.model_calls_completed = 4
+    pr.token_stop_threshold = 50000
     return pr
 
 
@@ -365,9 +371,11 @@ def profile_result_partial(us_objective, sample_dataset_result_failed):
     pr.datasets_failed = [sample_dataset_result_failed]
     pr.partial_success = True
     pr.failure_reason = "SSA.gov blocks programmatic access"
-    pr.tokens_used = 8000
+    pr.input_tokens = 8000
     pr.cost_usd = 0.12
-    pr.api_calls = 6
+    pr.model_calls_attempted = 6
+    pr.model_calls_completed = 6
+    pr.token_stop_threshold = 50000
     return pr
 
 
@@ -385,9 +393,11 @@ def profile_result_empty(us_objective):
     pr.objective_met = False
     pr.partial_success = False
     pr.failure_reason = "No datasets found"
-    pr.tokens_used = 3000
+    pr.input_tokens = 3000
     pr.cost_usd = 0.04
-    pr.api_calls = 3
+    pr.model_calls_attempted = 3
+    pr.model_calls_completed = 3
+    pr.token_stop_threshold = 50000
     return pr
 
 

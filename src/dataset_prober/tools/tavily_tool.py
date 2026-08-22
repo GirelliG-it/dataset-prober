@@ -26,6 +26,7 @@ from dataset_prober.resource_classification import (
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
+    RemainingTimeProvider,
     download_csv_dataset,
     inspect_csv_resource,
 )
@@ -61,7 +62,13 @@ class TavilyTool(DataSourceTool):
         """Provider-side fetching is intentionally unavailable for v0.1."""
         return False
 
-    def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
+    def search(
+        self,
+        keyword: str,
+        max_results: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> list[DatasetResult]:
         """Fail explicitly because provider-side Tavily search is disabled."""
         return [
             self._error_result(
@@ -71,7 +78,13 @@ class TavilyTool(DataSourceTool):
             )
         ]
 
-    def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
+    def fetch(
+        self,
+        dataset_id: str,
+        sample_rows: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> DatasetResult:
         """
         Probe direct supported resources locally; reject provider extraction.
         """

@@ -23,13 +23,14 @@ scope:
     Dutch geographic scope as selection guidance and report the deterministic assessment
     for every inspected resource.
 
-# Budget limits — all values controlled by end-user via CLI flags
-# These are profile suggestions, not enforced defaults
+# Enforced profile-agent run budgets
 budget:
   max_searches: 5
-  max_crawls: 8
+  max_results: 10
   max_probes: 15
+  max_model_calls: 24
   max_tokens: 4096
+  max_total_tokens: 50000
   timeout_minutes: 10
   sample_rows: 10
   download_timeout_seconds: 300

@@ -13,7 +13,9 @@ provide one consistent loading path across all tools.
 """
 
 import json
+import math
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -46,6 +48,33 @@ from dataset_prober.tools.guards import (
     safe_download,
     safe_http_head,
 )
+
+RemainingTimeProvider = Callable[[], float]
+
+
+class RunDeadlineExceeded(TimeoutError):
+    """A profile-agent source operation has no remaining run time."""
+
+
+def bounded_source_timeout(
+    source_timeout: float,
+    remaining_time: RemainingTimeProvider | None,
+) -> float:
+    """Cap one source operation by freshly observed profile-agent run time."""
+
+    configured_timeout = float(source_timeout)
+    if not math.isfinite(configured_timeout) or configured_timeout <= 0:
+        raise ValueError("Source timeout must be a positive finite number")
+    if remaining_time is None:
+        return configured_timeout
+
+    try:
+        remaining = float(remaining_time())
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise RunDeadlineExceeded("Profile-agent run deadline is unavailable") from exc
+    if not math.isfinite(remaining) or remaining <= 0:
+        raise RunDeadlineExceeded("Profile-agent run deadline exhausted")
+    return min(configured_timeout, remaining)
 
 
 @dataclass
@@ -211,8 +240,8 @@ class DataSourceTool(ABC):
     Abstract base class for all data source tools.
 
     Every tool must implement:
-      - search(keyword, max_results) → list[DatasetResult]
-      - fetch(dataset_id, sample_rows) → DatasetResult
+      - search(keyword, max_results, remaining_time=...) → list[DatasetResult]
+      - fetch(dataset_id, sample_rows, remaining_time=...) → DatasetResult
       - download(dataset, destination, authorization) → DatasetResult
 
     Tools receive all configuration from the profile at instantiation.
@@ -231,13 +260,20 @@ class DataSourceTool(ABC):
         self.config = config
 
     @abstractmethod
-    def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
+    def search(
+        self,
+        keyword: str,
+        max_results: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> list[DatasetResult]:
         """
         Search the catalog for datasets matching a keyword.
 
         Args:
             keyword: Search term (may be in any language)
             max_results: Maximum number of results to return (from config)
+            remaining_time: Optional profile-agent monotonic remaining-time provider
 
         Returns:
             List of DatasetResult objects with status="found"
@@ -245,13 +281,20 @@ class DataSourceTool(ABC):
         pass
 
     @abstractmethod
-    def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
+    def fetch(
+        self,
+        dataset_id: str,
+        sample_rows: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> DatasetResult:
         """
         Fetch metadata and sample data for a specific dataset.
 
         Args:
             dataset_id: Source-specific identifier
             sample_rows: Number of sample rows to retrieve (from config)
+            remaining_time: Optional profile-agent monotonic remaining-time provider
 
         Returns:
             DatasetResult with status="probed", columns and sample populated

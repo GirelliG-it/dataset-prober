@@ -18,7 +18,7 @@ Flow:
           ↓
     ...repeat for each profile...
           ↓
-    AggregatedResult (all datasets, full cost breakdown)
+    AggregatedResult (all datasets, actual reported usage and estimated cost)
 """
 
 from dataclasses import dataclass, field
@@ -71,10 +71,33 @@ class ProfileResult:
     partial_success: bool = False
     failure_reason: Optional[str] = None
 
-    # Cost
-    tokens_used: int = 0
+    # Actual usage reported by completed profile-agent responses
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    model_calls_attempted: int = 0
+    model_calls_completed: int = 0
+    model_calls_timed_out: int = 0
+    token_stop_threshold: int = 0
     cost_usd: float = 0.0
-    api_calls: int = 0
+
+    @property
+    def tokens_used(self) -> int:
+        """Actual reported tokens from completed profile-agent responses."""
+
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+        )
+
+    @property
+    def api_calls(self) -> int:
+        """Compatibility view of attempted profile-agent model calls."""
+
+        return self.model_calls_attempted
 
     def handoff_summary(self) -> str:
         """
@@ -128,7 +151,13 @@ class AggregatedResult:
 
     profile_results: list[ProfileResult] = field(default_factory=list)
     interpreter_cost_usd: float = 0.0
-    interpreter_tokens: int = 0
+    interpreter_input_tokens: int = 0
+    interpreter_output_tokens: int = 0
+    interpreter_cache_creation_input_tokens: int = 0
+    interpreter_cache_read_input_tokens: int = 0
+    interpreter_model_calls_attempted: int = 0
+    interpreter_model_calls_completed: int = 0
+    interpreter_model_calls_timed_out: int = 0
 
     @property
     def all_datasets(self) -> list:
@@ -151,28 +180,137 @@ class AggregatedResult:
         return self.interpreter_cost_usd + sum(pr.cost_usd for pr in self.profile_results)
 
     @property
+    def interpreter_tokens(self) -> int:
+        return (
+            self.interpreter_input_tokens
+            + self.interpreter_output_tokens
+            + self.interpreter_cache_creation_input_tokens
+            + self.interpreter_cache_read_input_tokens
+        )
+
+    @property
+    def total_input_tokens(self) -> int:
+        return self.interpreter_input_tokens + sum(pr.input_tokens for pr in self.profile_results)
+
+    @property
+    def total_output_tokens(self) -> int:
+        return self.interpreter_output_tokens + sum(pr.output_tokens for pr in self.profile_results)
+
+    @property
+    def total_cache_creation_input_tokens(self) -> int:
+        return self.interpreter_cache_creation_input_tokens + sum(
+            pr.cache_creation_input_tokens for pr in self.profile_results
+        )
+
+    @property
+    def total_cache_read_input_tokens(self) -> int:
+        return self.interpreter_cache_read_input_tokens + sum(
+            pr.cache_read_input_tokens for pr in self.profile_results
+        )
+
+    @property
     def total_tokens(self) -> int:
-        return self.interpreter_tokens + sum(pr.tokens_used for pr in self.profile_results)
+        return (
+            self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_creation_input_tokens
+            + self.total_cache_read_input_tokens
+        )
+
+    @property
+    def total_model_calls_attempted(self) -> int:
+        return self.interpreter_model_calls_attempted + sum(
+            pr.model_calls_attempted for pr in self.profile_results
+        )
+
+    @property
+    def total_model_calls_completed(self) -> int:
+        return self.interpreter_model_calls_completed + sum(
+            pr.model_calls_completed for pr in self.profile_results
+        )
+
+    @property
+    def total_model_calls_timed_out(self) -> int:
+        return self.interpreter_model_calls_timed_out + sum(
+            pr.model_calls_timed_out for pr in self.profile_results
+        )
 
     @property
     def total_api_calls(self) -> int:
-        return sum(pr.api_calls for pr in self.profile_results)
+        return self.total_model_calls_attempted
 
     def cost_summary(self) -> str:
-        lines = ["\n📊 Session Cost Breakdown:"]
-        lines.append(
-            f"  Interpreter: {self.interpreter_tokens:,} tokens | ${self.interpreter_cost_usd:.4f}"
-        )
-        for pr in self.profile_results:
-            lines.append(
-                f"  {pr.display_name}: {pr.tokens_used:,} tokens | "
-                f"${pr.cost_usd:.4f} | {pr.api_calls} calls"
+        lines = [
+            "\nActual reported model usage",
+            "  Token usage below is reported by completed responses; "
+            "call outcomes are observed locally.",
+        ]
+        if self.interpreter_model_calls_attempted:
+            lines.extend(
+                [
+                    "  Interpreter:",
+                    f"    Input tokens: {self.interpreter_input_tokens:,} | "
+                    f"Output tokens: {self.interpreter_output_tokens:,}",
+                    "    Cache-creation input tokens: "
+                    f"{self.interpreter_cache_creation_input_tokens:,} | "
+                    "Cache-read input tokens: "
+                    f"{self.interpreter_cache_read_input_tokens:,}",
+                    f"    Total reported tokens: {self.interpreter_tokens:,}",
+                    "    Calls — attempted: "
+                    f"{self.interpreter_model_calls_attempted} | completed: "
+                    f"{self.interpreter_model_calls_completed} | timed out: "
+                    f"{self.interpreter_model_calls_timed_out}",
+                    f"    Estimated cost: ${self.interpreter_cost_usd:.4f}",
+                ]
             )
-        lines.append("  ─────────────────────────────────────────")
-        lines.append(
-            f"  Total: {self.total_tokens:,} tokens | "
-            f"${self.total_cost_usd:.4f} | {self.total_api_calls} API calls"
+        else:
+            lines.append("  Interpreter: not used (explicit profile selection).")
+
+        for pr in self.profile_results:
+            percentage = (
+                (pr.tokens_used / pr.token_stop_threshold) * 100 if pr.token_stop_threshold else 0.0
+            )
+            lines.extend(
+                [
+                    f"  {pr.display_name}:",
+                    f"    Input tokens: {pr.input_tokens:,} | Output tokens: {pr.output_tokens:,}",
+                    f"    Cache-creation input tokens: {pr.cache_creation_input_tokens:,} | "
+                    f"Cache-read input tokens: {pr.cache_read_input_tokens:,}",
+                    f"    Total reported tokens: {pr.tokens_used:,}",
+                    f"    Calls — attempted: {pr.model_calls_attempted} | "
+                    f"completed: {pr.model_calls_completed} | "
+                    f"timed out: {pr.model_calls_timed_out}",
+                    "    Between-call reported-token stop threshold: "
+                    f"{pr.token_stop_threshold:,} | used: {percentage:.1f}%",
+                    f"    Estimated cost: ${pr.cost_usd:.4f}",
+                ]
+            )
+        lines.extend(
+            [
+                "  ─────────────────────────────────────────",
+                "  Session totals:",
+                f"    Input tokens: {self.total_input_tokens:,} | "
+                f"Output tokens: {self.total_output_tokens:,}",
+                "    Cache-creation input tokens: "
+                f"{self.total_cache_creation_input_tokens:,} | "
+                f"Cache-read input tokens: {self.total_cache_read_input_tokens:,}",
+                f"    Total reported tokens: {self.total_tokens:,}",
+                f"    Calls — attempted: {self.total_model_calls_attempted} | "
+                f"completed: {self.total_model_calls_completed} | "
+                f"timed out: {self.total_model_calls_timed_out}",
+                f"    Total estimated cost: ${self.total_cost_usd:.4f}",
+            ]
         )
+        if self.total_model_calls_timed_out:
+            lines.append(
+                "  Timed-out attempts returned no usage; their server-side token usage, "
+                "if any, is unknown."
+            )
+        if self.total_cache_creation_input_tokens:
+            lines.append(
+                "  Cache-creation cost is not represented because the pricing contract "
+                "has no cache-write rate."
+            )
         return "\n".join(lines)
 
     def print_summary_table(self):
@@ -333,7 +471,7 @@ class Orchestrator:
                 f"{sanitize_url_text(status)}"
             )
             console.print(
-                f"   Cost: ${result.cost_usd:.4f} | "
-                f"Tokens: {result.tokens_used:,} | "
-                f"Calls: {result.api_calls}"
+                f"   Estimated cost: ${result.cost_usd:.4f} | "
+                f"Actual reported tokens: {result.tokens_used:,} | "
+                f"Attempted calls: {result.api_calls}"
             )

@@ -54,13 +54,16 @@ _ID_PATTERN = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 _ENV_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
 _BUDGET_FIELDS = (
     "max_searches",
-    "max_crawls",
+    "max_results",
     "max_probes",
+    "max_model_calls",
     "max_tokens",
+    "max_total_tokens",
     "timeout_minutes",
     "sample_rows",
     "download_timeout_seconds",
 )
+_OBSOLETE_BUDGET_FIELDS = ("max_crawls",)
 _CATALOG_FIELDS = (
     "catalog_id",
     "adapter",
@@ -351,6 +354,15 @@ def _budget_issues(values: Mapping[str, object], path: str) -> list[ContractIssu
         issue = _positive_integer_issue(values[field], field_path)
         if issue:
             issues.append(issue)
+    for field in _OBSOLETE_BUDGET_FIELDS:
+        if field in values:
+            issues.append(
+                _issue(
+                    "obsolete_field",
+                    f"{path}.{field}",
+                    "is obsolete and must be removed",
+                )
+            )
     return issues
 
 
@@ -420,12 +432,14 @@ class CatalogContract:
 
 @dataclass(frozen=True, slots=True)
 class BudgetContract:
-    """Existing profile budget fields with static positive-integer validation."""
+    """Canonical profile budget fields with static positive-integer validation."""
 
     max_searches: int
-    max_crawls: int
+    max_results: int
     max_probes: int
+    max_model_calls: int
     max_tokens: int
+    max_total_tokens: int
     timeout_minutes: int
     sample_rows: int
     download_timeout_seconds: int

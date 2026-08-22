@@ -31,6 +31,9 @@ from dataset_prober.resource_classification import (
 from dataset_prober.tools.base import (
     DatasetResult,
     DataSourceTool,
+    RemainingTimeProvider,
+    RunDeadlineExceeded,
+    bounded_source_timeout,
     download_csv_dataset,
     inspect_csv_resource,
 )
@@ -139,12 +142,18 @@ class CKANTool(DataSourceTool):
             raise ValueError("CKAN package requires a non-special stable identifier")
         return identifier
 
-    def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
+    def search(
+        self,
+        keyword: str,
+        max_results: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> list[DatasetResult]:
         """
         Search CKAN catalog using package_search endpoint.
         Filters for CSV resources only.
         """
-        timeout = self.config.get("timeout_seconds", 30)
+        source_timeout = self.config.get("timeout_seconds", 30)
         api_base, _landing_base, (search_path, _show_path, _landing_path) = (
             self._route_configuration()
         )
@@ -160,7 +169,7 @@ class CKANTool(DataSourceTool):
                     "sort": "metadata_modified desc",
                 },
                 headers=self._headers(),
-                timeout=timeout,
+                timeout=bounded_source_timeout(source_timeout, remaining_time),
             )
             data = resp.json()
 
@@ -181,6 +190,8 @@ class CKANTool(DataSourceTool):
 
             return results
 
+        except RunDeadlineExceeded:
+            raise
         except Exception as e:
             return [
                 self._error_result(
@@ -188,11 +199,17 @@ class CKANTool(DataSourceTool):
                 )
             ]
 
-    def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
+    def fetch(
+        self,
+        dataset_id: str,
+        sample_rows: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> DatasetResult:
         """
         Fetch full metadata for a CKAN package and probe its CSV resource.
         """
-        timeout = self.config.get("timeout_seconds", 30)
+        source_timeout = self.config.get("timeout_seconds", 30)
         api_base, _landing_base, (_search_path, show_path, _landing_path) = (
             self._route_configuration()
         )
@@ -200,7 +217,10 @@ class CKANTool(DataSourceTool):
 
         try:
             resp = safe_http_get(
-                url, params={"id": dataset_id}, headers=self._headers(), timeout=timeout
+                url,
+                params={"id": dataset_id},
+                headers=self._headers(),
+                timeout=bounded_source_timeout(source_timeout, remaining_time),
             )
             data = resp.json()
 
@@ -222,10 +242,17 @@ class CKANTool(DataSourceTool):
 
             # Probe the CSV if we have a direct URL
             if result.download_url:
-                result = self._probe_csv(result, sample_rows, timeout)
+                result = self._probe_csv(
+                    result,
+                    sample_rows,
+                    timeout=source_timeout,
+                    remaining_time=remaining_time,
+                )
 
             return result
 
+        except RunDeadlineExceeded:
+            raise
         except Exception as e:
             result = self._error_result(id=dataset_id, title=dataset_id, error=str(e))
             result.assessment = inspection_failed_assessment(
@@ -233,7 +260,14 @@ class CKANTool(DataSourceTool):
             )
             return result
 
-    def _probe_csv(self, result: DatasetResult, sample_rows: int, timeout: int) -> DatasetResult:
+    def _probe_csv(
+        self,
+        result: DatasetResult,
+        sample_rows: int,
+        timeout: float,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> DatasetResult:
         """Safely retrieve a CSV and probe its temporary local copy with DuckDB."""
         admission_error = self._csv_admission_error(result)
         if admission_error:
@@ -251,7 +285,13 @@ class CKANTool(DataSourceTool):
                 result.id,
                 result.download_url,
             )
-            with safe_download(result.download_url, timeout=timeout) as fetched:
+            with safe_download(
+                result.download_url,
+                timeout=bounded_source_timeout(timeout, remaining_time),
+            ) as fetched:
+                # Retrieval and local inspection are sequential steps. Observe the
+                # shared run deadline again before starting DuckDB work.
+                bounded_source_timeout(timeout, remaining_time)
                 con = duckdb.connect()
                 try:
                     probe = inspect_csv_resource(
@@ -277,6 +317,8 @@ class CKANTool(DataSourceTool):
             )
             return result
 
+        except RunDeadlineExceeded:
+            raise
         except Exception as e:
             result.status = "failed"
             result.row_count = None

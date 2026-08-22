@@ -29,6 +29,9 @@ from dataset_prober.tools.base import (
     AuthorizedDuckDBConnection,
     DatasetResult,
     DataSourceTool,
+    RemainingTimeProvider,
+    RunDeadlineExceeded,
+    bounded_source_timeout,
     load_dataframe_to_table,
 )
 from dataset_prober.tools.guards import (
@@ -63,22 +66,30 @@ class CBSTool(DataSourceTool):
     def is_available(self) -> bool:
         return True
 
-    def search(self, keyword: str, max_results: int) -> list[DatasetResult]:
+    def search(
+        self,
+        keyword: str,
+        max_results: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> list[DatasetResult]:
         """
         Search CBS OData catalog by keyword.
         Scores results: title match = 2 pts, description match = 1 pt.
         Filters out archived/discontinued tables.
         """
         catalog = self.config.get("base_url", "https://opendata.cbs.nl/ODataCatalog")
-        timeout = self.config.get("timeout_seconds", 30)
+        source_timeout = self.config.get("timeout_seconds", 30)
 
         try:
             resp = safe_http_get(
                 f"{catalog.rstrip('/')}/Tables",
                 params={"$format": "json"},
-                timeout=timeout,
+                timeout=bounded_source_timeout(source_timeout, remaining_time),
             )
             all_tables = resp.json().get("value", [])
+        except RunDeadlineExceeded:
+            raise
         except Exception as e:
             return [
                 self._error_result(
@@ -140,19 +151,25 @@ class CBSTool(DataSourceTool):
         scored.sort(key=lambda x: (x[0], x[1].modified or ""), reverse=True)
         return [r for _, r in scored[:max_results]]
 
-    def fetch(self, dataset_id: str, sample_rows: int) -> DatasetResult:
+    def fetch(
+        self,
+        dataset_id: str,
+        sample_rows: int,
+        *,
+        remaining_time: RemainingTimeProvider | None = None,
+    ) -> DatasetResult:
         """
         Fetch metadata and sample from CBS OData API.
-        Uses direct HTTP with timeout — never blocks.
+        Uses separately bounded guarded requests for metadata and sample rows.
         """
-        timeout = self.config.get("timeout_seconds", 30)
+        source_timeout = self.config.get("timeout_seconds", 30)
         try:
             self._validate_table_id(dataset_id)
             # Step 1: Table metadata
             meta_resp = safe_http_get(
                 f"{_CBS_ODATA_BASE}/{dataset_id}/TableInfos",
                 params={"$format": "json"},
-                timeout=timeout,
+                timeout=bounded_source_timeout(source_timeout, remaining_time),
             )
             meta_payload = meta_resp.json()
             if is_error_envelope(meta_payload):
@@ -176,7 +193,7 @@ class CBSTool(DataSourceTool):
             sample_resp = safe_http_get(
                 f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet",
                 params={"$top": int(sample_rows), "$format": "json"},
-                timeout=timeout,
+                timeout=bounded_source_timeout(source_timeout, remaining_time),
             )
             sample_payload = sample_resp.json()
             retrieval_url = f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet?$format=json"
@@ -221,6 +238,8 @@ class CBSTool(DataSourceTool):
                 assessment=assessment,
             )
 
+        except RunDeadlineExceeded:
+            raise
         except Exception as e:
             result = self._error_result(id=dataset_id, title=dataset_id, error=str(e))
             result.assessment = inspection_error_assessment(e)

@@ -13,7 +13,12 @@ import pytest
 _MISSING_CONTENT = object()
 
 
-def make_mock_response(payload: object, *, raw_text: str | None = None):
+def make_mock_response(
+    payload: object,
+    *,
+    raw_text: str | None = None,
+    cache_creation_input_tokens: int = 10,
+):
     """Return one Anthropic-shaped response without making an API call."""
 
     response = MagicMock()
@@ -22,6 +27,7 @@ def make_mock_response(payload: object, *, raw_text: str | None = None):
     response.usage = MagicMock(
         input_tokens=500,
         output_tokens=200,
+        cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=25,
     )
     return response
@@ -83,9 +89,11 @@ def second_enabled_profile(test_profile):
             field: getattr(contract.budget, field)
             for field in (
                 "max_searches",
-                "max_crawls",
+                "max_results",
                 "max_probes",
+                "max_model_calls",
                 "max_tokens",
+                "max_total_tokens",
                 "timeout_minutes",
                 "sample_rows",
                 "download_timeout_seconds",
@@ -121,6 +129,40 @@ def make_interpreter(profiles, response):
     client = MagicMock()
     client.messages.create.return_value = response
     return PromptInterpreter(profiles, client=client), client
+
+
+def test_default_client_disables_sdk_retries_without_model_call(monkeypatch, test_profile):
+    from dataset_prober import prompt_interpreter
+
+    client = MagicMock()
+    client_factory = MagicMock(return_value=client)
+    api_key = MagicMock(return_value="offline-key")
+    monkeypatch.setattr(prompt_interpreter, "get_anthropic_api_key", api_key)
+    monkeypatch.setattr(prompt_interpreter.anthropic, "Anthropic", client_factory)
+
+    interpreter = prompt_interpreter.PromptInterpreter([test_profile])
+
+    assert interpreter.client is client
+    api_key.assert_called_once_with()
+    client_factory.assert_called_once_with(api_key="offline-key", max_retries=0)
+    client.messages.create.assert_not_called()
+
+
+def test_explicit_client_is_reused_without_default_factory(monkeypatch, test_profile):
+    from dataset_prober import prompt_interpreter
+
+    client = MagicMock()
+    client_factory = MagicMock()
+    api_key = MagicMock()
+    monkeypatch.setattr(prompt_interpreter, "get_anthropic_api_key", api_key)
+    monkeypatch.setattr(prompt_interpreter.anthropic, "Anthropic", client_factory)
+
+    interpreter = prompt_interpreter.PromptInterpreter([test_profile], client=client)
+
+    assert interpreter.client is client
+    api_key.assert_not_called()
+    client_factory.assert_not_called()
+    client.messages.create.assert_not_called()
 
 
 def test_actual_model_arguments_contain_only_supplied_enabled_profiles(test_profile):
@@ -350,7 +392,9 @@ def test_valid_single_profile_preserves_objective_and_cost(test_profile):
     assert result.profiles[0].download_requested is True
     assert result.input_tokens == 500
     assert result.output_tokens == 200
+    assert result.cache_creation_tokens == 10
     assert result.cache_read_tokens == 25
+    assert result.total_tokens == 735
     assert result.cost_usd > 0
     objective = result.to_objectives()[0]
     assert objective.profile_name == test_profile.profile_id
@@ -374,9 +418,43 @@ def test_confirmation_has_no_hard_coded_global_web_search_claim(
     with prompt_interpreter.console.capture() as capture:
         assert interpreter.present_and_confirm(result) is False
 
-    rendered = capture.get().lower()
-    assert "uses web search" not in rendered
-    assert "worldwide" not in rendered
+    rendered = " ".join(capture.get().split())
+    rendered_lower = rendered.lower()
+    assert "uses web search" not in rendered_lower
+    assert "worldwide" not in rendered_lower
+    assert "interpretation actual reported usage: 735 tokens" in rendered_lower
+    assert "| estimated cost:" in rendered_lower
+    assert "| cost:" not in rendered_lower
+    assert (
+        "Cache-creation cost is not represented because the pricing contract has no "
+        "cache-write rate."
+    ) in rendered
+
+
+def test_confirmation_omits_cache_creation_caveat_when_usage_is_zero(
+    monkeypatch,
+    test_profile,
+):
+    from dataset_prober import prompt_interpreter
+
+    interpreter, _client = make_interpreter(
+        [test_profile],
+        make_mock_response(
+            response_for(test_profile.profile_id),
+            cache_creation_input_tokens=0,
+        ),
+    )
+    result = interpreter.interpret("Find data")
+    monkeypatch.setattr(prompt_interpreter.console, "input", MagicMock(return_value="yes"))
+
+    with prompt_interpreter.console.capture() as capture:
+        assert interpreter.present_and_confirm(result) is True
+
+    rendered = " ".join(capture.get().split())
+    assert "Interpretation actual reported usage: 725 tokens" in rendered
+    assert "| estimated cost:" in rendered.lower()
+    assert "| cost:" not in rendered.lower()
+    assert "Cache-creation cost is not represented" not in rendered
 
 
 def test_valid_multi_profile_response_preserves_order_and_objectives(

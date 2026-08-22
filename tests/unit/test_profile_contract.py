@@ -40,9 +40,11 @@ def _catalog(**overrides: object) -> dict[str, object]:
 def _budget(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "max_searches": 5,
-        "max_crawls": 8,
+        "max_results": 10,
         "max_probes": 15,
+        "max_model_calls": 24,
         "max_tokens": 4096,
+        "max_total_tokens": 50000,
         "timeout_minutes": 10,
         "sample_rows": 10,
         "download_timeout_seconds": 300,
@@ -592,9 +594,11 @@ def test_invalid_host_rules_are_rejected(hostname):
     "field",
     [
         "max_searches",
-        "max_crawls",
+        "max_results",
         "max_probes",
+        "max_model_calls",
         "max_tokens",
+        "max_total_tokens",
         "timeout_minutes",
         "sample_rows",
         "download_timeout_seconds",
@@ -614,9 +618,11 @@ def test_budget_values_must_be_positive(field, value):
     "field",
     [
         "max_searches",
-        "max_crawls",
+        "max_results",
         "max_probes",
+        "max_model_calls",
         "max_tokens",
+        "max_total_tokens",
         "timeout_minutes",
         "sample_rows",
         "download_timeout_seconds",
@@ -652,14 +658,79 @@ def test_non_integer_catalog_numeric_values_are_rejected(field, value):
     )
 
 
-@pytest.mark.parametrize("value", [1.5, "5"])
-def test_non_integer_budget_numeric_values_are_rejected(value):
-    issues = _issues(budget=_budget(max_searches=value))
+@pytest.mark.parametrize(
+    "field",
+    [
+        "max_searches",
+        "max_results",
+        "max_probes",
+        "max_model_calls",
+        "max_tokens",
+        "max_total_tokens",
+        "timeout_minutes",
+        "sample_rows",
+        "download_timeout_seconds",
+    ],
+)
+@pytest.mark.parametrize("value", [1.5, "5", None])
+def test_budget_fields_reject_non_integer_values(field, value):
+    issues = _issues(budget=_budget(**{field: value}))
 
     assert (issues[0].code, issues[0].path) == (
         "invalid_integer",
-        "budget.max_searches",
+        f"budget.{field}",
     )
+
+
+@pytest.mark.parametrize("field", ["max_results", "max_model_calls", "max_total_tokens"])
+def test_new_budget_fields_are_required(field):
+    budget = _budget()
+    del budget[field]
+
+    issues = _issues(budget=budget)
+
+    assert [(issue.code, issue.path) for issue in issues] == [("missing_field", f"budget.{field}")]
+
+
+def test_obsolete_crawl_budget_is_reported_with_stable_migration_code():
+    budget = _budget()
+    budget["max_crawls"] = 8
+
+    issues = _issues(budget=budget)
+
+    assert [(issue.code, issue.path) for issue in issues] == [
+        ("obsolete_field", "budget.max_crawls")
+    ]
+
+
+def test_missing_new_fields_and_obsolete_crawl_are_aggregated_deterministically():
+    budget = _budget()
+    for field in ("max_results", "max_model_calls", "max_total_tokens"):
+        del budget[field]
+    budget["max_crawls"] = 8
+
+    first = _issues(budget=budget)
+    second = _issues(budget=budget)
+
+    assert [(issue.code, issue.path) for issue in first] == [
+        ("missing_field", "budget.max_results"),
+        ("missing_field", "budget.max_model_calls"),
+        ("missing_field", "budget.max_total_tokens"),
+        ("obsolete_field", "budget.max_crawls"),
+    ]
+    assert first == second
+
+
+@pytest.mark.parametrize("field", ["max_results", "max_model_calls", "max_total_tokens"])
+@pytest.mark.parametrize("value", [True, 1.5, 0, -1])
+def test_direct_budget_contract_and_builder_reject_new_field_values_identically(field, value):
+    values = _budget(**{field: value})
+
+    builder_issues = _issues(budget=values)
+    with pytest.raises(ProfileContractError) as direct_error:
+        BudgetContract(**values)
+
+    assert direct_error.value.issues == builder_issues
 
 
 @pytest.mark.parametrize("field", ["timeout_seconds", "priority"])
@@ -765,7 +836,7 @@ def test_multiple_violations_are_aggregated_in_stable_order_with_precise_paths()
         priority=True,
         required="yes",
     )
-    invalid_budget = _budget(max_searches=0, max_crawls=True)
+    invalid_budget = _budget(max_searches=0, max_results=True)
 
     first = _issues(
         profile_id="Bad Profile",
@@ -797,7 +868,7 @@ def test_multiple_violations_are_aggregated_in_stable_order_with_precise_paths()
         ("invalid_integer", "catalogs[0].priority"),
         ("invalid_boolean", "catalogs[0].required"),
         ("non_positive_integer", "budget.max_searches"),
-        ("invalid_integer", "budget.max_crawls"),
+        ("invalid_integer", "budget.max_results"),
     ]
     assert [(issue.code, issue.path) for issue in first] == expected
     assert first == second
@@ -846,4 +917,4 @@ def test_public_nested_contract_constructors_enforce_their_local_invariants():
             required=True,
         )
     with pytest.raises(ProfileContractError):
-        BudgetContract(0, 1, 1, 1, 1, 1, 1)
+        BudgetContract(0, 1, 1, 1, 1, 1, 1, 1, 1)

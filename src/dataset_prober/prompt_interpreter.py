@@ -76,8 +76,20 @@ class InterpretationResult:
     # Cost tracking for this interpretation call
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     cost_usd: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        """Actual reported usage from the completed interpreter response."""
+
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_tokens
+            + self.cache_read_tokens
+        )
 
     @property
     def profile_names(self) -> list[str]:
@@ -186,7 +198,9 @@ class PromptInterpreter:
         self._profiles_by_id = {profile.profile_id: profile for profile in profiles}
         self.system_prompt = _system_prompt(profiles)
         self.client = (
-            client if client is not None else anthropic.Anthropic(api_key=get_anthropic_api_key())
+            client
+            if client is not None
+            else anthropic.Anthropic(api_key=get_anthropic_api_key(), max_retries=0)
         )
 
     def interpret(self, user_prompt: str) -> InterpretationResult:
@@ -246,6 +260,7 @@ Classify this request and return JSON."""
         usage = response.usage
         input_tokens = usage.input_tokens
         output_tokens = usage.output_tokens
+        cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
         cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
 
         # Calculate cost (Sonnet 4.6 pricing)
@@ -357,6 +372,7 @@ Classify this request and return JSON."""
             interpreter_reasoning=interpreter_reasoning,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
             cost_usd=cost_usd,
         )
@@ -406,9 +422,14 @@ Classify this request and return JSON."""
         # Show interpreter cost
         cost_str = f"${result.cost_usd:.4f}" if result.cost_usd >= 0.001 else "<$0.001"
         console.print(
-            f"[dim]Interpretation: {result.input_tokens + result.output_tokens} tokens | "
-            f"cost: {cost_str}[/dim]"
+            f"[dim]Interpretation actual reported usage: {result.total_tokens} tokens | "
+            f"estimated cost: {cost_str}[/dim]"
         )
+        if result.cache_creation_tokens > 0:
+            console.print(
+                "[dim]Cache-creation cost is not represented because the pricing contract "
+                "has no cache-write rate.[/dim]"
+            )
 
         # Low confidence warning
         low_confidence = [p for p in result.profiles if p.confidence == "low"]

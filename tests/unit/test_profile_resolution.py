@@ -53,9 +53,11 @@ def _profile(test_profile, catalogs):
             field: getattr(source.budget, field)
             for field in (
                 "max_searches",
-                "max_crawls",
+                "max_results",
                 "max_probes",
+                "max_model_calls",
                 "max_tokens",
+                "max_total_tokens",
                 "timeout_minutes",
                 "sample_rows",
                 "download_timeout_seconds",
@@ -216,7 +218,7 @@ def test_optional_unavailable_catalog_is_excluded_with_surviving_source(test_pro
 
 
 def test_optional_unavailable_source_is_absent_from_every_model_surface(test_profile):
-    from dataset_prober.dataset_agent import build_tool_definitions
+    from dataset_prober.dataset_agent import Budget, build_tool_definitions
 
     profile = _profile(
         test_profile,
@@ -232,7 +234,7 @@ def test_optional_unavailable_source_is_absent_from_every_model_surface(test_pro
             "ckan": _factory("ckan", [], available=False),
         },
     )
-    definitions = build_tool_definitions(resolved)
+    definitions = build_tool_definitions(resolved, Budget.from_profile(profile.budget))
     rendered = str(definitions).lower()
 
     assert tuple(resolved.execution_map) == resolved.source_keys == ("cbs",)
