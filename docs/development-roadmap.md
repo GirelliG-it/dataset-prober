@@ -1,5 +1,5 @@
 # Development roadmap
-*Last updated: 15 August 2026*
+*Last updated: 22 August 2026*
 
 ```mermaid
 flowchart TB
@@ -26,10 +26,10 @@ flowchart TB
     end
 
     S4Merge --> S5Work
-    S5Gate -->|"Merge pending"| Hardened["⏳ Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure"]
+    S5Gate -->|"Merged in PR #16"| Hardened["✅ Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure<br/>Merge be7f98b"]
 
     subgraph Repairs["4 · Independent profile-repair branches"]
-        Dutch["⏳ Dutch<br/>Keep CBS OData v3<br/>Correct data.overheid.nl to /data/api/3<br/>Remove OpenDataSoft promises<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
+        Dutch["🟡 Dutch offline + live inspection gates<br/>CBS OData v3 retained<br/>data.overheid.nl CKAN v3 at /data/api/3<br/>Bounded explicit-format filtering<br/>No catalog API keys<br/>OpenDataSoft configuration rejected<br/><br/>Offline contract, controlled read-only<br/>catalog/API, and compatibility audit passed<br/>Controlled loader-compatible RDW CSV<br/>retrieval + deterministic inspection passed<br/>Persistent loading not exercised<br/>Remain manual_only"]
         US["⏳ United States<br/>Retain bounded legacy v3 route<br/>Make API key mandatory<br/>Defer v4 adapter<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
         EU["⏳ European Union<br/>Use EU CKAN route dialect<br/>Remove Eurostat until adapter exists<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
     end
@@ -48,9 +48,10 @@ flowchart TB
     ProfileGate --> Live["🎯 Controlled real end-to-end live test"]
     Live --> V01["Dataset Prober v0.1 readiness review"]
 
-    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge,S5Work,S5Gate done
+    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge,S5Work,S5Gate,Hardened done
+    class Dutch active
     class ProfileGate gate
-    class Hardened,Dutch,US,EU,Live,V01 pending
+    class US,EU,Live,V01 pending
 
     classDef done fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef active fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:3px

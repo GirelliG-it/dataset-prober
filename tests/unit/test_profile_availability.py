@@ -12,11 +12,16 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
-from dataset_prober.profile_contract import ProfileContractError, ProfileStatus
+from dataset_prober.profile_contract import (
+    CKANDialect,
+    CKANSearchMode,
+    ProfileContractError,
+    ProfileStatus,
+)
 
 DUTCH_REASON = (
-    "Only the supported CBS StatLine OData v3 route is exposed; broader Dutch "
-    "catalogue discovery awaits repair and certification."
+    "The CBS StatLine OData v3 and data.overheid.nl CKAN v3 routes are available only by "
+    "explicit selection during v0.1 stabilization."
 )
 US_REASON = (
     "Data.gov v4 requires a source-specific adapter; the legacy v3 CKAN route "
@@ -129,11 +134,22 @@ def test_bundled_profiles_have_truthful_lifecycle_and_catalogs():
     assert profiles["global"].reason == GLOBAL_REASON
 
     dutch_catalogs = profiles["dutch_government"].catalogs
-    assert len(dutch_catalogs) == 1
-    assert dutch_catalogs[0].catalog_id == "cbs_statline"
-    assert dutch_catalogs[0].adapter == "cbs"
-    assert dutch_catalogs[0].required is True
-    assert dutch_catalogs[0].api_key_env is None
+    assert [(catalog.catalog_id, catalog.adapter) for catalog in dutch_catalogs] == [
+        ("cbs_statline", "cbs"),
+        ("data_overheid", "ckan"),
+    ]
+    assert [catalog.priority for catalog in dutch_catalogs] == [1, 2]
+    assert all(catalog.required is True for catalog in dutch_catalogs)
+    assert all(catalog.api_key_env is None for catalog in dutch_catalogs)
+    data_overheid = dutch_catalogs[1]
+    assert data_overheid.base_url == "https://data.overheid.nl/data/api/3"
+    assert data_overheid.landing_base_url == "https://data.overheid.nl"
+    assert data_overheid.ckan_dialect is CKANDialect.CKAN_ACTION
+    assert data_overheid.ckan_search_mode is CKANSearchMode.LOCAL_RESOURCE_METADATA
+    assert profiles["dutch_government"].trusted_domains == (
+        "opendata.cbs.nl",
+        "data.overheid.nl",
+    )
     assert all(
         not profile.catalogs for key, profile in profiles.items() if key != "dutch_government"
     )
@@ -150,7 +166,7 @@ def test_every_bundled_yaml_uses_only_the_explicit_contract_shape():
         assert "blocked_sources" not in profile.raw
         for catalog in profile.raw["catalogs"]:
             assert "type" not in catalog
-            assert {
+            expected_fields = {
                 "catalog_id",
                 "adapter",
                 "name",
@@ -159,7 +175,10 @@ def test_every_bundled_yaml_uses_only_the_explicit_contract_shape():
                 "timeout_seconds",
                 "priority",
                 "required",
-            } == set(catalog)
+            }
+            if catalog["adapter"] == "ckan":
+                expected_fields.update({"ckan_dialect", "ckan_search_mode", "landing_base_url"})
+            assert expected_fields == set(catalog)
 
 
 def test_contract_and_runtime_views_cannot_diverge(profiles_dir):
@@ -335,19 +354,36 @@ def test_valid_runtime_url_paths_queries_and_standard_ports_still_match(tmp_path
         assert profile.is_source_blocked(url) is True
 
 
-def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp_path):
+def test_dutch_resolution_and_model_surfaces_use_exactly_cbs_and_ckan(monkeypatch, tmp_path):
     from dataset_prober import dataset_agent
     from dataset_prober.config_loader import ConfigLoader
     from dataset_prober.loading_policy import LoadingPolicySession
     from dataset_prober.paths import AppPaths
     from dataset_prober.profile_resolution import resolve_profile
     from dataset_prober.tools.cbs_tool import CBSTool
+    from dataset_prober.tools.ckan_tool import CKANTool
 
     profile = ConfigLoader().load("dutch_government")
-    assert [catalog.adapter for catalog in profile.catalogs] == ["cbs"]
-    assert [catalog.adapter for catalog in profile.agent_usable_catalogs] == ["cbs"]
+    assert [catalog.adapter for catalog in profile.catalogs] == ["cbs", "ckan"]
+    assert [catalog.adapter for catalog in profile.agent_usable_catalogs] == ["cbs", "ckan"]
 
-    resolved = resolve_profile(profile, registry={"cbs": CBSTool})
+    cbs_factory = Mock(side_effect=CBSTool)
+    ckan_factory = Mock(side_effect=CKANTool)
+
+    resolved = resolve_profile(
+        profile,
+        registry={"cbs": cbs_factory, "ckan": ckan_factory},
+    )
+    assert isinstance(resolved.tools[0], CBSTool)
+    assert isinstance(resolved.tools[1], CKANTool)
+    assert tuple(resolved.execution_map) == resolved.source_keys == ("cbs", "ckan")
+    cbs_factory.assert_called_once()
+    ckan_factory.assert_called_once()
+    assert cbs_factory.call_args.args[0]["catalog_id"] == "cbs_statline"
+    assert ckan_factory.call_args.args[0]["catalog_id"] == "data_overheid"
+    assert (
+        ckan_factory.call_args.args[0]["ckan_search_mode"] is CKANSearchMode.LOCAL_RESOURCE_METADATA
+    )
     monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", Mock(return_value="offline-key"))
     usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
     response = SimpleNamespace(
@@ -377,58 +413,30 @@ def test_dutch_model_arguments_and_tool_schema_contain_only_cbs(monkeypatch, tmp
     for definition in definitions:
         source = definition["input_schema"]["properties"].get("source")
         if source is not None:
-            assert source["enum"] == ["cbs"]
+            assert source["enum"] == ["cbs", "ckan"]
     assert "table_id" in rendered
-    for inactive_claim in ("ckan", "tavily", "web search", "download_url", "csv"):
+    for inactive_claim in ("tavily", "web search", "opendatasoft"):
         assert inactive_claim not in rendered
         assert inactive_claim not in system
     assert "cbs" in system
+    assert "data.overheid.nl" in system
+    assert "dutch national data portal" in system
     client.messages.create.assert_called_once()
     anthropic_factory.assert_called_once_with(api_key="offline-key", max_retries=0)
-    assert tuple(resolved.execution_map) == resolved.source_keys == ("cbs",)
 
 
-def test_resolved_system_and_model_context_omit_static_opendatasoft_portals(
-    monkeypatch,
-    tmp_path,
-):
-    from dataset_prober import dataset_agent
+def test_unsupported_opendatasoft_portals_configuration_fails_closed(tmp_path):
     from dataset_prober.config_loader import ConfigLoader
-    from dataset_prober.loading_policy import LoadingPolicySession
-    from dataset_prober.paths import AppPaths
 
     raw = valid_raw_profile()
-    portal_url = "https://inactive.opendatasoft.example/catalog"
-    raw["opendatasoft_portals"] = [portal_url]
-    profile = ConfigLoader(write_profile(tmp_path, raw)).load("synthetic_profile")
-    resolved = resolve_with_fake_tools(profile)
+    raw["opendatasoft_portals"] = ["https://unsupported.example/catalog"]
 
-    usage = SimpleNamespace(input_tokens=1, output_tokens=1, cache_read_input_tokens=0)
-    client = Mock()
-    client.messages.create.return_value = SimpleNamespace(
-        stop_reason="end_turn",
-        content=[SimpleNamespace(type="text", text="Done")],
-        usage=usage,
-    )
-    monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", Mock(return_value="offline-key"))
-    monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", Mock(return_value=client))
+    with pytest.raises(ProfileContractError) as error:
+        ConfigLoader(write_profile(tmp_path, raw)).load("synthetic_profile")
 
-    dataset_agent.run_profile(
-        user_prompt="Find synthetic data",
-        resolved_profile=resolved,
-        budget=dataset_agent.Budget.from_profile(profile.budget),
-        loading_session=LoadingPolicySession(download_enabled=False),
-        session_cost=dataset_agent.SessionCost(),
-        paths=AppPaths(output_dir=tmp_path),
-    )
-
-    model_system = client.messages.create.call_args.kwargs["system"]
-    for rendered_context in (resolved.system_prompt_context, model_system):
-        assert "OPENDATASOFT PORTALS" not in rendered_context
-        assert portal_url not in rendered_context
-    assert profile.opendatasoft_portals == [portal_url]
-    assert profile.catalogs[0].name in resolved.system_prompt_context
-    assert profile.catalogs[0].base_url in model_system
+    assert [(issue.code, issue.path) for issue in error.value.issues] == [
+        ("unknown_field", "opendatasoft_portals")
+    ]
 
 
 @pytest.mark.parametrize("profile_id", ["us_government", "eu_open_data", "global"])

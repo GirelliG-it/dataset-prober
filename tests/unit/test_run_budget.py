@@ -197,6 +197,7 @@ def _profile_with_identity_and_threshold(source, profile_id, name, threshold):
                 "priority": catalog.priority,
                 "required": catalog.required,
                 "ckan_dialect": catalog.ckan_dialect,
+                "ckan_search_mode": catalog.ckan_search_mode,
                 "landing_base_url": catalog.landing_base_url,
             }
             for catalog in contract.catalogs

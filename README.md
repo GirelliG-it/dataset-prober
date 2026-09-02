@@ -36,9 +36,9 @@ CSV and CBS/OData loading paths; other candidates remain visible as report-only 
 When an enabled profile is available, the agentic workflow can use Claude to interpret a
 natural-language request and choose among the enabled descriptors. In the current degraded
 mode there are no enabled profiles; the Dutch manual-only profile can instead be named
-explicitly to plan CBS searches and return candidates. Model output, search snippets,
-filenames and catalog metadata are discovery evidence; none of them prove that a resource
-is a dataset.
+explicitly to plan searches across CBS StatLine and data.overheid.nl and return candidates.
+Model output, search snippets, filenames and catalog metadata are discovery evidence; none
+of them prove that a resource is a dataset.
 
 The deterministic part retrieves enabled resources through a guarded transport and
 classifies the inspected content before using DuckDB SQL to report row counts, column
@@ -60,8 +60,11 @@ cannot replace deterministic verification.
 - The crawler follows relevant same-domain pages and collects links whose filenames look
   like data resources.
 - The agentic command can run the Dutch profile only when it is selected explicitly. That
-  manual-only profile exposes the supported CBS StatLine OData v3 catalog. Automatic
-  profile selection is temporarily unavailable because no bundled profile is enabled.
+  manual-only profile exposes CBS StatLine OData v3 and data.overheid.nl CKAN v3. Neither
+  catalog requires an API key. The data.overheid search locally filters its bounded package
+  response using explicit CSV resource metadata because the portal's controlled-vocabulary
+  format values are incompatible with the literal CKAN CSV query filter. Automatic profile
+  selection is temporarily unavailable because no bundled profile is enabled.
 - Direct resources remain available through the non-agentic manual prober. Tavily
   provider-side search and extraction remain disabled because their source-fetch transport
   is opaque to the application.
@@ -131,7 +134,7 @@ has no enabled profile:
 
 | Profile | Status | Active catalog |
 | --- | --- | --- |
-| `dutch_government` | `manual_only` | CBS StatLine OData v3 (`cbs`) |
+| `dutch_government` | `manual_only` | CBS StatLine OData v3 (`cbs`); data.overheid.nl CKAN v3 (`ckan`) |
 | `us_government` | `disabled` | None; Data.gov v4 needs a source-specific adapter |
 | `eu_open_data` | `disabled` | None; current EU routes lack compatible registered adapters |
 | `global` | `disabled` | None; no supported, certified safe discovery transport |
@@ -143,6 +146,13 @@ This temporary profile restriction does not affect `dataset-prober-probe`: a use
 supply a concrete URL directly for guarded deterministic inspection.
 
 Explicit Dutch agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`.
+The two Dutch catalogs themselves require no API key. OpenDataSoft configuration is
+unsupported and rejected rather than exposed as an agent capability. The Dutch repair has
+passed offline contract verification, controlled read-only catalog/API health checks for CBS
+and data.overheid, and controlled retrieval and deterministic inspection of one
+loader-compatible RDW CSV. Persistent DuckDB loading was not performed; query-driven CSV
+resources without `.csv` path evidence remain report-only, and the profile remains
+manual-only.
 Tavily provider search and extraction remain disabled even when `TAVILY_API_KEY` is set.
 The optional local analysis path expects an Ollama server
 at `http://localhost:11434` and the requested model to be available there. Environment

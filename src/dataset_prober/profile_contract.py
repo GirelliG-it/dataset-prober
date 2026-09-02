@@ -30,6 +30,13 @@ class CKANDialect(StrEnum):
     EU_HUB = "eu_hub"
 
 
+class CKANSearchMode(StrEnum):
+    """Closed CKAN package-search filtering strategies."""
+
+    SERVER_LITERAL_CSV = "server_literal_csv"
+    LOCAL_RESOURCE_METADATA = "local_resource_metadata"
+
+
 @dataclass(frozen=True, slots=True)
 class ContractIssue:
     """One deterministic static-contract validation issue."""
@@ -76,6 +83,7 @@ _CATALOG_FIELDS = (
 )
 _CKAN_CATALOG_FIELDS = (
     "ckan_dialect",
+    "ckan_search_mode",
     "landing_base_url",
 )
 _MALFORMED_PERCENT_PATTERN = r"%(?![0-9A-Fa-f]{2})"
@@ -312,6 +320,21 @@ def _catalog_issues(
                 )
             )
 
+    ckan_search_mode = values.get("ckan_search_mode", _MISSING)
+    if is_ckan and ckan_search_mode is not _MISSING:
+        try:
+            if not isinstance(ckan_search_mode, str):
+                raise TypeError
+            CKANSearchMode(ckan_search_mode)
+        except (TypeError, ValueError):
+            issues.append(
+                _issue(
+                    "invalid_ckan_search_mode",
+                    f"{path}.ckan_search_mode",
+                    "must be server_literal_csv or local_resource_metadata",
+                )
+            )
+
     landing_base_url = values.get("landing_base_url", _MISSING)
     if is_ckan and landing_base_url is not _MISSING:
         issues.extend(_landing_origin_issues(landing_base_url, f"{path}.landing_base_url"))
@@ -405,6 +428,7 @@ class CatalogContract:
     priority: int
     required: bool
     ckan_dialect: CKANDialect | None = None
+    ckan_search_mode: CKANSearchMode | None = None
     landing_base_url: str | None = None
 
     def __post_init__(self) -> None:
@@ -419,6 +443,7 @@ class CatalogContract:
                 "priority": self.priority,
                 "required": self.required,
                 "ckan_dialect": self.ckan_dialect,
+                "ckan_search_mode": self.ckan_search_mode,
                 "landing_base_url": self.landing_base_url,
             },
             "catalog",
@@ -428,6 +453,11 @@ class CatalogContract:
             raise ProfileContractError(issues)
         if self.adapter == "ckan":
             object.__setattr__(self, "ckan_dialect", CKANDialect(self.ckan_dialect))
+            object.__setattr__(
+                self,
+                "ckan_search_mode",
+                CKANSearchMode(self.ckan_search_mode),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -733,6 +763,7 @@ def _parse_catalogs(
                     priority=catalog_values["priority"],
                     required=catalog_values["required"],
                     ckan_dialect=catalog_values.get("ckan_dialect"),
+                    ckan_search_mode=catalog_values.get("ckan_search_mode"),
                     landing_base_url=catalog_values.get("landing_base_url"),
                 )
             )

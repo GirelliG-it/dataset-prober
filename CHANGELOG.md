@@ -26,19 +26,28 @@ to the source. For the latter, read `git log`.
 
 ### Changed
 
+- The Dutch profile remains manual-only and now exposes the retained CBS StatLine OData v3
+  route plus the official data.overheid.nl CKAN v3 route at `/data/api/3`; neither catalog
+  requires an API key. The data.overheid route locally filters a bounded package response using
+  explicit CSV resource metadata instead of the incompatible literal CKAN CSV query filter.
+  Unsupported `opendatasoft_portals` configuration now fails closed. Offline contract checks,
+  a bounded catalog compatibility audit, and controlled read-only catalog/API health checks pass.
+  A loader-compatible RDW CSV was retrieved within a 32 MiB ceiling and deterministically inspected
+  as 6,650 non-empty tabular rows. Query-driven resources without `.csv` path evidence remain
+  report-only; persistent loading was not performed, and the Dutch profile remains manual-only.
 - Profile-agent runs now enforce explicit per-search result and model-call ceilings, a
   between-call reported-token stop threshold, a per-call requested output cap and monotonic
   request deadlines. CBS and CKAN discovery and inspection operations now cap configured
   source timeouts by freshly remaining run time between sequential operations. Output-limited
-  model responses
-  return partial results without retrying or executing truncated tool calls. The unused crawl
-  budget was removed, and continuing after a timeout no longer resets any non-time budget.
+  model responses return partial results without retrying or executing truncated tool calls.
+  The unused crawl budget was removed, and continuing after a timeout no longer resets any non-time budget.
   Pre-run output labels thresholds as a budget-based planning estimate; final output reports
   token usage returned by completed model responses and locally observed attempted, completed,
   and timed-out call outcomes.
 - Bundled profiles now load through the immutable static profile contract and fail closed
-  according to explicit lifecycle status: Dutch CBS is manual-only, while US, EU and Global
-  discovery remain disabled until their promised transports are repaired and certified.
+  according to explicit lifecycle status: Dutch discovery is manual-only; US and EU discovery
+  remain disabled until their promised transports are repaired and certified; Global discovery
+  remains disabled pending a new safe discovery design and certification.
 - Only deterministically verified, supported, non-empty tabular resources may
   enter selection and consent. The actual CSV or CBS payload is assessed again
   before persistent DuckDB access; report-only candidates remain visible in

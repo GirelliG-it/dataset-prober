@@ -1,9 +1,8 @@
 """
 src/tools/ckan_tool.py
 
-Generic CKAN data source tool.
-Works with any CKAN-based catalog: data.gov, data.overheid.nl, EU Open Data Portal.
-All catalog-specific settings come from the profile configuration.
+CKAN data source tool for the explicitly declared closed route dialects.
+Catalog-specific API and landing origins come from validated profile configuration.
 
 CKAN API reference: https://docs.ckan.org/en/latest/api/
 """
@@ -20,7 +19,7 @@ from dataset_prober.loading_policy import (
     loader_for_resource,
     sanitize_url_text,
 )
-from dataset_prober.profile_contract import CKANDialect
+from dataset_prober.profile_contract import CKANDialect, CKANSearchMode
 from dataset_prober.resource_classification import (
     InspectionOutcome,
     error_response_assessment,
@@ -66,14 +65,16 @@ _CKAN_DIALECT_ROUTES: dict[CKANDialect, tuple[str, str, str]] = {
     ),
 }
 
+_EU_AUTHORITY_CSV_FORMAT = "http://publications.europa.eu/resource/authority/file-type/CSV"
+
 
 class CKANTool(DataSourceTool):
     """
-    Tool for any CKAN-based open data catalog.
+    Tool for CKAN catalogs using one of the declared closed route dialects.
 
     Configured via profile — base_url and api_key_env vary per catalog:
       - data.gov:        https://api.gsa.gov/technology/datagov/v3
-      - data.overheid.nl: https://data.overheid.nl
+      - data.overheid.nl: https://data.overheid.nl/data/api/3
       - EU portal:       https://data.europa.eu/api/hub/search
 
     Search: CKAN package_search API
@@ -128,6 +129,29 @@ class CKANTool(DataSourceTool):
             _CKAN_DIALECT_ROUTES[dialect],
         )
 
+    def _search_mode(self) -> CKANSearchMode:
+        """Return one validated closed package-search filtering strategy."""
+
+        raw_mode = self.config.get("ckan_search_mode")
+        try:
+            return CKANSearchMode(raw_mode)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "CKAN search configuration requires a supported ckan_search_mode"
+            ) from exc
+
+    def _resource_selection_mode(self) -> CKANSearchMode:
+        """Return the mode governing package resource selection.
+
+        Standalone fetch and conversion callers predate the required profile field,
+        so an absent mode retains the established server-literal selection behavior.
+        Explicit but invalid values still fail closed through ``_search_mode``.
+        """
+
+        if "ckan_search_mode" not in self.config:
+            return CKANSearchMode.SERVER_LITERAL_CSV
+        return self._search_mode()
+
     @staticmethod
     def _package_identifier(pkg: dict) -> str:
         """Select and validate one stable CKAN identifier for identity and landing URLs."""
@@ -150,24 +174,26 @@ class CKANTool(DataSourceTool):
         remaining_time: RemainingTimeProvider | None = None,
     ) -> list[DatasetResult]:
         """
-        Search CKAN catalog using package_search endpoint.
-        Filters for CSV resources only.
+        Search CKAN catalog using one declared bounded package-search strategy.
         """
         source_timeout = self.config.get("timeout_seconds", 30)
+        search_mode = self._search_mode()
         api_base, _landing_base, (search_path, _show_path, _landing_path) = (
             self._route_configuration()
         )
         url = f"{api_base}/{search_path}"
+        params = {
+            "q": keyword,
+            "rows": max_results * 2,  # Bounded over-fetch for local metadata filtering
+            "sort": "metadata_modified desc",
+        }
+        if search_mode is CKANSearchMode.SERVER_LITERAL_CSV:
+            params["fq"] = "res_format:CSV"
 
         try:
             resp = safe_http_get(
                 url,
-                params={
-                    "q": keyword,
-                    "rows": max_results * 2,  # Fetch extra, filter down
-                    "fq": "res_format:CSV",
-                    "sort": "metadata_modified desc",
-                },
+                params=params,
                 headers=self._headers(),
                 timeout=bounded_source_timeout(source_timeout, remaining_time),
             )
@@ -183,10 +209,17 @@ class CKANTool(DataSourceTool):
                 ]
 
             results = []
-            for pkg in data["result"]["results"][:max_results]:
-                result = self._package_to_result(pkg)
-                if result:
-                    results.append(result)
+            for pkg in data["result"]["results"][: max_results * 2]:
+                result = self._package_to_result(pkg, search_mode=search_mode)
+                if search_mode is CKANSearchMode.LOCAL_RESOURCE_METADATA and (
+                    result.format != "CSV"
+                    or not isinstance(result.download_url, str)
+                    or not result.download_url.strip()
+                ):
+                    continue
+                results.append(result)
+                if len(results) == max_results:
+                    break
 
             return results
 
@@ -341,22 +374,43 @@ class CKANTool(DataSourceTool):
         with authorization.activate(actual_claims) as permit:
             return download_csv_dataset(dataset, self.adapter_identity, destination, permit)
 
-    def _package_to_result(self, pkg: dict) -> DatasetResult:
-        """Convert a CKAN package dict to a DatasetResult."""
+    def _package_to_result(
+        self,
+        pkg: dict,
+        *,
+        search_mode: CKANSearchMode | None = None,
+    ) -> DatasetResult:
+        """Convert a package using its mode's closed resource-selection contract."""
         identifier = self._package_identifier(pkg)
         _api_base, landing_base, (_search_path, _show_path, landing_path) = (
             self._route_configuration()
         )
         landing_url = f"{landing_base}/{landing_path}/{quote(identifier, safe='')}"
+        selection_mode = search_mode or self._resource_selection_mode()
 
-        # Find best CSV resource
+        # Local metadata filtering admits only a plain CSV with a nonblank URL.
+        # Server-filter mode retains its established first-recognized-resource shape.
         resources = pkg.get("resources", [])
         csv_resource = None
-        for r in resources:
-            fmt = r.get("format", "").upper()
-            if fmt in ("CSV", "TEXT/CSV", "CSV/ZIP"):
-                csv_resource = r
-                break
+        resource_format = None
+        for resource in resources:
+            if not isinstance(resource, dict):
+                continue
+            normalized_format = self._normalized_resource_format(resource)
+            if selection_mode is CKANSearchMode.LOCAL_RESOURCE_METADATA:
+                resource_url = resource.get("url")
+                if (
+                    normalized_format != "CSV"
+                    or not isinstance(resource_url, str)
+                    or not resource_url.strip()
+                ):
+                    continue
+            elif normalized_format is None:
+                continue
+
+            csv_resource = resource
+            resource_format = normalized_format
+            break
 
         # Parse dates
         modified = pkg.get("metadata_modified", "")
@@ -378,11 +432,6 @@ class CKANTool(DataSourceTool):
         notes = pkg.get("notes", "") or ""
         description = notes[:300]
 
-        resource_format = None
-        if csv_resource:
-            catalog_format = csv_resource.get("format", "").upper()
-            resource_format = "CSV" if catalog_format in ("CSV", "TEXT/CSV") else catalog_format
-
         return DatasetResult(
             id=identifier,
             title=pkg.get("title", ""),
@@ -403,6 +452,42 @@ class CKANTool(DataSourceTool):
             tags=tags,
             status="found",
         )
+
+    @staticmethod
+    def _normalized_resource_format(resource: dict) -> str | None:
+        """Normalize closed CSV-related metadata; reject contradictory evidence."""
+
+        raw_format = resource.get("format")
+        if isinstance(raw_format, str) and raw_format.upper() == "CSV/ZIP":
+            # Preserve the established server-filter result shape. The local metadata
+            # search mode admits only the normalized plain-CSV value below.
+            return "CSV/ZIP"
+
+        checks: list[bool] = []
+        for field in (
+            "format",
+            "format_displayname",
+            "mimetype",
+            "mimetype_inner",
+        ):
+            value = resource.get(field)
+            if value is None or value == "":
+                continue
+            if not isinstance(value, str):
+                return None
+
+            if field == "format":
+                checks.append(
+                    value.upper() in {"CSV", "TEXT/CSV"} or value == _EU_AUTHORITY_CSV_FORMAT
+                )
+            elif field == "format_displayname":
+                checks.append(value.upper() == "CSV")
+            else:
+                checks.append(value.lower() == "text/csv")
+
+        if checks and all(checks):
+            return "CSV"
+        return None
 
     def _parse_frequency(self, pkg: dict) -> str | None:
         """Extract update frequency from CKAN extras."""
