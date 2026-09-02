@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 import dataset_prober.profile_resolution as profile_resolution
-from dataset_prober.profile_contract import CKANDialect, build_profile_contract
+from dataset_prober.profile_contract import CKANDialect, CKANSearchMode, build_profile_contract
 from dataset_prober.profile_resolution import (
     ProfileResolutionError,
     ResolvedProfile,
@@ -37,6 +37,7 @@ def _catalog(
     if adapter == "ckan":
         values.update(
             ckan_dialect="eu_hub",
+            ckan_search_mode="server_literal_csv",
             landing_base_url="https://portal.example",
         )
     return values
@@ -545,6 +546,7 @@ def test_typed_ckan_route_values_reach_exact_constructed_tool(test_profile):
 
     assert created[0] is resolved.tools[0]
     assert created[0].config["ckan_dialect"] is CKANDialect.EU_HUB
+    assert created[0].config["ckan_search_mode"] is CKANSearchMode.SERVER_LITERAL_CSV
     assert created[0].config["landing_base_url"] == "https://portal.example"
 
 

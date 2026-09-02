@@ -20,6 +20,7 @@ import yaml
 from dataset_prober.loading_policy import sanitize_url_text
 from dataset_prober.profile_contract import (
     CKANDialect,
+    CKANSearchMode,
     ContractIssue,
     HostRule,
     ProfileContract,
@@ -82,6 +83,7 @@ class CatalogConfig:
     priority: int
     required: bool
     ckan_dialect: CKANDialect | None = None
+    ckan_search_mode: CKANSearchMode | None = None
     landing_base_url: str | None = None
 
     @property
@@ -197,7 +199,6 @@ class Profile:
     scope_instruction: str = ""
 
     # Optional sections
-    opendatasoft_portals: list = field(default_factory=list)
     credibility_signals: dict = field(default_factory=dict)
     domain_keywords: dict = field(default_factory=dict)
 
@@ -219,6 +220,7 @@ class Profile:
                 priority=catalog.priority,
                 required=catalog.required,
                 ckan_dialect=catalog.ckan_dialect,
+                ckan_search_mode=catalog.ckan_search_mode,
                 landing_base_url=catalog.landing_base_url,
             )
             for catalog in self.contract.catalogs
@@ -384,7 +386,6 @@ _ANCILLARY_TOP_LEVEL_FIELDS = {
     "license_preference",
     "license_warn",
     "license_reject",
-    "opendatasoft_portals",
     "credibility_signals",
     "domain_keywords",
 }
@@ -398,6 +399,7 @@ _CATALOG_FIELDS = {
     "priority",
     "required",
     "ckan_dialect",
+    "ckan_search_mode",
     "landing_base_url",
 }
 _BUDGET_FIELDS = {
@@ -654,7 +656,6 @@ class ConfigLoader:
             license=license_config,
             scope_regions=scope.get("regions", []),
             scope_instruction=scope.get("instruction", ""),
-            opendatasoft_portals=raw_profile.get("opendatasoft_portals", []),
             credibility_signals=raw_profile.get("credibility_signals", {}),
             domain_keywords=raw_profile.get("domain_keywords", {}),
             raw=raw_profile,

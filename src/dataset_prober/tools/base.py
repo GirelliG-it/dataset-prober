@@ -81,7 +81,7 @@ def bounded_source_timeout(
 class DatasetResult:
     """
     Standardized dataset representation across all data sources.
-    Every tool returns this structure — CBS, CKAN, OpenDataSoft, Tavily.
+    Every tool returns this structure — CBS, CKAN, and Tavily.
     The agent works exclusively with DatasetResult objects.
     """
 
@@ -89,7 +89,7 @@ class DatasetResult:
     id: str  # Source-specific identifier (CBS table ID, CKAN package name, URL)
     title: str  # Human-readable dataset name
     description: str  # What the dataset contains
-    source: str  # Tool that found this: "cbs", "ckan", "opendatasoft", "tavily"
+    source: str  # Tool that found this: "cbs", "ckan", or "tavily"
     source_name: str  # Human-readable source name: "CBS", "Data.gov", "Den Haag Open Data"
 
     # Access
@@ -339,7 +339,7 @@ class DataSourceTool(ABC):
         """
         Machine-readable source type identifier.
         Used by config_loader to instantiate the correct tool class.
-        Values: 'cbs', 'ckan', 'opendatasoft', 'tavily'
+        Values: 'cbs', 'ckan', or 'tavily'
         """
         pass
 

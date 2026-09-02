@@ -93,12 +93,14 @@ def ckan_route_config(
     base_url="https://catalog.public.example/api/3",
     landing_base_url="https://catalog.public.example",
     ckan_dialect="ckan_action",
+    ckan_search_mode="server_literal_csv",
 ):
     return {
         "name": "CKAN",
         "base_url": base_url,
         "landing_base_url": landing_base_url,
         "ckan_dialect": ckan_dialect,
+        "ckan_search_mode": ckan_search_mode,
     }
 
 
@@ -195,6 +197,12 @@ def test_ckan_catalogue_and_resource_use_guarded_transport(monkeypatch, tmp_path
     assert safe_get.call_args_list[0].args[0] == (
         "https://catalog.public.example/api/3/action/package_search"
     )
+    assert safe_get.call_args_list[0].kwargs["params"] == {
+        "q": "resource",
+        "rows": 2,
+        "sort": "metadata_modified desc",
+        "fq": "res_format:CSV",
+    }
     assert safe_get.call_args_list[1].args[0] == (
         "https://catalog.public.example/api/3/action/package_show"
     )
@@ -601,6 +609,436 @@ def test_ckan_dialects_construct_exact_api_and_landing_urls(
     assert "package-controlled.example" not in fetch_result.url
 
 
+def test_dutch_data_overheid_uses_official_routes_bounded_query_and_no_api_key(monkeypatch):
+    from dataset_prober.config_loader import ConfigLoader
+    from dataset_prober.profile_resolution import resolve_profile
+    from dataset_prober.tools import TOOL_REGISTRY, ckan_tool
+
+    csv_uri = "http://publications.europa.eu/resource/authority/file-type/CSV"
+    packages = [
+        {
+            "name": "resource-a",
+            "title": "Resource A",
+            "resources": [{"format": csv_uri, "url": "https://files.public.example/a.csv"}],
+        },
+        {
+            "name": "resource-b",
+            "title": "Resource B",
+            "resources": [
+                {
+                    "format_displayname": "CSV",
+                    "url": "https://files.public.example/b.csv",
+                }
+            ],
+        },
+        {
+            "name": "resource-c",
+            "title": "Resource C",
+            "resources": [
+                {
+                    "format": csv_uri,
+                    "format_displayname": "CSV",
+                    "url": "https://files.public.example/c.csv",
+                }
+            ],
+        },
+        {
+            "name": "resource-d",
+            "title": "Resource D",
+            "resources": [{"format": csv_uri, "url": "https://files.public.example/d.csv"}],
+        },
+    ]
+    show_package = {"name": "resource-a", "title": "Resource A", "resources": []}
+    safe_get = Mock(
+        side_effect=[
+            FakeHttpResult(data={"success": True, "result": {"results": packages}}),
+            FakeHttpResult(data={"success": True, "result": show_package}),
+        ]
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    profile = ConfigLoader().load("dutch_government")
+    resolved = resolve_profile(profile, registry=TOOL_REGISTRY)
+    tool = resolved.execution_map["ckan"]
+
+    search_results = tool.search("water quality", max_results=3)
+    fetch_result = tool.fetch("resource-a", sample_rows=1)
+
+    assert [result.id for result in search_results] == [
+        "resource-a",
+        "resource-b",
+        "resource-c",
+    ]
+    search_result = search_results[0]
+    search_call, show_call = safe_get.call_args_list
+    assert search_call.args[0] == "https://data.overheid.nl/data/api/3/action/package_search"
+    assert search_call.kwargs["params"] == {
+        "q": "water quality",
+        "rows": 6,
+        "sort": "metadata_modified desc",
+    }
+    assert show_call.args[0] == "https://data.overheid.nl/data/api/3/action/package_show"
+    assert show_call.kwargs["params"] == {"id": "resource-a"}
+    assert search_call.kwargs["headers"] == {"Content-Type": "application/json"}
+    assert show_call.kwargs["headers"] == {"Content-Type": "application/json"}
+    assert search_call.kwargs["timeout"] == 30
+    assert show_call.kwargs["timeout"] == 30
+    assert search_result.url == "https://data.overheid.nl/dataset/resource-a"
+    assert fetch_result.url == "https://data.overheid.nl/dataset/resource-a"
+
+
+def test_local_resource_metadata_search_rejects_unsupported_ambiguous_and_missing_formats(
+    monkeypatch,
+):
+    from dataset_prober.tools import ckan_tool
+
+    csv_uri = "http://publications.europa.eu/resource/authority/file-type/CSV"
+    packages = [
+        {
+            "name": "zip-only",
+            "resources": [
+                {
+                    "format": "http://publications.europa.eu/resource/authority/file-type/ZIP",
+                    "url": "https://files.public.example/data.zip",
+                }
+            ],
+        },
+        {
+            "name": "contradictory",
+            "resources": [
+                {
+                    "format": csv_uri,
+                    "format_displayname": "ZIP",
+                    "url": "https://files.public.example/data.csv",
+                }
+            ],
+        },
+        {
+            "name": "unknown",
+            "resources": [
+                {
+                    "format": "custom-tabular",
+                    "url": "https://files.public.example/data.csv",
+                }
+            ],
+        },
+        {
+            "name": "missing",
+            "resources": [{"url": "https://files.public.example/data.csv"}],
+        },
+        {
+            "name": "supported",
+            "resources": [
+                {
+                    "format_displayname": "CSV",
+                    "url": "https://files.public.example/data",
+                }
+            ],
+        },
+    ]
+    safe_get = Mock(
+        return_value=FakeHttpResult(data={"success": True, "result": {"results": packages}})
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+
+    results = tool.search("resource", max_results=3)
+
+    assert [result.id for result in results] == ["supported"]
+    assert results[0].format == "CSV"
+    assert results[0].download_url == "https://files.public.example/data"
+    assert "fq" not in safe_get.call_args.kwargs["params"]
+
+
+@pytest.mark.parametrize(
+    "earlier_resource",
+    [
+        {"format": "CSV/ZIP", "url": "https://files.public.example/data.zip"},
+        {"format": "CSV"},
+        {"format": "CSV", "url": ""},
+        {"format": "CSV", "url": "   "},
+        {"format": "CSV", "url": 7},
+        {
+            "format": "http://publications.europa.eu/resource/authority/file-type/CSV",
+            "format_displayname": "ZIP",
+            "url": "https://files.public.example/contradictory.csv",
+        },
+        {"format": "JSON", "url": "https://files.public.example/data.json"},
+        "not-a-resource",
+    ],
+)
+def test_local_resource_metadata_selects_later_admissible_plain_csv(earlier_resource):
+    from dataset_prober.tools.ckan_tool import CKANTool
+
+    expected_url = "https://files.public.example/exact-resource.csv"
+    package = {
+        "name": "resource-a",
+        "resources": [
+            earlier_resource,
+            {"format": "CSV", "url": expected_url},
+        ],
+    }
+    tool = CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+
+    result = tool._package_to_result(package)
+
+    assert result.format == "CSV"
+    assert result.download_url == expected_url
+
+
+def test_local_resource_metadata_search_returns_later_admissible_plain_csv(monkeypatch):
+    from dataset_prober.tools import ckan_tool
+
+    expected_url = "https://files.public.example/exact-resource.csv"
+    package = {
+        "name": "resource-a",
+        "resources": [
+            {"format": "CSV/ZIP", "url": "https://files.public.example/data.zip"},
+            {"format": "CSV", "url": expected_url},
+        ],
+    }
+    safe_get = Mock(
+        return_value=FakeHttpResult(data={"success": True, "result": {"results": [package]}})
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+
+    results = tool.search("resource", max_results=1)
+
+    assert len(results) == 1
+    assert results[0].format == "CSV"
+    assert results[0].download_url == expected_url
+    assert safe_get.call_args.kwargs["params"] == {
+        "q": "resource",
+        "rows": 2,
+        "sort": "metadata_modified desc",
+    }
+
+
+def test_local_resource_metadata_fetch_probes_later_admissible_plain_csv(monkeypatch):
+    from dataset_prober.tools import ckan_tool
+
+    expected_url = "https://files.public.example/exact-resource.csv"
+    package = {
+        "name": "resource-a",
+        "resources": [
+            {"format": "CSV", "url": ""},
+            {"format": "CSV", "url": expected_url},
+        ],
+    }
+    safe_get = Mock(return_value=FakeHttpResult(data={"success": True, "result": package}))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+    probe = Mock(side_effect=lambda result, *_args, **_kwargs: result)
+    monkeypatch.setattr(tool, "_probe_csv", probe)
+
+    result = tool.fetch("resource-a", sample_rows=2)
+
+    assert result.format == "CSV"
+    assert result.download_url == expected_url
+    probe.assert_called_once()
+    assert probe.call_args.args[0] is result
+    assert probe.call_args.kwargs["remaining_time"] is None
+
+
+def test_local_resource_metadata_query_only_csv_stops_before_guarded_retrieval(
+    monkeypatch,
+):
+    from dataset_prober.resource_classification import AssessmentReason
+    from dataset_prober.tools import ckan_tool
+
+    resource_url = "https://files.public.example/download?format=csv"
+    package = {
+        "name": "resource-a",
+        "resources": [
+            {
+                "format_displayname": "CSV",
+                "url": resource_url,
+            }
+        ],
+    }
+    safe_get = Mock(
+        return_value=FakeHttpResult(
+            data={
+                "success": True,
+                "result": package,
+            }
+        )
+    )
+    guarded_retrieval = Mock(
+        side_effect=AssertionError("query-only CSV evidence reached guarded retrieval")
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    monkeypatch.setattr(ckan_tool, "safe_download", guarded_retrieval)
+    tool = ckan_tool.CKANTool(
+        ckan_route_config(
+            ckan_search_mode="local_resource_metadata",
+        )
+    )
+
+    result = tool.fetch("resource-a", sample_rows=2)
+
+    assert result.status == "found"
+    assert result.format == "CSV"
+    assert result.download_url == resource_url
+    assert result.error == "Unsupported or unproven CKAN resource format: CSV"
+    assert result.assessment.reason is AssessmentReason.UNSUPPORTED_FORMAT
+    guarded_retrieval.assert_not_called()
+
+
+def test_local_resource_metadata_fetch_without_admissible_resource_stays_report_only(
+    monkeypatch,
+):
+    from dataset_prober.resource_classification import AssessmentReason
+    from dataset_prober.tools import ckan_tool
+
+    package = {
+        "name": "resource-a",
+        "resources": [
+            "not-a-resource",
+            {"format": "CSV/ZIP", "url": "https://files.public.example/data.zip"},
+            {"format": "CSV", "url": "   "},
+            {
+                "format": "CSV",
+                "format_displayname": "ZIP",
+                "url": "https://files.public.example/contradictory.csv",
+            },
+        ],
+    }
+    safe_get = Mock(return_value=FakeHttpResult(data={"success": True, "result": package}))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+    probe = Mock(side_effect=AssertionError("unsupported resource reached CSV probing"))
+    monkeypatch.setattr(tool, "_probe_csv", probe)
+
+    result = tool.fetch("resource-a", sample_rows=2)
+
+    assert result.status == "found"
+    assert result.format is None
+    assert result.download_url is None
+    assert result.error == "No supported CSV resources found in package"
+    assert result.assessment.reason is AssessmentReason.UNSUPPORTED_FORMAT
+    probe.assert_not_called()
+
+
+def test_server_literal_csv_resource_selection_remains_first_recognized_resource(monkeypatch):
+    from dataset_prober.tools import ckan_tool
+
+    packages = [
+        {
+            "name": "zip-first",
+            "resources": [
+                {"format": "CSV/ZIP", "url": "https://files.public.example/data.zip"},
+                {"format": "CSV", "url": "https://files.public.example/data.csv"},
+            ],
+        },
+        {
+            "name": "empty-url-first",
+            "resources": [
+                {"format": "CSV", "url": ""},
+                {"format": "CSV", "url": "https://files.public.example/data.csv"},
+            ],
+        },
+    ]
+    safe_get = Mock(
+        return_value=FakeHttpResult(data={"success": True, "result": {"results": packages}})
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="server_literal_csv"))
+
+    results = tool.search("resource", max_results=2)
+
+    assert [(result.format, result.download_url) for result in results] == [
+        ("CSV/ZIP", "https://files.public.example/data.zip"),
+        ("CSV", ""),
+    ]
+    assert safe_get.call_args.kwargs["params"]["fq"] == "res_format:CSV"
+
+
+def test_local_resource_metadata_inspection_stays_within_bounded_overfetch(monkeypatch):
+    from dataset_prober.tools import ckan_tool
+
+    unsupported = [
+        {
+            "name": f"unsupported-{index}",
+            "resources": [{"format": "ZIP", "url": "https://files.public.example/data"}],
+        }
+        for index in range(4)
+    ]
+    beyond_bound = {
+        "name": "beyond-bound",
+        "resources": [
+            {
+                "format": "CSV",
+                "url": "https://files.public.example/data",
+            }
+        ],
+    }
+    safe_get = Mock(
+        return_value=FakeHttpResult(
+            data={
+                "success": True,
+                "result": {"results": [*unsupported, beyond_bound]},
+            }
+        )
+    )
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+
+    results = tool.search("resource", max_results=2)
+
+    assert results == []
+    assert safe_get.call_args.kwargs["params"]["rows"] == 4
+
+
+@pytest.mark.parametrize(
+    ("resource", "expected_format"),
+    [
+        (
+            {
+                "format": "http://publications.europa.eu/resource/authority/file-type/CSV",
+                "format_displayname": "CSV",
+                "url": "https://files.public.example/data",
+            },
+            "CSV",
+        ),
+        (
+            {
+                "format": "http://publications.europa.eu/resource/authority/file-type/CSV",
+                "format_displayname": "ZIP",
+                "url": "https://files.public.example/data.csv",
+            },
+            None,
+        ),
+    ],
+)
+def test_ckan_package_show_uses_closed_resource_format_normalization(
+    monkeypatch, resource, expected_format
+):
+    from dataset_prober.tools import ckan_tool
+
+    package = {
+        "name": "resource-a",
+        "title": "Resource A",
+        "resources": [resource],
+    }
+    safe_get = Mock(return_value=FakeHttpResult(data={"success": True, "result": package}))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+    tool = ckan_tool.CKANTool(ckan_route_config(ckan_search_mode="local_resource_metadata"))
+    probe = Mock(side_effect=lambda result, *_args, **_kwargs: result)
+    monkeypatch.setattr(tool, "_probe_csv", probe)
+
+    result = tool.fetch("resource-a", sample_rows=1)
+
+    assert safe_get.call_args.args[0].endswith("/action/package_show")
+    assert result.format == expected_format
+    if expected_format is None:
+        probe.assert_not_called()
+        assert result.error == "No supported CSV resources found in package"
+    else:
+        probe.assert_called_once()
+        assert result.download_url == "https://files.public.example/data"
+
+
 @pytest.mark.parametrize(
     ("package", "expected_id", "expected_url"),
     [
@@ -672,6 +1110,7 @@ def test_ckan_package_requires_non_special_stable_identifier(package):
         {
             "base_url": "https://catalog.public.example/api/3",
             "landing_base_url": "https://catalog.public.example",
+            "ckan_search_mode": "server_literal_csv",
         },
         ckan_route_config(ckan_dialect="unknown"),
         ckan_route_config(base_url=None),
@@ -690,10 +1129,29 @@ def test_invalid_ckan_route_configuration_stops_before_guarded_transport(monkeyp
     safe_get.assert_not_called()
 
 
+@pytest.mark.parametrize("mode", [None, "", "unknown", 1])
+def test_invalid_ckan_search_mode_stops_before_guarded_transport(monkeypatch, mode):
+    from dataset_prober.tools import ckan_tool
+
+    safe_get = Mock(side_effect=AssertionError("invalid search mode reached guarded transport"))
+    monkeypatch.setattr(ckan_tool, "safe_http_get", safe_get)
+
+    with pytest.raises(ValueError, match="search configuration"):
+        ckan_tool.CKANTool(ckan_route_config(ckan_search_mode=mode)).search(
+            "resource", max_results=1
+        )
+
+    safe_get.assert_not_called()
+
+
 def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
     from dataclasses import replace
 
-    from dataset_prober.profile_contract import CKANDialect, build_profile_contract
+    from dataset_prober.profile_contract import (
+        CKANDialect,
+        CKANSearchMode,
+        build_profile_contract,
+    )
     from dataset_prober.profile_resolution import resolve_profile
     from dataset_prober.tools import TOOL_REGISTRY
     from dataset_prober.tools.ckan_tool import CKANTool
@@ -714,6 +1172,7 @@ def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
                 "priority": 1,
                 "required": True,
                 "ckan_dialect": "ckan_action",
+                "ckan_search_mode": "server_literal_csv",
                 "landing_base_url": "https://catalog.public.example",
             }
         ],
@@ -742,7 +1201,9 @@ def test_ckan_route_fields_reach_tool_factory_without_type_loss(test_profile):
 
     assert isinstance(tool, CKANTool)
     assert profile.catalogs[0].ckan_dialect is CKANDialect.CKAN_ACTION
+    assert profile.catalogs[0].ckan_search_mode is CKANSearchMode.SERVER_LITERAL_CSV
     assert tool.config["ckan_dialect"] is CKANDialect.CKAN_ACTION
+    assert tool.config["ckan_search_mode"] is profile.catalogs[0].ckan_search_mode
     assert tool.config["landing_base_url"] == "https://catalog.public.example"
 
 

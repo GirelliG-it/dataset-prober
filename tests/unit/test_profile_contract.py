@@ -11,6 +11,7 @@ from dataset_prober.profile_contract import (
     BudgetContract,
     CatalogContract,
     CKANDialect,
+    CKANSearchMode,
     HostRule,
     ProfileContract,
     ProfileContractError,
@@ -31,6 +32,7 @@ def _catalog(**overrides: object) -> dict[str, object]:
         "priority": 1,
         "required": True,
         "ckan_dialect": "ckan_action" if adapter == "ckan" else None,
+        "ckan_search_mode": "server_literal_csv" if adapter == "ckan" else None,
         "landing_base_url": "https://catalog.example" if adapter == "ckan" else None,
     }
     values.update(overrides)
@@ -297,7 +299,18 @@ def test_ckan_dialects_are_accepted_and_normalized(dialect):
     assert contract.catalogs[0].ckan_dialect is CKANDialect(dialect)
 
 
-@pytest.mark.parametrize("field", ["ckan_dialect", "landing_base_url"])
+def test_ckan_search_modes_are_closed_and_normalized():
+    assert tuple(CKANSearchMode) == (
+        CKANSearchMode.SERVER_LITERAL_CSV,
+        CKANSearchMode.LOCAL_RESOURCE_METADATA,
+    )
+
+    for mode in CKANSearchMode:
+        contract = _build(catalogs=[_catalog(ckan_search_mode=mode.value)])
+        assert contract.catalogs[0].ckan_search_mode is mode
+
+
+@pytest.mark.parametrize("field", ["ckan_dialect", "ckan_search_mode", "landing_base_url"])
 def test_ckan_catalogs_require_route_fields_in_raw_declarations(field):
     catalog = _catalog()
     del catalog[field]
@@ -321,10 +334,38 @@ def test_ckan_dialect_must_be_one_exact_declared_value(dialect):
     ]
 
 
+@pytest.mark.parametrize(
+    "mode",
+    [
+        None,
+        "",
+        " ",
+        1,
+        True,
+        UserString("server_literal_csv"),
+        "SERVER_LITERAL_CSV",
+        "local",
+        "unknown",
+    ],
+)
+def test_ckan_search_mode_must_be_one_exact_declared_value(mode):
+    issues = _issues(catalogs=[_catalog(ckan_search_mode=mode)])
+
+    assert [(issue.code, issue.path) for issue in issues] == [
+        ("invalid_ckan_search_mode", "catalogs[0].ckan_search_mode")
+    ]
+
+
 def test_direct_catalog_construction_validates_and_normalizes_ckan_dialect():
-    catalog = CatalogContract(**_catalog(ckan_dialect="eu_hub"))
+    catalog = CatalogContract(
+        **_catalog(
+            ckan_dialect="eu_hub",
+            ckan_search_mode="local_resource_metadata",
+        )
+    )
 
     assert catalog.ckan_dialect is CKANDialect.EU_HUB
+    assert catalog.ckan_search_mode is CKANSearchMode.LOCAL_RESOURCE_METADATA
 
     with pytest.raises(ProfileContractError) as error:
         CatalogContract(**_catalog(ckan_dialect="EU_HUB"))
@@ -383,11 +424,13 @@ def test_non_ckan_catalogs_do_not_require_ckan_route_fields(include_null_fields)
     catalog = _catalog(adapter="cbs")
     if not include_null_fields:
         catalog.pop("ckan_dialect")
+        catalog.pop("ckan_search_mode")
         catalog.pop("landing_base_url")
 
     contract = _build(catalogs=[catalog])
 
     assert contract.catalogs[0].ckan_dialect is None
+    assert contract.catalogs[0].ckan_search_mode is None
     assert contract.catalogs[0].landing_base_url is None
 
 
@@ -395,6 +438,7 @@ def test_non_ckan_catalogs_do_not_require_ckan_route_fields(include_null_fields)
     ("field", "value"),
     [
         ("ckan_dialect", "ckan_action"),
+        ("ckan_search_mode", "server_literal_csv"),
         ("landing_base_url", "https://catalog.example"),
     ],
 )
@@ -891,6 +935,7 @@ def test_new_url_and_missing_field_issues_have_stable_aggregate_order():
 def test_ckan_route_issues_have_stable_aggregate_order():
     catalog = _catalog(base_url="https://catalog.example/%0aheader")
     del catalog["ckan_dialect"]
+    del catalog["ckan_search_mode"]
     del catalog["landing_base_url"]
 
     first = _issues(catalogs=[catalog])
@@ -898,6 +943,7 @@ def test_ckan_route_issues_have_stable_aggregate_order():
 
     assert [(issue.code, issue.path) for issue in first] == [
         ("missing_field", "catalogs[0].ckan_dialect"),
+        ("missing_field", "catalogs[0].ckan_search_mode"),
         ("missing_field", "catalogs[0].landing_base_url"),
         ("url_control_character", "catalogs[0].base_url"),
     ]

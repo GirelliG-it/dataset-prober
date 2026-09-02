@@ -9,7 +9,13 @@ import pytest
 import yaml
 
 
-def _write_ckan_profile(tmp_path, *, dialect="ckan_action", extra_catalog_fields=None):
+def _write_ckan_profile(
+    tmp_path,
+    *,
+    dialect="ckan_action",
+    search_mode="server_literal_csv",
+    extra_catalog_fields=None,
+):
     profiles = tmp_path / "profiles"
     profiles.mkdir()
     catalog = {
@@ -22,6 +28,7 @@ def _write_ckan_profile(tmp_path, *, dialect="ckan_action", extra_catalog_fields
         "priority": 1,
         "required": True,
         "ckan_dialect": dialect,
+        "ckan_search_mode": search_mode,
         "landing_base_url": "https://catalog.public.example",
     }
     catalog.update(extra_catalog_fields or {})
@@ -301,16 +308,27 @@ class TestProfileMethods:
 
 
 @pytest.mark.parametrize("dialect", ["ckan_action", "eu_hub"])
-def test_ckan_route_fields_remain_typed_without_contract_runtime_divergence(tmp_path, dialect):
+@pytest.mark.parametrize("search_mode", ["server_literal_csv", "local_resource_metadata"])
+def test_ckan_route_fields_remain_typed_without_contract_runtime_divergence(
+    tmp_path, dialect, search_mode
+):
     from dataset_prober.config_loader import ConfigLoader
-    from dataset_prober.profile_contract import CKANDialect
+    from dataset_prober.profile_contract import CKANDialect, CKANSearchMode
 
-    profile = ConfigLoader(_write_ckan_profile(tmp_path, dialect=dialect)).load("synthetic_ckan")
+    profile = ConfigLoader(
+        _write_ckan_profile(
+            tmp_path,
+            dialect=dialect,
+            search_mode=search_mode,
+        )
+    ).load("synthetic_ckan")
     contract_catalog = profile.contract.catalogs[0]
     runtime_catalog = profile.catalogs[0]
 
     assert contract_catalog.ckan_dialect is CKANDialect(dialect)
+    assert contract_catalog.ckan_search_mode is CKANSearchMode(search_mode)
     assert runtime_catalog.ckan_dialect is contract_catalog.ckan_dialect
+    assert runtime_catalog.ckan_search_mode is contract_catalog.ckan_search_mode
     assert runtime_catalog.landing_base_url == contract_catalog.landing_base_url
     assert runtime_catalog.landing_base_url == "https://catalog.public.example"
 

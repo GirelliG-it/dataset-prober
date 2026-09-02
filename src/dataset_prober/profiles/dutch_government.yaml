@@ -1,15 +1,16 @@
 # config/profiles/dutch_government.yaml
 #
-# Manual-only profile for the supported CBS StatLine OData v3 route.
+# Manual-only profile for supported Dutch national catalog routes.
 
-name: Dutch Government (CBS only)
-description: Manual-only discovery through the supported CBS StatLine OData v3 catalog
+name: Dutch Government
+description: >-
+  Manual-only discovery through CBS StatLine OData v3 and data.overheid.nl CKAN v3
 language: nl
 cost_warning: false
 status: manual_only
 reason: >-
-  Only the supported CBS StatLine OData v3 route is exposed; broader Dutch catalogue
-  discovery awaits repair and certification.
+  The CBS StatLine OData v3 and data.overheid.nl CKAN v3 routes are available only by
+  explicit selection during v0.1 stabilization.
 
 # Geographic scope is selection guidance, not deterministic semantic verification.
 scope:
@@ -19,9 +20,9 @@ scope:
     - Dutch provinces (provincies)
     - Kingdom of the Netherlands (including Caribbean municipalities)
   instruction: >
-    This profile exposes only the configured CBS StatLine catalog. Treat the requested
-    Dutch geographic scope as selection guidance and report the deterministic assessment
-    for every inspected resource.
+    This profile exposes the configured CBS StatLine and data.overheid.nl catalogs. Treat
+    the requested Dutch geographic scope as selection guidance, not deterministic proof of
+    relevance, and report the deterministic assessment for every inspected resource.
 
 # Enforced profile-agent run budgets
 budget:
@@ -51,10 +52,23 @@ catalogs:
     timeout_seconds: 30
     priority: 1
     required: true
+  - catalog_id: data_overheid
+    adapter: ckan
+    name: Dutch National Data Portal
+    base_url: https://data.overheid.nl/data/api/3
+    api_key_env: null
+    timeout_seconds: 30
+    priority: 2
+    required: true
+    ckan_dialect: ckan_action
+    ckan_search_mode: local_resource_metadata
+    landing_base_url: https://data.overheid.nl
 
 # Host rules support catalog guidance only; guarded transport remains authoritative.
 trusted_hosts:
   - hostname: opendata.cbs.nl
+    include_subdomains: false
+  - hostname: data.overheid.nl
     include_subdomains: false
 blocked_hosts: []
 
