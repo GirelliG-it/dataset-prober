@@ -29,8 +29,8 @@ flowchart TB
     S5Gate -->|"Merged in PR #16"| Hardened["✅ Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure<br/>Merge be7f98b"]
 
     subgraph Repairs["4 · Independent profile-repair branches"]
-        Dutch["🟡 Dutch offline + live inspection gates<br/>CBS OData v3 retained<br/>data.overheid.nl CKAN v3 at /data/api/3<br/>Bounded explicit-format filtering<br/>No catalog API keys<br/>OpenDataSoft configuration rejected<br/><br/>Offline contract, controlled read-only<br/>catalog/API, and compatibility audit passed<br/>Controlled loader-compatible RDW CSV<br/>retrieval + deterministic inspection passed<br/>Persistent loading not exercised<br/>Remain manual_only"]
-        US["⏳ United States<br/>Retain bounded legacy v3 route<br/>Make API key mandatory<br/>Defer v4 adapter<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
+        Dutch["✅ Dutch<br/>Merged in PR #17 · merge 65291ad<br/>CBS OData v3 retained<br/>data.overheid.nl CKAN v3 at /data/api/3<br/>Bounded explicit-format filtering<br/>No catalog API keys<br/>OpenDataSoft configuration rejected<br/><br/>Offline contract, controlled read-only<br/>catalog/API, and compatibility audit passed<br/>Controlled loader-compatible RDW CSV<br/>retrieval + deterministic inspection passed<br/>Persistent loading not exercised<br/>Remain manual_only"]
+        US["⏸ United States disabled<br/>Legacy api.gsa.gov v3 route redirects cross-origin<br/>Redirect destination returned HTTP 404<br/>with and without DEMO_KEY<br/>Data.gov v4 needs a source-specific adapter<br/>v4 adapter deferred<br/><br/>Remain disabled"]
         EU["⏳ European Union<br/>Use EU CKAN route dialect<br/>Remove Eurostat until adapter exists<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
     end
 
