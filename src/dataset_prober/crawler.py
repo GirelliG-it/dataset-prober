@@ -1,3 +1,4 @@
+import argparse
 import re
 from urllib.parse import urljoin, urlparse
 
@@ -175,6 +176,9 @@ def _parse_listing_date(tag) -> str | None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Crawl a website for open dataset resources")
+    parser.parse_args()
+
     paths = AppPaths.resolve()
 
     console.print("\n[bold cyan]Dataset Crawler[/bold cyan]\n")

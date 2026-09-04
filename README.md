@@ -1,14 +1,14 @@
 # dataset-prober
 
-`dataset-prober` is a functional pre-release Python prototype for finding open-data
-resources, deterministically assessing inspected content and optionally loading an
-explicitly approved resource into a local DuckDB database.
+`dataset-prober` is an early Python tool for finding open-data resources,
+deterministically assessing inspected content and optionally loading an explicitly approved
+resource into a local DuckDB database.
 
-It is not yet a stable release. The current pre-release implements bounded classification,
-consent, URL-safety and non-destructive loading contracts for its supported routes, but
-provenance, packaging, CI and other v0.1 release work remain incomplete. Read
-[Current limitations](#current-limitations) before using it with untrusted URLs or an
-existing database.
+The v0.1 scope is deliberately narrow. Supported routes enforce bounded classification,
+explicit consent, guarded transport and non-destructive loading. The Dutch profile remains
+manual-only; the US, EU and global profiles remain disabled pending source-specific adapters
+and safety certification. Read [Current limitations](#current-limitations) before using the
+tool with untrusted URLs or an existing database.
 
 ## Why this project exists
 
@@ -92,7 +92,7 @@ The project currently supports Python 3.12. For development from a checkout:
 python -m pip install -e ".[dev]"
 ```
 
-The editable install exposes three console commands:
+The editable install exposes four console commands:
 
 ```bash
 # Agent-assisted candidate discovery
@@ -108,6 +108,10 @@ dataset-prober-probe --analyze --local --model qwen2.5-coder:3b
 
 # Same-domain link crawling followed by probing
 dataset-prober-crawl
+
+# Standalone analysis of saved probe results
+dataset-prober-analyze
+dataset-prober-analyze --local --model qwen2.5-coder:3b
 ```
 
 The JSON input for `dataset-prober-probe --file` is a list of named URLs:
@@ -221,17 +225,16 @@ Use the prototype on disposable outputs and review every candidate yourself.
 - Output paths are centrally resolved, but artifact filenames and some runtime assumptions
   remain checkout-oriented. Repeated runs can replace result files or leave stale artifacts
   that look current.
-- The current test suite protects selected behaviors but does not globally prohibit
-  network access, exercise every console workflow, or verify a fresh non-editable wheel.
-  Its patch-heavy test design also remains scheduled for separate pre-release work.
+- The automated test suite protects critical release contracts but does not globally prohibit
+  network access or exercise every console workflow. Release verification separately checks a
+  fresh non-editable wheel and its console entry points. Its patch-heavy test design remains
+  scheduled for post-v0.1 improvement.
 
-## Planned v0.1 stabilization
+## v0.1 release contract
 
-The following remain v0.1 release contracts. The current pre-release implements the
-classification, loading-authorization, guarded-transport and non-destructive persistence
-boundaries described above for enabled routes. That does not make v0.1 complete: each
-contract remains subject to release verification, and provenance, cost, runtime,
-packaging and CI work below is still incomplete.
+The following define the bounded v0.1 release contract for supported routes. Profiles lacking
+compatible, safety-certified adapters are outside the executable v0.1 scope and remain
+disabled. Each contract remains subject to final release verification.
 
 1. Reports, PDFs, documentation, search snippets and landing pages are never reported as
    verified datasets.
@@ -250,18 +253,18 @@ packaging and CI work below is still incomplete.
    mapping and failure status are recorded accurately.
 8. Every relevant model call is included in usage and cost totals calculated by one
    authoritative mechanism.
-9. Runtime paths and filenames are centrally owned and independent of the current working
-   directory.
+9. Runtime paths required by installed workflows are centrally resolved; known artifact
+   naming and replacement limitations remain documented.
 10. Environment-, source- and user-specific hardcoded values are removed or centralized;
     stable safety invariants remain fixed only with a documented reason.
 11. A fresh non-editable wheel contains the complete package and exposes working console
     entry points.
 12. Critical release contracts are protected by offline tests and enforced in CI.
 
-The bounded plan targets a release candidate by August 28, 2026, with August 29–31 reserved
-for contract defects and release verification. Stabilization is focused on making the
-existing discovery, verification and approved-loading workflow reliable; it does not add
-new data formats, source adapters or product features.
+The v0.1 scope is frozen to existing supported workflows. Data.gov v4, EU and global
+adapters, new formats, new sources and noncritical refactoring are deferred. Release
+verification is limited to documentation and metadata consistency, a fresh wheel and
+non-editable install, installed CLI smoke tests, the offline suite and CI.
 
 ## Technical scope
 
@@ -285,8 +288,9 @@ ruff format --check .
 pytest -m "not integration"
 ```
 
-These are the checks currently run by CI. Passing them does not imply that the planned v0.1
-contracts are complete.
+These checks run in CI. Final v0.1 verification additionally builds and installs a fresh
+wheel, checks packaged profiles and console entry points, and confirms the documented
+limitations.
 
 ## Acknowledgements
 

@@ -28,35 +28,33 @@ flowchart TB
     S4Merge --> S5Work
     S5Gate -->|"Merged in PR #16"| Hardened["✅ Hardened main<br/>Steps 3–5 plus shared CKAN infrastructure<br/>Merge be7f98b"]
 
-    subgraph Repairs["4 · Independent profile-repair branches"]
+    subgraph Repairs["Profile status for v0.1"]
         Dutch["✅ Dutch<br/>Merged in PR #17 · merge 65291ad<br/>CBS OData v3 retained<br/>data.overheid.nl CKAN v3 at /data/api/3<br/>Bounded explicit-format filtering<br/>No catalog API keys<br/>OpenDataSoft configuration rejected<br/><br/>Offline contract, controlled read-only<br/>catalog/API, and compatibility audit passed<br/>Controlled loader-compatible RDW CSV<br/>retrieval + deterministic inspection passed<br/>Persistent loading not exercised<br/>Remain manual_only"]
         US["⏸ United States disabled<br/>Legacy api.gsa.gov v3 route redirects cross-origin<br/>Redirect destination returned HTTP 404<br/>with and without DEMO_KEY<br/>Data.gov v4 needs a source-specific adapter<br/>v4 adapter deferred<br/><br/>Remain disabled"]
-        EU["⏳ European Union<br/>Use EU CKAN route dialect<br/>Remove Eurostat until adapter exists<br/><br/>Offline tests → explicit approval<br/>→ read-only health check<br/>→ remain manual_only"]
+        EU["⏸ European Union disabled<br/>Current routes lack compatible registered adapters<br/>EU repair deferred<br/><br/>Remain disabled"]
     end
 
     Hardened --> Dutch
     Hardened --> US
     Hardened --> EU
 
-    Dutch --> ProfileGate{"All three repaired profiles<br/>independently pass their gates"}
-    US --> ProfileGate
-    EU --> ProfileGate
+    Hardened --> ReleaseGate{"Supported v0.1 workflows<br/>pass their release gates"}
+    Dutch --> ReleaseGate
 
     Global["⏸ Global profile remains disabled<br/>Requires a separate policy-compliant<br/>discovery design"]
     Hardened -.-> Global
 
-    ProfileGate --> Live["🎯 Controlled real end-to-end live test"]
-    Live --> V01["Dataset Prober v0.1 readiness review"]
+    ReleaseGate --> ReleaseCheck["🎯 Final supported-scope verification<br/>wheel + installed CLI + offline suite"]
+    ReleaseCheck --> V01["Dataset Prober v0.1 readiness review"]
 
     class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge,S5Work,S5Gate,Hardened done
-    class Dutch active
-    class ProfileGate gate
-    class US,EU,Live,V01 pending
+    class Dutch done
+    class ReleaseGate gate
+    class ReleaseCheck,V01 pending
 
     classDef done fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef active fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:3px
     classDef pending fill:#e0e7ff,stroke:#4f46e5,color:#312e81
     classDef gate fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
     classDef hold fill:#e5e7eb,stroke:#6b7280,color:#374151
-    class Global hold
+    class US,EU,Global hold
 ```
