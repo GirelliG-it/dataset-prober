@@ -10,6 +10,8 @@ to the source. For the latter, read `git log`.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-04
+
 ### Added
 
 - Deterministic resource assessments now distinguish verified non-empty tabular
@@ -83,6 +85,9 @@ to the source. For the latter, read `git log`.
 
 ### Fixed
 
+- The installed `dataset-prober-crawl --help` command now exits normally before
+  runtime output-path resolution, so help works outside a source checkout without
+  `DATASET_PROBER_OUTPUT`.
 - Persistent DuckDB loads now refuse to overwrite an existing target table.
 - Table creation and validation now run atomically, so a failed load rolls back
   without leaving a partial table or persistent staging artifact.
@@ -100,7 +105,7 @@ to the source. For the latter, read `git log`.
   `ANTHROPIC_API_KEY` to be set. The Claude client used to be constructed at
   import time regardless of which model you asked for.
 
-## [0.1.0]
+## [0.1.0-pre-restructure] - 2026-07-24
 
 First working version, predating this changelog. Manual URL probing, agentic
 discovery through source profiles, DuckDB loading behind explicit download
