@@ -1,14 +1,51 @@
 # dataset-prober
 
+[![CI](https://github.com/GirelliG-it/dataset-prober/actions/workflows/ci.yml/badge.svg)](https://github.com/GirelliG-it/dataset-prober/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/GirelliG-it/dataset-prober)](https://github.com/GirelliG-it/dataset-prober/releases/latest) ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `dataset-prober` is an early Python tool for finding open-data resources,
 deterministically assessing inspected content and optionally loading an explicitly approved
 resource into a local DuckDB database.
+
+> **Public release:** [dataset-prober v0.1.0](https://github.com/GirelliG-it/dataset-prober/releases/tag/v0.1.0)
 
 The v0.1 scope is deliberately narrow. Supported routes enforce bounded classification,
 explicit consent, guarded transport and non-destructive loading. The Dutch profile remains
 manual-only; the US, EU and global profiles remain disabled pending source-specific adapters
 and safety certification. Read [Current limitations](#current-limitations) before using the
 tool with untrusted URLs or an existing database.
+
+## What this project demonstrates
+
+- Deterministic, evidence-based classification that separates verified tabular resources
+  from discovery metadata, documents, landing pages and unsupported content.
+- Application-controlled guarded HTTP retrieval with URL, DNS, redirect, size and deadline
+  boundaries.
+- Explicit per-resource authorization followed by transactional, non-overwriting DuckDB
+  persistence.
+- A packaged Python CLI, CI quality gates and a 1,108-test offline release-verification suite.
+
+## Controlled release-verification example
+
+The bounded v0.1.0 release gate discovered **Open Data Parkeren: REGELING** through
+data.overheid.nl, retrieved its RDW-hosted CSV and deterministically verified 6,650 non-empty
+tabular rows. The inspected candidate was load-eligible, but persistent DuckDB loading was
+not exercised. This evidence establishes supported structure and queryability; it does not
+validate the factual correctness of the records.
+
+## Quick start
+
+The project is not published on PyPI. Install the verified v0.1.0 wheel directly from its
+[GitHub Release](https://github.com/GirelliG-it/dataset-prober/releases/tag/v0.1.0):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install "https://github.com/GirelliG-it/dataset-prober/releases/download/v0.1.0/dataset_prober-0.1.0-py3-none-any.whl"
+dataset-prober --list-profiles
+```
+
+The command lists bundled profile status without starting discovery or making a model call.
+Checkout-based development installation remains documented under [Current commands](#current-commands).
 
 ## Why this project exists
 
@@ -153,10 +190,9 @@ Explicit Dutch agent-assisted discovery and Claude analysis require `ANTHROPIC_A
 The two Dutch catalogs themselves require no API key. OpenDataSoft configuration is
 unsupported and rejected rather than exposed as an agent capability. The Dutch repair has
 passed offline contract verification, controlled read-only catalog/API health checks for CBS
-and data.overheid, and controlled retrieval and deterministic inspection of one
-loader-compatible RDW CSV. Persistent DuckDB loading was not performed; query-driven CSV
-resources without `.csv` path evidence remain report-only, and the profile remains
-manual-only.
+and data.overheid; the [controlled release-verification example](#controlled-release-verification-example)
+records the bounded CSV evidence. Persistent DuckDB loading was not performed; query-driven
+CSV resources without `.csv` path evidence remain report-only, and the profile remains manual-only.
 Tavily provider search and extraction remain disabled even when `TAVILY_API_KEY` is set.
 The optional local analysis path expects an Ollama server
 at `http://localhost:11434` and the requested model to be available there. Environment
