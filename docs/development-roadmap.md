@@ -1,5 +1,5 @@
 # Development roadmap
-*Last updated: 22 August 2026*
+*Last updated: 11 September 2026*
 
 ```mermaid
 flowchart TB
@@ -38,23 +38,46 @@ flowchart TB
     Hardened --> US
     Hardened --> EU
 
-    Hardened --> ReleaseGate{"Supported v0.1 workflows<br/>pass their release gates"}
+    Hardened --> ReleaseGate["✅ Supported v0.1 workflows<br/>passed their release gates"]
     Dutch --> ReleaseGate
 
     Global["⏸ Global profile remains disabled<br/>Requires a separate policy-compliant<br/>discovery design"]
     Hardened -.-> Global
 
-    ReleaseGate --> ReleaseCheck["🎯 Final supported-scope verification<br/>wheel + installed CLI + offline suite"]
-    ReleaseCheck --> V01["Dataset Prober v0.1 readiness review"]
+    ReleaseGate --> ReleaseCheck["✅ Final supported-scope verification passed<br/>fresh wheel + installed CLI + 1,108-test offline suite"]
+    ReleaseCheck --> V01["✅ Dataset Prober v0.1.0 released<br/>4 September 2026 · tag v0.1.0 · merge 308bafe"]
 
-    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge,S5Work,S5Gate,Hardened done
-    class Dutch done
-    class ReleaseGate gate
-    class ReleaseCheck,V01 pending
-
+    class P2A,CKAN,S4Initial,S4Correction,S4Gate,S4Merge,S5Work,S5Gate,Hardened,Dutch,ReleaseGate,ReleaseCheck,V01 done
     classDef done fill:#d1fae5,stroke:#059669,color:#064e3b
-    classDef pending fill:#e0e7ff,stroke:#4f46e5,color:#312e81
-    classDef gate fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
     classDef hold fill:#e5e7eb,stroke:#6b7280,color:#374151
     class US,EU,Global hold
 ```
+
+## v0.2 — Trustworthy agentic evidence and provenance
+
+### Objective
+
+Make agentic results traceable and auditable before expanding dataset coverage. Model output
+and catalog metadata remain discovery evidence; only guarded retrieval and deterministic
+inspection may establish verified structure, queryability and loading eligibility.
+
+### Work order
+
+1. **Harden agentic result grounding.** Require every returned candidate to trace to
+   adapter-provided catalog evidence and deterministic inspection. Add adversarial offline
+   tests for invented identifiers, URLs and metadata, plus unsupported or uninspectable
+   resources.
+2. **Design authoritative provenance.** Define one record for source identity, retrieval and
+   checksum evidence, inspection, reported licensing status, selection, consent, destination
+   and table mapping, terminal outcomes, failures and model usage.
+3. **Implement provenance after design review.** Preserve the existing guarded transport,
+   explicit-consent and non-destructive loading boundaries.
+4. **Handle any project rename separately.** Decide the name and migration surface before
+   changing repository, package, import or command names. Preserve v0.1 history and provide
+   an explicit compatibility plan.
+
+### Deferred
+
+New adapters, formats, sources, automatic profile selection, Data.gov v4, EU and Global
+profile activation, broad test-suite refactoring and complete licensing-policy enforcement
+are not part of the first v0.2 implementation slice.
