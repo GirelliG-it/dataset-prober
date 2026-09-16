@@ -318,6 +318,9 @@ The repository is relevant to several complementary areas:
 
 ## Development checks
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the pull-request changelog requirement
+and the documented exemption for purely internal changes.
+
 ```bash
 ruff check .
 ruff format --check .
