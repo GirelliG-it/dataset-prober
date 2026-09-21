@@ -10,6 +10,12 @@ to the source. For the latter, read `git log`.
 
 ## [Unreleased]
 
+### Added
+
+- An opt-in supervised CBS metadata experiment saves two bounded metadata
+  observations and their monitoring comparison locally, without retrieving
+  dataset records or authorizing ingestion.
+
 ## [0.1.0] - 2026-09-04
 
 ### Added
