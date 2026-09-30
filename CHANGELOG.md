@@ -16,6 +16,13 @@ to the source. For the latter, read `git log`.
   observations and their monitoring comparison locally, without retrieving
   dataset records or authorizing ingestion.
 
+### Changed
+
+- Agent freshness checks now use metadata from a uniquely matching fetched
+  candidate instead of a model-supplied date. Missing or ambiguous candidates
+  and unusable dates return an unknown verdict. Freshness results include
+  stable reason codes and do not change loading eligibility.
+
 ## [0.1.0] - 2026-09-04
 
 ### Added
@@ -88,6 +95,7 @@ to the source. For the latter, read `git log`.
   Tavily alike — not only the URL-keyed path affected by the entry above.
   Existing tables won't be found under their old name; re-download or rename
   them manually.
+
 
 ### Fixed
 

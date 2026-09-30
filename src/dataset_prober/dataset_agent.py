@@ -343,27 +343,29 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
         {
             "name": "check_freshness",
             "description": (
-                "Check if a dataset meets the freshness requirement from the user's prompt. "
-                "Parse the last_updated date and compare against the max_days_old rule. "
-                "Always check freshness before recommending or downloading a dataset."
+                "Check freshness for a previously fetched dataset. "
+                "Supply its source and dataset identifier. "
+                "The modification date comes from fetched metadata. "
+                "Compare that date against the max_days_old rule."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": catalog_types,
+                        "description": "Source used to fetch the dataset",
+                    },
                     "dataset_id": {
                         "type": "string",
-                        "description": "Dataset identifier for reference",
-                    },
-                    "last_updated": {
-                        "type": "string",
-                        "description": "Last update date from metadata (ISO format preferred)",
+                        "description": "Identifier of the previously fetched dataset",
                     },
                     "max_days_old": {
                         "type": "integer",
-                        "description": "Maximum allowed age in days (from user's freshness rule)",
+                        "description": "Maximum allowed age in days",
                     },
                 },
-                "required": ["dataset_id", "last_updated", "max_days_old"],
+                "required": ["source", "dataset_id", "max_days_old"],
             },
         }
     )
@@ -527,9 +529,31 @@ def execute_tool(
         return result.to_dict()
 
     elif tool_name == "check_freshness":
+        source = tool_input["source"]
         dataset_id = tool_input["dataset_id"]
-        last_updated = tool_input["last_updated"]
         max_days_old = tool_input["max_days_old"]
+
+        matches = [
+            candidate
+            for candidate in found_datasets
+            if candidate.source == source and candidate.id == dataset_id
+        ]
+
+        if not matches:
+            return {
+                "passes": None,
+                "reason_code": "candidate_not_found",
+                "reason": "No fetched candidate matches this source and dataset ID.",
+            }
+
+        if len(matches) > 1:
+            return {
+                "passes": None,
+                "reason_code": "candidate_ambiguous",
+                "reason": "Multiple fetched candidates match this source and dataset ID.",
+            }
+
+        last_updated = matches[0].modified
 
         console.print(
             f"  📅 [cyan]Checking freshness:[/cyan] {sanitize_url_text(dataset_id)} "
@@ -568,6 +592,7 @@ def execute_tool(
                 "days_old": None,
                 "max_days_old": max_days_old,
                 "passes": None,
+                "reason_code": "freshness_unknown",
                 "reason": f"Cannot parse date format: {last_updated}",
             }
 
@@ -581,7 +606,8 @@ def execute_tool(
             "days_old": days,
             "max_days_old": max_days_old,
             "passes": passes,
-            "reason": f"Updated {days} days ago — {status} the rule (max {max_days_old} days)",
+            "reason_code": "freshness_passed" if passes else "freshness_failed",
+            "reason": f"Updated {days} days ago - {status} the rule (max {max_days_old} days)",
         }
 
     elif tool_name == "download_dataset":
