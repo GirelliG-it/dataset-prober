@@ -19,9 +19,14 @@ to the source. For the latter, read `git log`.
 ### Changed
 
 - Agent freshness checks now use metadata from a uniquely matching fetched
-  candidate instead of a model-supplied date. Missing or ambiguous candidates
-  and unusable dates return an unknown verdict. Freshness results include
-  stable reason codes and do not change loading eligibility.
+  candidate instead of a model-supplied date. The check accepts exactly
+  `source`, `dataset_id` and `max_days_old`; any missing or extra field,
+  including a supplied `last_updated`, is rejected with
+  `unexpected_tool_input`. Missing or ambiguous candidates and unusable dates
+  return an unknown verdict. Freshness results include stable reason codes
+  (`candidate_not_inspected`, `candidate_identity_ambiguous`,
+  `freshness_unknown`, `freshness_pass`, `freshness_fail`) and do not change
+  loading eligibility.
 
 ## [0.1.0] - 2026-09-04
 

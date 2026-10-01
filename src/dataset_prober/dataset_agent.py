@@ -366,6 +366,7 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
                     },
                 },
                 "required": ["source", "dataset_id", "max_days_old"],
+                "additionalProperties": False,
             },
         }
     )
@@ -419,6 +420,8 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
 
 
 # ─── Tool executor ───────────────────────────────────────────────────────────
+
+_FRESHNESS_INPUT_KEYS = frozenset({"source", "dataset_id", "max_days_old"})
 
 
 def execute_tool(
@@ -529,6 +532,26 @@ def execute_tool(
         return result.to_dict()
 
     elif tool_name == "check_freshness":
+        supplied = set(tool_input) if isinstance(tool_input, dict) else set()
+        missing = sorted(_FRESHNESS_INPUT_KEYS - supplied)
+        unexpected = sorted(str(key) for key in supplied - _FRESHNESS_INPUT_KEYS)
+        if not isinstance(tool_input, dict) or missing or unexpected:
+            problems = []
+            if missing:
+                problems.append(f"missing: {', '.join(missing)}")
+            if unexpected:
+                problems.append(f"unexpected: {sanitize_url_text(', '.join(unexpected))}")
+            if not problems:
+                problems.append("input must be an object")
+            return {
+                "passes": None,
+                "reason_code": "unexpected_tool_input",
+                "reason": (
+                    "check_freshness accepts exactly source, dataset_id and max_days_old "
+                    f"({'; '.join(problems)})."
+                ),
+            }
+
         source = tool_input["source"]
         dataset_id = tool_input["dataset_id"]
         max_days_old = tool_input["max_days_old"]
@@ -542,14 +565,14 @@ def execute_tool(
         if not matches:
             return {
                 "passes": None,
-                "reason_code": "candidate_not_found",
-                "reason": "No fetched candidate matches this source and dataset ID.",
+                "reason_code": "candidate_not_inspected",
+                "reason": "No inspected candidate matches this source and dataset ID.",
             }
 
         if len(matches) > 1:
             return {
                 "passes": None,
-                "reason_code": "candidate_ambiguous",
+                "reason_code": "candidate_identity_ambiguous",
                 "reason": "Multiple fetched candidates match this source and dataset ID.",
             }
 
@@ -606,7 +629,7 @@ def execute_tool(
             "days_old": days,
             "max_days_old": max_days_old,
             "passes": passes,
-            "reason_code": "freshness_passed" if passes else "freshness_failed",
+            "reason_code": "freshness_pass" if passes else "freshness_fail",
             "reason": f"Updated {days} days ago - {status} the rule (max {max_days_old} days)",
         }
 

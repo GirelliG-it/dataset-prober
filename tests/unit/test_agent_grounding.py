@@ -10,7 +10,7 @@ from dataset_prober.loading_policy import LoadingPolicySession
 from dataset_prober.paths import AppPaths
 
 
-def test_freshness_uses_fetched_date_over_model_date(
+def test_freshness_uses_fetched_date(
     sample_dataset_result_ok,
     test_profile,
     tmp_path,
@@ -26,12 +26,11 @@ def test_freshness_uses_fetched_date_over_model_date(
     # 2. Represent the candidates already returned by an adapter.
     found_datasets = [candidate]
 
-    # 3. Arrange conflicting model input.
+    # 3. Arrange the exact model input contract.
     tool_input = {
         "source": candidate.source,
         "dataset_id": candidate.id,
         "max_days_old": 30,
-        "last_updated": "2026-09-24",  # Today's date as YYYY-MM-DD.
     }
 
     # Supply these using existing executor-test patterns.
@@ -50,7 +49,7 @@ def test_freshness_uses_fetched_date_over_model_date(
     # 4. Assert that fetched metadata wins.
     assert result["last_updated"] == "2000-01-01"
     assert result["passes"] is False
-    assert result["reason_code"] == "freshness_failed"
+    assert result["reason_code"] == "freshness_fail"
 
     # 5. Assert that freshness does not change verification.
     assert candidate.assessment == original_assessment
@@ -70,7 +69,6 @@ def test_freshness_rejects_ambiguous_candidates(
             "source": candidate.source,
             "dataset_id": candidate.id,
             "max_days_old": 30,
-            "last_updated": "2026-09-24",
         },
         tool_map={candidate.source: Mock(spec=[])},
         budget=Budget.from_profile(test_profile.budget),
@@ -82,7 +80,7 @@ def test_freshness_rejects_ambiguous_candidates(
     )
 
     assert result["passes"] is None
-    assert result["reason_code"] == "candidate_ambiguous"
+    assert result["reason_code"] == "candidate_identity_ambiguous"
 
 
 def test_freshness_rejects_wrong_source(
@@ -98,7 +96,6 @@ def test_freshness_rejects_wrong_source(
             "source": "ckan",
             "dataset_id": candidate.id,
             "max_days_old": 30,
-            "last_updated": "2026-09-24",
         },
         tool_map={candidate.source: Mock(spec=[])},
         budget=Budget.from_profile(test_profile.budget),
@@ -110,7 +107,7 @@ def test_freshness_rejects_wrong_source(
     )
 
     assert result["passes"] is None
-    assert result["reason_code"] == "candidate_not_found"
+    assert result["reason_code"] == "candidate_not_inspected"
 
 
 def test_freshness_rejects_unknown_dataset_id(
@@ -126,7 +123,6 @@ def test_freshness_rejects_unknown_dataset_id(
             "source": candidate.source,
             "dataset_id": "invented-dataset-id",
             "max_days_old": 30,
-            "last_updated": "2026-09-24",
         },
         tool_map={candidate.source: Mock(spec=[])},
         budget=Budget.from_profile(test_profile.budget),
@@ -138,7 +134,7 @@ def test_freshness_rejects_unknown_dataset_id(
     )
 
     assert result["passes"] is None
-    assert result["reason_code"] == "candidate_not_found"
+    assert result["reason_code"] == "candidate_not_inspected"
 
 
 def test_freshness_schema_requires_identity_not_model_date(test_profile):
@@ -157,8 +153,12 @@ def test_freshness_schema_requires_identity_not_model_date(test_profile):
         "dataset_id",
         "max_days_old",
     }
-    assert "source" in schema["properties"]
-    assert "last_updated" not in schema["properties"]
+    assert set(schema["properties"]) == {
+        "source",
+        "dataset_id",
+        "max_days_old",
+    }
+    assert schema["additionalProperties"] is False
 
 
 @pytest.mark.parametrize("modified", [None, "", "not-a-date"])
@@ -221,7 +221,95 @@ def test_freshness_pass_does_not_upgrade_report_only_candidate(
     )
 
     assert result["passes"] is True
-    assert result["reason_code"] == "freshness_passed"
+    assert result["reason_code"] == "freshness_pass"
     assert candidate.assessment == original_assessment
     assert candidate.assessment.load_eligible is False
     assert candidate.status == original_status
+
+
+def test_freshness_rejects_model_supplied_last_updated(
+    sample_dataset_result_ok,
+    test_profile,
+    tmp_path,
+):
+    candidate = sample_dataset_result_ok
+    candidate.modified = "2000-01-01"
+
+    original_assessment = candidate.assessment
+    original_eligibility = candidate.assessment.load_eligible
+
+    # An adversarial or legacy model date claiming the dataset is fresh.
+    result = execute_tool(
+        tool_name="check_freshness",
+        tool_input={
+            "source": candidate.source,
+            "dataset_id": candidate.id,
+            "max_days_old": 30,
+            "last_updated": date.today().isoformat(),
+        },
+        tool_map={candidate.source: Mock(spec=[])},
+        budget=Budget.from_profile(test_profile.budget),
+        profile=test_profile,
+        loading_session=LoadingPolicySession(download_enabled=False),
+        found_datasets=[candidate],
+        session_cost=SessionCost(),
+        paths=AppPaths(output_dir=tmp_path),
+    )
+
+    assert result["passes"] is None
+    assert result["reason_code"] == "unexpected_tool_input"
+    assert "last_updated" in result["reason"]
+    assert result["reason"] != result["reason_code"]
+    assert "last_updated" not in result
+    assert "days_old" not in result
+    assert candidate.assessment == original_assessment
+    assert candidate.assessment.load_eligible == original_eligibility
+
+
+@pytest.mark.parametrize(
+    ("drop", "extra", "named_key"),
+    [
+        ("source", {}, "source"),
+        ("dataset_id", {}, "dataset_id"),
+        ("max_days_old", {}, "max_days_old"),
+        (None, {"note": "fresh"}, "note"),
+        ("all", {}, "dataset_id"),
+    ],
+)
+def test_freshness_rejects_inexact_input_keys(
+    sample_dataset_result_ok,
+    test_profile,
+    tmp_path,
+    drop,
+    extra,
+    named_key,
+):
+    candidate = sample_dataset_result_ok
+    candidate.modified = date.today().isoformat()
+
+    tool_input = {
+        "source": candidate.source,
+        "dataset_id": candidate.id,
+        "max_days_old": 30,
+    }
+    if drop == "all":
+        tool_input = {}
+    elif drop is not None:
+        del tool_input[drop]
+    tool_input.update(extra)
+
+    result = execute_tool(
+        tool_name="check_freshness",
+        tool_input=tool_input,
+        tool_map={candidate.source: Mock(spec=[])},
+        budget=Budget.from_profile(test_profile.budget),
+        profile=test_profile,
+        loading_session=LoadingPolicySession(download_enabled=False),
+        found_datasets=[candidate],
+        session_cost=SessionCost(),
+        paths=AppPaths(output_dir=tmp_path),
+    )
+
+    assert result["passes"] is None
+    assert result["reason_code"] == "unexpected_tool_input"
+    assert named_key in result["reason"]
