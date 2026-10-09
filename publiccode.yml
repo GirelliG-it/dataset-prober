@@ -1,0 +1,39 @@
+publiccodeYmlVersion: "0"
+
+name: dataset-prober
+url: "https://github.com/GirelliG-it/dataset-prober"
+platforms:
+  - linux
+
+developmentStatus: development
+
+softwareType: "standalone/desktop"
+
+description:
+  en:
+    shortDescription: >
+      A command-line tool for probing and safely downloading open datasets.
+
+    longDescription: >
+      dataset-prober helps users inspect open data sources before ingestion.
+      It supports metadata-aware probing, download safeguards, and reproducible
+      dataset discovery workflows.
+
+    features:
+      - Probe open datasets before downloading
+      - Inspect CSV and OData sources
+      - Apply download safeguards
+      - Preserve source and provenance information
+
+legal:
+  license: MIT
+
+maintenance:
+  type: "community"
+  contacts:
+    - name: GirelliG-it
+
+localisation:
+  localisationReady: false
+  availableLanguages:
+    - en
