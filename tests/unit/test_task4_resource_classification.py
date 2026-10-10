@@ -1,11 +1,16 @@
 """Task 4 deterministic resource-classification contracts."""
 
+import os
+import subprocess
+import sys
+import textwrap
 from copy import copy
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
 
+from dataset_prober import resource_classification
 from dataset_prober.loading_policy import (
     canonical_candidate_identity,
     configured_adapter_identity,
@@ -80,6 +85,85 @@ def test_copy_replace_and_reconstruction_do_not_copy_classifier_evidence():
     assert copy(classified).load_eligible is False
     assert replace(classified).load_eligible is False
     assert reconstructed.load_eligible is False
+
+
+def test_classifier_evidence_cleanup_during_allocation_does_not_deadlock(tmp_path):
+    # Run in a child so a non-reentrant registry lock cannot hang the pytest worker.
+    script = textwrap.dedent(
+        """
+        import faulthandler
+        import gc
+        import weakref
+
+        from dataset_prober import resource_classification as classification
+        from dataset_prober.loading_policy import canonical_candidate_identity
+
+        def identity(name):
+            url = f"https://public.example/{name}.csv"
+            return canonical_candidate_identity("manual", "Manual URL", url, url)
+
+        def classify(candidate_identity):
+            assessment, _ = classification.classify_record_payload(
+                {"value": [{"value": 1}]}, candidate_identity=candidate_identity
+            )
+            return assessment
+
+        faulthandler.dump_traceback_later(5)
+        gc.disable()
+        original_constructor = classification._ClassifierEvidence
+        try:
+            old_identity = identity("old")
+            new_identity = identity("new")
+            survivor = classify(identity("survivor"))
+            old = classify(old_identity)
+            old_key = id(old)
+            old_reference = weakref.ref(old)
+            cycle = [old]
+            cycle.append(cycle)
+            del old, cycle
+            assert old_reference() is not None
+            assert old_key in classification._classifier_evidence
+
+            def collect_during_allocation(*args, **kwargs):
+                # The production issuer calls this constructor inside its registry lock.
+                print("Collecting cyclic assessment during evidence construction", flush=True)
+                gc.collect()
+                assert old_reference() is None
+                assert old_key not in classification._classifier_evidence
+                return original_constructor(*args, **kwargs)
+
+            classification._ClassifierEvidence = collect_during_allocation
+            new = classify(new_identity)
+            assert new.load_eligible
+            assert survivor.load_eligible
+            token = classification._classifier_evidence_token_for_candidate
+            assert token(new, new_identity) is not None
+            assert token(new, old_identity) is None
+        finally:
+            classification._ClassifierEvidence = original_constructor
+            gc.enable()
+            faulthandler.cancel_dump_traceback_later()
+        """
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(Path(resource_classification.__file__).resolve().parents[1]),
+    }
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-B", "-c", script],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr or b""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        pytest.fail(f"Classifier cleanup child timed out after 10 seconds:\n{stderr}")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 @pytest.mark.parametrize(

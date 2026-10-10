@@ -247,7 +247,8 @@ class ResourceAssessment:
         }
 
 
-_classifier_evidence_lock = threading.Lock()
+# Cyclic GC can invoke weakref cleanup while a registry operation holds this lock.
+_classifier_evidence_lock = threading.RLock()
 
 
 @dataclass(slots=True)
