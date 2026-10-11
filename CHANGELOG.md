@@ -28,6 +28,12 @@ to the source. For the latter, read `git log`.
   `freshness_unknown`, `freshness_pass`, `freshness_fail`) and do not change
   loading eligibility.
 
+### Fixed
+
+- Resource assessment cleanup no longer deadlocks when garbage collection
+  runs during classifier evidence registration. This prevents intermittent
+  hangs during classification and test fixture setup.
+
 ## [0.1.0] - 2026-09-04
 
 ### Added
