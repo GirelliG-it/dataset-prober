@@ -34,8 +34,9 @@ validate the factual correctness of the records.
 
 ## Quick start
 
-The project is not published on PyPI. Install the verified v0.1.0 wheel directly from its
-[GitHub Release](https://github.com/GirelliG-it/dataset-prober/releases/tag/v0.1.0):
+The project is not published on PyPI. Install the verified v0.1.0 wheel
+directly from its
+[GitHub Release](https://github.com/GirelliG-it/dataset-prober/releases/tag/v0.1.0)
 
 ```bash
 python -m venv .venv
@@ -45,7 +46,19 @@ dataset-prober --list-profiles
 ```
 
 The command lists bundled profile status without starting discovery or making a model call.
-Checkout-based development installation remains documented under [Current commands](#current-commands).
+
+### Install from source
+
+```bash
+git clone https://github.com/GirelliG-it/dataset-prober.git
+cd dataset-prober
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+dataset-prober --list-profiles
+```
+
+Contributor/development installation is documented under [Development checks](#development-checks).
 
 ## Why this project exists
 
@@ -123,13 +136,9 @@ cannot replace deterministic verification.
 
 ## Current commands
 
-The project currently supports Python 3.12. For development from a checkout:
+The project requires Python 3.12 or newer.
 
-```bash
-python -m pip install -e ".[dev]"
-```
-
-The editable install exposes four console commands:
+The package exposes four console commands:
 
 ```bash
 # Agent-assisted candidate discovery
@@ -170,8 +179,8 @@ displayed destination and table.
 
 Profile lifecycle is validated when configuration is loaded. `enabled` profiles may be
 selected automatically or explicitly, `manual_only` profiles require an explicit name,
-and `disabled` profiles cannot be selected or run. The current pre-release deliberately
-has no enabled profile:
+and `disabled` profiles cannot be selected or run. The bundled v0.1.0 profile
+configuration deliberately has no enabled profile:
 
 | Profile | Status | Active catalog |
 | --- | --- | --- |
@@ -320,6 +329,14 @@ The repository is relevant to several complementary areas:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the pull-request changelog requirement
 and the documented exemption for purely internal changes.
+
+For contributor/development installation:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Then run:
 
 ```bash
 ruff check .
