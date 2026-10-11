@@ -12,6 +12,18 @@ to the source. For the latter, read `git log`.
 
 ### Added
 
+- A standalone DuckDB monitoring store retains successful, failed, and blocked
+  observations across normal close/reopen without changing comparison semantics.
+  It accepts an explicit database path, preserves UTC microseconds and all
+  evidence for supported representations, rejects confirmed duplicate IDs, and
+  reports other constraint failures, invalid history, or unsupported formats as
+  storage errors. Observations whose JSON round trip changes their values,
+  including surrogate-pair strings, are rejected before insertion without
+  altering history. Opening a store rejects
+  incompatible column types, missing required NOT NULL constraints, or a missing
+  observation ID primary key without changing existing schema or data. Appends
+  are atomic and support compatible tables with reordered columns; runtime
+  integration remains deferred, and crash or power-loss recovery has not been verified.
 - An opt-in supervised CBS metadata experiment saves two bounded metadata
   observations and their monitoring comparison locally, without retrieving
   dataset records or authorizing ingestion.
