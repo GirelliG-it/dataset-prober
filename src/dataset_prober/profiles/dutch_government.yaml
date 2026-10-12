@@ -1,16 +1,14 @@
 # config/profiles/dutch_government.yaml
 #
-# Manual-only profile for supported Dutch national catalog routes.
+# Enabled profile for supported Dutch national catalog routes.
 
 name: Dutch Government
 description: >-
-  Manual-only discovery through CBS StatLine OData v3 and data.overheid.nl CKAN v3
+  Discovery through CBS StatLine OData v3 and data.overheid.nl CKAN v3
 language: nl
 cost_warning: false
-status: manual_only
-reason: >-
-  The CBS StatLine OData v3 and data.overheid.nl CKAN v3 routes are available only by
-  explicit selection during v0.1 stabilization.
+status: enabled
+reason: null
 
 # Geographic scope is selection guidance, not deterministic semantic verification.
 scope:

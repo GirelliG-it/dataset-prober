@@ -37,6 +37,11 @@ to the source. For the latter, read `git log`.
 
 ### Changed
 
+- The source checkout enables automatic selection of the Dutch government profile,
+  using the existing CBS StatLine and data.overheid.nl catalogs. The proposed plan
+  requires confirmation; explicit `--profile dutch_government` selection remains
+  available. US, EU, Global and Tavily discovery remain disabled. Existing budgets,
+  deterministic verification and per-resource loading authorization are unchanged.
 - Agent freshness checks now use metadata from a uniquely matching fetched
   candidate instead of a model-supplied date. The check accepts exactly
   `source`, `dataset_id` and `max_days_old`; any missing or extra field,
@@ -49,6 +54,10 @@ to the source. For the latter, read `git log`.
 
 ### Fixed
 
+- Profile interpretation now explicitly requests the field types accepted by its
+  validator, including `high`, `medium`, or `low` confidence strings, and supplies
+  a matching JSON example. Malformed responses still stop before profile execution;
+  numeric confidence values are not converted or retried automatically.
 - Resource assessment cleanup no longer deadlocks when garbage collection
   runs during classifier evidence registration. This prevents intermittent
   hangs during classification and test fixture setup.

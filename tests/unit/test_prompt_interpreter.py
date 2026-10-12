@@ -197,6 +197,28 @@ def test_empty_enabled_profiles_fail_before_client_construction_or_call():
     client.messages.create.assert_not_called()
 
 
+def test_model_receives_response_example_accepted_by_strict_parser(test_profile):
+    from dataset_prober.prompt_interpreter import PromptInterpreter
+
+    client = MagicMock()
+
+    def answer_from_documented_example(**request):
+        system = request["system"]
+        assert '"high", "medium", or "low"' in system
+        example = json.loads(system.split("JSON response example (shape only):\n", 1)[1])
+        assert example["profiles"][0]["profile_name"] == test_profile.profile_id
+        return make_mock_response(example)
+
+    client.messages.create.side_effect = answer_from_documented_example
+    interpreter = PromptInterpreter([test_profile], client=client)
+    result = interpreter.interpret("Find population observations")
+
+    assert result.profile_names == [test_profile.profile_id]
+    assert result.profiles[0].confidence == "high"
+    assert result.profiles[0].download_requested is False
+    client.messages.create.assert_called_once()
+
+
 def test_manual_only_or_disabled_descriptors_are_not_accepted(global_profile):
     from dataset_prober.prompt_interpreter import ProfileInterpretationError, PromptInterpreter
 
@@ -325,6 +347,7 @@ _MISSING = object()
         (("profile_name",), 1),
         (("confidence",), _MISSING),
         (("confidence",), 1),
+        (("confidence",), 0.95),
         (("confidence",), "certain"),
         (("reason",), _MISSING),
         (("reason",), None),

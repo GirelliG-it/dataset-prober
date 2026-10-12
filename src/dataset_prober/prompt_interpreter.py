@@ -150,6 +150,26 @@ def _profile_lines(profiles: Sequence[Profile]) -> list[str]:
 
 def _system_prompt(profiles: Sequence[Profile]) -> str:
     rendered_profiles = "\n".join(_profile_lines(profiles))
+    example = {
+        "profiles": [
+            {
+                "profile_name": profiles[0].profile_id,
+                "confidence": "high",
+                "reason": "The requested scope matches this profile",
+                "execution_order": 1,
+                "keywords_detected": ["population"],
+                "language_detected": "en",
+                "objective": {
+                    "what_to_find": "Population observations",
+                    "geographic_scope": "The requested geographic scope",
+                    "topic": "population",
+                    "freshness_rule": "none",
+                    "download_requested": False,
+                },
+            }
+        ],
+        "interpreter_reasoning": "Selection from the supplied enabled profiles",
+    }
     return f"""You select data-source profiles for an open-data discovery agent.
 
 Select only from these enabled profiles supplied by trusted application code:
@@ -163,7 +183,22 @@ Respond only with one valid JSON object, without markdown fences. It must contai
 non-empty `profiles` array. Each item must contain `profile_name`, `confidence`, `reason`,
 `execution_order`, `keywords_detected`, `language_detected`, and an `objective` object with
 `what_to_find`, `geographic_scope`, `topic`, `freshness_rule`, and `download_requested`.
-The response may also contain `interpreter_reasoning`."""
+Field types are mandatory:
+- `profile_name`: a string exactly matching a supplied enabled profile ID.
+- `confidence`: exactly one of the strings "high", "medium", or "low".
+  Never return a numeric probability or percentage for this field.
+- `reason` and `language_detected`: strings.
+- `execution_order`: a positive JSON integer, unique across selections; not a string or Boolean.
+- `keywords_detected`: a JSON array of strings, not a single string.
+- `objective`: a JSON object. Its `what_to_find`, `geographic_scope`, `topic`, and
+  `freshness_rule` fields must all be strings. Use "none" when no freshness rule is requested.
+- `objective.download_requested`: a JSON Boolean (true or false), not a string.
+- Optional `interpreter_reasoning`: a string.
+
+The example demonstrates the response shape only. Select profiles and field values
+from the actual request; do not copy the example's topic, confidence, or download preference.
+JSON response example (shape only):
+{json.dumps(example, ensure_ascii=False, indent=2)}"""
 
 
 class PromptInterpreter:

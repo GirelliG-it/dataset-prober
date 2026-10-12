@@ -8,10 +8,11 @@ resource into a local DuckDB database.
 
 > **Public release:** [dataset-prober v0.1.0](https://github.com/GirelliG-it/dataset-prober/releases/tag/v0.1.0)
 
-The v0.1 scope is deliberately narrow. Supported routes enforce bounded classification,
-explicit consent, guarded transport and non-destructive loading. The Dutch profile remains
-manual-only; the US, EU and global profiles remain disabled pending source-specific adapters
-and safety certification. Read [Current limitations](#current-limitations) before using the
+Supported routes enforce bounded classification, explicit consent, guarded transport and
+non-destructive loading. In the current source checkout (unreleased), the Dutch profile
+supports automatic and explicit selection. The published v0.1.0 wheel keeps it manual-only.
+The US, EU and global profiles remain disabled pending source-specific adapters and
+safety certification. Read [Current limitations](#current-limitations) before using the
 tool with untrusted URLs or an existing database.
 
 ## What this project demonstrates
@@ -83,10 +84,10 @@ CSV and CBS/OData loading paths; other candidates remain visible as report-only 
 
 ## Discovery and verification are different
 
-When an enabled profile is available, the agentic workflow can use Claude to interpret a
-natural-language request and choose among the enabled descriptors. In the current degraded
-mode there are no enabled profiles; the Dutch manual-only profile can instead be named
-explicitly to plan searches across CBS StatLine and data.overheid.nl and return candidates.
+In the current source checkout, the agentic workflow can use Claude to interpret a
+natural-language request and propose the enabled Dutch profile for confirmation. It can
+also be selected explicitly to plan searches across CBS StatLine and data.overheid.nl.
+Geographic scope remains selection guidance, not a guarantee of dataset relevance.
 Model output, search snippets, filenames and catalog metadata are discovery evidence; none
 of them prove that a resource is a dataset.
 
@@ -109,12 +110,12 @@ cannot replace deterministic verification.
   concrete file.
 - The crawler follows relevant same-domain pages and collects links whose filenames look
   like data resources.
-- The agentic command can run the Dutch profile only when it is selected explicitly. That
-  manual-only profile exposes CBS StatLine OData v3 and data.overheid.nl CKAN v3. Neither
+- The current source checkout enables automatic or explicit selection of the Dutch profile,
+  which exposes CBS StatLine OData v3 and data.overheid.nl CKAN v3. Neither
   catalog requires an API key. The data.overheid search locally filters its bounded package
   response using explicit CSV resource metadata because the portal's controlled-vocabulary
-  format values are incompatible with the literal CKAN CSV query filter. Automatic profile
-  selection is temporarily unavailable because no bundled profile is enabled.
+  format values are incompatible with the literal CKAN CSV query filter. Automatic selection
+  asks for plan confirmation before starting the profile agent.
 - Direct resources remain available through the non-agentic manual prober. Tavily
   provider-side search and extraction remain disabled because their source-fetch transport
   is opaque to the application.
@@ -179,29 +180,33 @@ displayed destination and table.
 
 Profile lifecycle is validated when configuration is loaded. `enabled` profiles may be
 selected automatically or explicitly, `manual_only` profiles require an explicit name,
-and `disabled` profiles cannot be selected or run. The bundled v0.1.0 profile
-configuration deliberately has no enabled profile:
+and `disabled` profiles cannot be selected or run. The current source checkout has one
+enabled profile; the published v0.1.0 wheel still has none:
 
 | Profile | Status | Active catalog |
 | --- | --- | --- |
-| `dutch_government` | `manual_only` | CBS StatLine OData v3 (`cbs`); data.overheid.nl CKAN v3 (`ckan`) |
+| `dutch_government` | `enabled` | CBS StatLine OData v3 (`cbs`); data.overheid.nl CKAN v3 (`ckan`) |
 | `us_government` | `disabled` | None; Data.gov v4 needs a source-specific adapter |
 | `eu_open_data` | `disabled` | None; current EU routes lack compatible registered adapters |
 | `global` | `disabled` | None; no supported, certified safe discovery transport |
 
-Running `dataset-prober` without `--profile` therefore exits locally without constructing
-the prompt interpreter or agent tools. `dataset-prober --profile dutch_government` is the
-only bundled agentic route currently admitted and is clearly identified as manual-only.
-This temporary profile restriction does not affect `dataset-prober-probe`: a user can still
-supply a concrete URL directly for guarded deterministic inspection.
+In the source checkout, `dataset-prober` without `--profile` interprets the request using
+only the enabled Dutch descriptor, then asks for confirmation before running its agent.
+`dataset-prober --profile dutch_government` skips profile interpretation and selects the
+same CBS and CKAN capabilities explicitly. Neither mode enables ingestion without the
+existing loading authorization. `dataset-prober-probe` still accepts a concrete URL
+directly for guarded deterministic inspection.
 
-Explicit Dutch agent-assisted discovery and Claude analysis require `ANTHROPIC_API_KEY`.
+Automatic and explicit Dutch agent-assisted discovery and Claude analysis require
+`ANTHROPIC_API_KEY`.
 The two Dutch catalogs themselves require no API key. OpenDataSoft configuration is
 unsupported and rejected rather than exposed as an agent capability. The Dutch repair has
 passed offline contract verification, controlled read-only catalog/API health checks for CBS
 and data.overheid; the [controlled release-verification example](#controlled-release-verification-example)
 records the bounded CSV evidence. Persistent DuckDB loading was not performed; query-driven
-CSV resources without `.csv` path evidence remain report-only, and the profile remains manual-only.
+CSV resources without `.csv` path evidence remain report-only. Automatic selection is
+covered by offline CLI tests with mocked model and HTTP responses; that does not constitute
+a new live verification of every catalog or loading route.
 Tavily provider search and extraction remain disabled even when `TAVILY_API_KEY` is set.
 The optional local analysis path expects an Ollama server
 at `http://localhost:11434` and the requested model to be available there. Environment

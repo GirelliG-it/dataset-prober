@@ -19,10 +19,6 @@ from dataset_prober.profile_contract import (
     ProfileStatus,
 )
 
-DUTCH_REASON = (
-    "The CBS StatLine OData v3 and data.overheid.nl CKAN v3 routes are available only by "
-    "explicit selection during v0.1 stabilization."
-)
 US_REASON = (
     "Data.gov v4 requires a source-specific adapter; the legacy v3 CKAN route "
     "is not the normal v0.1 release target."
@@ -124,8 +120,8 @@ def test_bundled_profiles_have_truthful_lifecycle_and_catalogs():
         "eu_open_data",
         "global",
     }
-    assert profiles["dutch_government"].status is ProfileStatus.MANUAL_ONLY
-    assert profiles["dutch_government"].reason == DUTCH_REASON
+    assert profiles["dutch_government"].status is ProfileStatus.ENABLED
+    assert profiles["dutch_government"].reason is None
     assert profiles["us_government"].status is ProfileStatus.DISABLED
     assert profiles["us_government"].reason == US_REASON
     assert profiles["eu_open_data"].status is ProfileStatus.DISABLED
@@ -210,7 +206,7 @@ def test_selection_queries_have_unambiguous_lifecycle_meaning():
         "global",
         "us_government",
     ]
-    assert loader.automatically_selectable_profile_ids() == []
+    assert loader.automatically_selectable_profile_ids() == ["dutch_government"]
     assert loader.explicitly_selectable_profile_ids() == ["dutch_government"]
 
 
@@ -474,8 +470,8 @@ def test_list_profiles_shows_all_statuses_and_reasons_without_model_or_tools(mon
 
     rendered = capture.get()
     assert "dutch_government" in rendered
-    assert "manual_only" in rendered
-    assert DUTCH_REASON in rendered
+    assert "enabled" in rendered
+    assert "manual_only" not in rendered
     assert "us_government" in rendered
     assert "disabled" in rendered
     assert US_REASON in rendered
@@ -484,8 +480,16 @@ def test_list_profiles_shows_all_statuses_and_reasons_without_model_or_tools(mon
     blocked.assert_not_called()
 
 
-def test_automatic_cli_with_no_enabled_profiles_stops_before_prompt_model_or_tools(monkeypatch):
+def test_automatic_cli_with_no_enabled_profiles_stops_before_prompt_model_or_tools(
+    monkeypatch, tmp_path
+):
     from dataset_prober import dataset_agent
+    from dataset_prober.config_loader import ConfigLoader
+
+    raw = valid_raw_profile()
+    raw.update(status="manual_only", reason="Explicit selection required")
+    loader = ConfigLoader(write_profile(tmp_path, raw))
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
 
     blocked = install_cli_tripwires(monkeypatch, dataset_agent)
     monkeypatch.setattr(sys, "argv", ["dataset-prober"])
@@ -1143,14 +1147,20 @@ def test_forced_disabled_cli_stops_before_prompt_model_or_tools(monkeypatch):
     blocked.assert_not_called()
 
 
-def test_explicit_dutch_profile_is_identified_as_manual_only(monkeypatch):
+def test_explicit_manual_only_profile_is_identified(monkeypatch, tmp_path):
     from dataset_prober import dataset_agent
+    from dataset_prober.config_loader import ConfigLoader
+
+    raw = valid_raw_profile()
+    raw.update(status="manual_only", reason="Explicit selection required")
+    loader = ConfigLoader(write_profile(tmp_path, raw))
+    monkeypatch.setattr(dataset_agent, "ConfigLoader", Mock(return_value=loader))
 
     blocked = install_cli_tripwires(monkeypatch, dataset_agent)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["dataset-prober", "--profile", "dutch_government"],
+        ["dataset-prober", "--profile", "synthetic_profile"],
     )
     monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value=""))
 
@@ -1159,6 +1169,6 @@ def test_explicit_dutch_profile_is_identified_as_manual_only(monkeypatch):
 
     rendered = capture.get()
     assert "manual_only" in rendered
-    assert DUTCH_REASON in rendered
+    assert "Explicit selection required" in rendered
     assert "No prompt provided" in rendered
     blocked.assert_not_called()

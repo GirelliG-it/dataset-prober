@@ -1,5 +1,11 @@
 # Development roadmap
-*Last updated: 11 September 2026*
+*Last updated: 12 October 2026*
+
+The diagram records the v0.1 release state. In the current unreleased source
+checkout, the Dutch profile now supports automatic and explicit selection through
+its existing CBS and data.overheid.nl adapters. Offline CLI tests cover selection,
+confirmation/cancellation and deterministic inspection with mocked services. US,
+EU, Global and Tavily discovery remain disabled; no new adapter is added here.
 
 ```mermaid
 flowchart TB
@@ -78,6 +84,7 @@ inspection may establish verified structure, queryability and loading eligibilit
 
 ### Deferred
 
-New adapters, formats, sources, automatic profile selection, Data.gov v4, EU and Global
-profile activation, broad test-suite refactoring and complete licensing-policy enforcement
-are not part of the first v0.2 implementation slice.
+New adapters, formats, sources, Data.gov v4, EU and Global profile activation, broad
+test-suite refactoring and complete licensing-policy enforcement remain separate work.
+Automatic Dutch profile selection is a later, bounded restoration of the existing
+selection machinery; it does not expand the supported sources or formats.
