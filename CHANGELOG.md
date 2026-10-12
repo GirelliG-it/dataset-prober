@@ -12,6 +12,13 @@ to the source. For the latter, read `git log`.
 
 ### Added
 
+- The bounded CBS metadata experiment accepts `--database PATH` to compare against
+  persisted observations across runs. UUID-based observation IDs remain unchanged
+  on save retries. Failed and blocked checks remain in history, while save errors
+  are reported separately and return a nonzero exit code. Store-close failures
+  retain completed observations, comparisons, and save outcomes for report writing
+  and reconciliation, with a separate close diagnostic and exit code 2. The
+  database parent must already exist; no default path or automatic retry is introduced.
 - A standalone DuckDB monitoring store retains successful, failed, and blocked
   observations across normal close/reopen without changing comparison semantics.
   It accepts an explicit database path, preserves UTC microseconds and all
@@ -22,8 +29,8 @@ to the source. For the latter, read `git log`.
   altering history. Opening a store rejects
   incompatible column types, missing required NOT NULL constraints, or a missing
   observation ID primary key without changing existing schema or data. Appends
-  are atomic and support compatible tables with reordered columns; runtime
-  integration remains deferred, and crash or power-loss recovery has not been verified.
+  are atomic and support compatible tables with reordered columns. Crash or
+  power-loss recovery has not been verified.
 - An opt-in supervised CBS metadata experiment saves two bounded metadata
   observations and their monitoring comparison locally, without retrieving
   dataset records or authorizing ingestion.

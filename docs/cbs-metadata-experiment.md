@@ -96,10 +96,47 @@ explicit approval and permitted network access. Each invocation creates a new
 `output/cbs-metadata-experiment/<UTC-time>-<random-suffix>/report.json`; `output/`
 is already Git-ignored. It never overwrites a previous run. Exit code 1 means
 collection failed or was blocked; inspect the saved observations and outcomes.
+With persistence requested, storage errors take precedence and return code 2.
 Excessively nested JSON is recorded as a failed observation with a `RecursionError`
 diagnostic; the report is still saved without retaining the raw error body.
 
 The JSON is a local experiment artifact, not a promised monitoring serialization
-contract. A future collector still needs a stable source registry, persistent
-observation IDs, provider semantics, and an append-only history design. The
-experiment's IDs are local to each report and distinct from ingestion identity.
+contract. A future collector still needs a stable source registry and verified
+provider semantics. Observation IDs now include UUID4 values and remain distinct
+from ingestion identity.
+
+### Optional history across runs
+
+Pass an explicit database filename to reuse earlier observations:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PYTHONPATH=src \
+  python experiments/cbs_metadata.py --live --database /path/to/monitoring.duckdb
+```
+
+This command makes the same bounded live metadata requests. The database's parent
+must already exist; no directory is created for it. A new database is initialized
+automatically, and later invocations reopen it. Without `--database`, no monitoring
+database is opened. The normal report directory is still created automatically.
+
+The experiment validates stored history before collection and compares against
+that history plus earlier attempts in the current run. Both observations are
+saved after collection, including failed or blocked checks. `storage.saves` records
+each ID's acknowledged save or storage error independently of the monitoring
+outcome. Storage errors do not prove absence; reconcile the original observation
+and ID after reopening before retrying a save. Running the experiment again makes
+new observations, not a retry of the previous saves. There is no automatic retry.
+Comparisons may include earlier attempts from this run even if their saves failed.
+
+Open/read errors return code 2 without a completed report. Append errors are
+included in the report and also return code 2. A close failure after collection
+and saving preserves the completed report and is recorded separately in
+`storage.close_error`; the CLI attempts to write the report and returns code 2.
+The original observation payloads and IDs, comparisons, and individual save
+outcomes remain unchanged for reconciliation. A close error cannot turn an
+uncertain save into an acknowledged save. If report writing also fails with an
+I/O error, code 2 is retained but a report file cannot be guaranteed. The network
+time budget does not bound database operations. Crash and power-loss recovery
+remain unverified.
+See the [monitoring contract](v0.2-monitoring-contract.md#optional-cbs-experiment-persistence)
+for the storage representation, reconciliation, and exit-code details.

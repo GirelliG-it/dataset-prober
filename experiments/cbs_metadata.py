@@ -3,10 +3,11 @@
 import argparse
 import json
 import signal
+import sys
 import threading
 import time
 import unicodedata
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from dataset_prober.monitoring import (
     Observation,
     compare_observation,
 )
+from dataset_prober.monitoring_store import MonitoringStorageError, MonitoringStore
 from dataset_prober.tools.guards import (
     SafeHttpClient,
     SafeTransportError,
@@ -287,7 +289,7 @@ class Experiment:
                     exc
                 ).__name__  # Never persist raw exceptions or provider error bodies.
         observation = Observation(
-            observation_id=f"attempt-{sequence}",
+            observation_id=f"{uuid4().hex}-attempt-{sequence}",
             source_id=SOURCE_ID,
             checked_at=self.utc_now(),
             check_status=status,
@@ -318,7 +320,27 @@ class Experiment:
             },
         }
 
-    def run(self):
+    def run(self, *, database_path: str | Path | None = None):
+        """Optionally load and append history at an explicit caller-owned path."""
+        report = None
+        try:
+            with (
+                MonitoringStore(database_path)
+                if database_path is not None
+                else nullcontext() as store
+            ):
+                # A failed read must stop before collection, never supply empty history.
+                history = store.history() if store is not None else ()
+                report = self._run(history, store)
+        except MonitoringStorageError as exc:
+            if report is None:
+                raise
+            # Only context exit remains once the report is complete. Keep every
+            # append outcome as recorded, including unacknowledged saves.
+            report["storage"]["close_error"] = {"error_type": type(exc).__name__}
+        return report
+
+    def _run(self, history, store):
         started = self.clock()
         self.deadline = started + OVERALL_SECONDS
         observations = []
@@ -338,6 +360,21 @@ class Experiment:
                     observation, outcome = self.collect(sequence, blocked_reason="overall_deadline")
                 observations.append(observation)
                 outcomes.append(outcome)
+        # Storage is outside the bounded network phase. Each append commits
+        # independently; never regenerate an observation or its ID on a save error.
+        saves = []
+        if store is not None:
+            for observation in observations:
+                saved = {"observation_id": observation.observation_id, "status": "SAVED"}
+                try:
+                    store.append(observation)
+                except MonitoringStorageError as exc:
+                    saved = {
+                        "observation_id": observation.observation_id,
+                        "status": "ERROR",
+                        "error_type": type(exc).__name__,
+                    }
+                saves.append(saved)
         return {
             "artifact_format": "experiment-only-1; not a monitoring persistence contract",
             "source_id": SOURCE_ID,
@@ -357,12 +394,21 @@ class Experiment:
             "requests": self.requests,
             "observations": [asdict(item) for item in observations],
             "outcomes": outcomes,
+            "storage": {
+                "requested": store is not None,
+                "history_count": len(history),
+                "saves": saves,
+                "close_error": None,
+            },
             "comparisons": [
-                asdict(compare_observation(item, observations[:index]))
+                asdict(compare_observation(item, (*history, *observations[:index])))
                 for index, item in enumerate(observations)
             ],
             "limitations": [
                 "No dataset records, samples, schema request, content hash, or ingestion.",
+                "Comparisons include loaded history and earlier observations in this run, even if unsaved.",
+                "A storage error does not prove absence; reconcile by observation_id before retrying.",
+                "Crash and power-loss recovery remain unverified.",
                 "Metadata validators and timestamps do not prove dataset content or freshness.",
                 "Equal metadata cannot exclude an intervening reverted change.",
                 "Failed connection attempts may send no HTTP request; count is a conservative bound.",
@@ -379,6 +425,12 @@ def main():
         required=True,
         help="Authorize this bounded metadata experiment",
     )
+    parser.add_argument(
+        "--database",
+        type=Path,
+        metavar="PATH",
+        help="Persist monitoring history at this explicit path; its parent must already exist",
+    )
     args = parser.parse_args()
     if not args.live:
         return 1
@@ -392,17 +444,45 @@ def main():
         / (datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8])
     )
     directory.mkdir(parents=True, exist_ok=False)
-    report = Experiment().run()
-    (directory / "report.json").write_text(
-        json.dumps(report, indent=2, ensure_ascii=False, default=lambda value: value.isoformat())
-        + "\n",
-        encoding="utf-8",
+    try:
+        report = Experiment().run(database_path=args.database)
+    except MonitoringStorageError as exc:
+        print(
+            f"Monitoring storage error: {type(exc).__name__}; no successful run reported.",
+            file=sys.stderr,
+        )
+        return 2
+    storage_failed = report["storage"]["close_error"] is not None or any(
+        item["status"] != "SAVED" for item in report["storage"]["saves"]
     )
+    try:
+        (directory / "report.json").write_text(
+            json.dumps(
+                report, indent=2, ensure_ascii=False, default=lambda value: value.isoformat()
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        if not storage_failed:
+            raise
+        print(
+            f"Cannot write experiment report: {type(exc).__name__}; storage error recorded in memory only.",
+            file=sys.stderr,
+        )
+        return 2
     print(f"Artifacts: {directory}")
     print(
         f"Connection attempts: {report['connection_attempts']}; responses: {report['http_responses_received']}"
     )
     print(f"Comparison: {report['comparisons'][-1]['change_status']}")
+    if report["storage"]["requested"]:
+        saves = report["storage"]["saves"]
+        saved_count = sum(item["status"] == "SAVED" for item in saves)
+        print(f"Storage: {saved_count}/{len(saves)} observations saved")
+        if storage_failed:
+            print("Storage error: reconcile by observation_id before retrying.", file=sys.stderr)
+            return 2
     return (
         0
         if all(item["check_status"] == CheckStatus.SUCCEEDED for item in report["observations"])
