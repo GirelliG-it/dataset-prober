@@ -504,7 +504,8 @@ def test_run_profile_counts_registration_downgrade_as_failed(monkeypatch, tmp_pa
     assert "discovery metadata, filenames, snippets, catalog metadata" in system_prompt
     assert "model prose cannot grant loading authority" in system_prompt
     assert "table_id" in rendered_tools
-    for inactive_claim in ("ckan", "tavily", "web search", "download_url", "csv"):
+    # The optional download_url hint is accepted for either source, but never grants authority.
+    for inactive_claim in ("ckan", "tavily", "web search", "csv"):
         assert inactive_claim not in rendered_tools
         assert inactive_claim not in system_prompt
     for definition in model_tools:

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from dataset_prober.freshness_observation import FreshnessObservation
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
     CandidateIdentity,
@@ -124,6 +125,9 @@ class DatasetResult:
 
     # Deterministic safety assessment; legacy/discovery-only construction fails closed.
     assessment: ResourceAssessment = field(default_factory=unknown_assessment)
+
+    # Append-only constructor addition: legacy positional arguments retain their positions.
+    freshness_observation: FreshnessObservation | None = None
 
     def freshness_days(self) -> Optional[int]:
         """Return how many days ago this dataset was last modified. None if unknown."""
@@ -231,6 +235,9 @@ class DatasetResult:
                 "assessment": self.assessment.to_dict(),
                 "tokens_used": self.tokens_used,
                 "cost_usd": round(self.cost_usd, 6),
+                "freshness_observation": (
+                    self.freshness_observation.to_dict() if self.freshness_observation else None
+                ),
             }
         )
 

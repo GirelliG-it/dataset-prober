@@ -8,8 +8,14 @@ CKAN API reference: https://docs.ckan.org/en/latest/api/
 """
 
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
+from dataset_prober.freshness_observation import (
+    FreshnessObservation,
+    TimestampClaim,
+    TimestampSemantics,
+    utc_now,
+)
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
     LoaderKind,
@@ -17,6 +23,7 @@ from dataset_prober.loading_policy import (
     claims_for_dataset,
     detect_resource_format,
     loader_for_resource,
+    safe_url_identity,
     sanitize_url_text,
 )
 from dataset_prober.profile_contract import CKANDialect, CKANSearchMode
@@ -36,7 +43,12 @@ from dataset_prober.tools.base import (
     download_csv_dataset,
     inspect_csv_resource,
 )
-from dataset_prober.tools.guards import safe_download, safe_http_get
+from dataset_prober.tools.guards import (
+    UnsafeResourceError,
+    UnsafeURLError,
+    safe_download,
+    safe_http_get,
+)
 
 # Known license mappings from CKAN license_id to standardized names
 LICENSE_MAP = {
@@ -247,6 +259,51 @@ class CKANTool(DataSourceTool):
             self._route_configuration()
         )
         url = f"{api_base}/{show_path}"
+        observation = None
+        completed_at = None
+
+        def observe(status, reason=None, metadata=None):
+            nonlocal completed_at
+            if not isinstance(dataset_id, str) or not dataset_id.strip():
+                return None
+            if completed_at is None:
+                completed_at = utc_now()
+            endpoint = safe_url_identity(f"{url}?{urlencode({'id': dataset_id})}")
+            resource = None
+            identifier = dataset_id
+            claims = ()
+            if metadata is not None:
+                identifier = self._package_identifier(metadata)
+                resource, _format = self._select_resource(metadata, self._resource_selection_mode())
+                claims = (
+                    TimestampClaim.capture(
+                        metadata,
+                        "metadata_modified",
+                        resource=endpoint,
+                        field_path="/result/metadata_modified",
+                        semantics=TimestampSemantics.CATALOG_METADATA_UPDATE,
+                    ),
+                )
+            resource = resource or {}
+            resource_id = resource.get("id")
+            resource_url = resource.get("url")
+            return FreshnessObservation(
+                source=self.source_type,
+                catalog_identity=sanitize_url_text(self.adapter_identity),
+                dataset_id=sanitize_url_text(identifier),
+                resource_id=sanitize_url_text(resource_id)
+                if isinstance(resource_id, str)
+                else None,
+                resource_identity=safe_url_identity(resource_url)
+                if isinstance(resource_url, str)
+                else None,
+                metadata_endpoint=endpoint,
+                observed_at=completed_at,
+                collection_status=status,
+                collector_rule_version="ckan-package-freshness-v1",
+                claims=claims,
+                reason_code=reason,
+            )
 
         try:
             resp = safe_http_get(
@@ -264,10 +321,14 @@ class CKANTool(DataSourceTool):
                 result.assessment = error_response_assessment(
                     "CKAN package response contains an explicit error envelope"
                 )
+                result.freshness_observation = observe("FAILED", "metadata_error_response")
                 return result
 
             pkg = data["result"]
+            if isinstance(pkg, dict):
+                observation = observe("SUCCEEDED", metadata=pkg)
             result = self._package_to_result(pkg)
+            result.freshness_observation = observation
             if not result.download_url:
                 result.error = "No supported CSV resources found in package"
                 result.assessment = unsupported_format_assessment(None)
@@ -284,12 +345,18 @@ class CKANTool(DataSourceTool):
 
             return result
 
-        except RunDeadlineExceeded:
+        except RunDeadlineExceeded as e:
+            e.freshness_observation = observation or observe("FAILED", "metadata_deadline_exceeded")
             raise
         except Exception as e:
             result = self._error_result(id=dataset_id, title=dataset_id, error=str(e))
             result.assessment = inspection_failed_assessment(
                 "CKAN package retrieval and inspection did not complete"
+            )
+            blocked = isinstance(e, (UnsafeURLError, UnsafeResourceError))
+            result.freshness_observation = observation or observe(
+                "BLOCKED" if blocked else "FAILED",
+                "metadata_blocked" if blocked else "metadata_collection_failed",
             )
             return result
 
@@ -374,20 +441,8 @@ class CKANTool(DataSourceTool):
         with authorization.activate(actual_claims) as permit:
             return download_csv_dataset(dataset, self.adapter_identity, destination, permit)
 
-    def _package_to_result(
-        self,
-        pkg: dict,
-        *,
-        search_mode: CKANSearchMode | None = None,
-    ) -> DatasetResult:
-        """Convert a package using its mode's closed resource-selection contract."""
-        identifier = self._package_identifier(pkg)
-        _api_base, landing_base, (_search_path, _show_path, landing_path) = (
-            self._route_configuration()
-        )
-        landing_url = f"{landing_base}/{landing_path}/{quote(identifier, safe='')}"
-        selection_mode = search_mode or self._resource_selection_mode()
-
+    def _select_resource(self, pkg: dict, selection_mode: CKANSearchMode):
+        """Share the existing selection rule with metadata evidence capture."""
         # Local metadata filtering admits only a plain CSV with a nonblank URL.
         # Server-filter mode retains its established first-recognized-resource shape.
         resources = pkg.get("resources", [])
@@ -411,6 +466,23 @@ class CKANTool(DataSourceTool):
             csv_resource = resource
             resource_format = normalized_format
             break
+
+        return csv_resource, resource_format
+
+    def _package_to_result(
+        self,
+        pkg: dict,
+        *,
+        search_mode: CKANSearchMode | None = None,
+    ) -> DatasetResult:
+        """Convert a package using its mode's closed resource-selection contract."""
+        identifier = self._package_identifier(pkg)
+        _api_base, landing_base, (_search_path, _show_path, landing_path) = (
+            self._route_configuration()
+        )
+        landing_url = f"{landing_base}/{landing_path}/{quote(identifier, safe='')}"
+        selection_mode = search_mode or self._resource_selection_mode()
+        csv_resource, resource_format = self._select_resource(pkg, selection_mode)
 
         # Parse dates
         modified = pkg.get("metadata_modified", "")

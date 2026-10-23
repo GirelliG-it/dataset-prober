@@ -1175,7 +1175,8 @@ def test_invalid_max_results_never_reaches_adapter_or_consumes_search_budget(
         tool_input,
     )
 
-    assert "positive integer" in result["error"]
+    expected = "missing: max_results" if invalid_value is None else "positive integer"
+    assert expected in result["error"]
     assert adapter.search_calls == []
     assert budget.searches_used == 0
 
@@ -1295,7 +1296,7 @@ def test_mixed_tool_response_enforces_search_and_probe_quotas_independently(
     assert "budget exhausted" in observed_tool_results[3]["content"].lower()
 
 
-def test_sample_rows_is_not_model_visible_and_unsolicited_values_are_ignored(
+def test_sample_rows_is_not_model_visible_and_unsolicited_values_are_rejected(
     test_profile,
     tmp_path,
 ):
@@ -1315,7 +1316,7 @@ def test_sample_rows_is_not_model_visible_and_unsolicited_values_are_ignored(
         "fetch_dataset",
         {"source": "cbs", "dataset_id": "without-sample"},
     )
-    _execute_tool(
+    rejected = _execute_tool(
         test_profile,
         tmp_path,
         adapter,
@@ -1324,7 +1325,10 @@ def test_sample_rows_is_not_model_visible_and_unsolicited_values_are_ignored(
         {"source": "cbs", "dataset_id": "unsolicited", "sample_rows": 999},
     )
 
-    assert adapter.fetch_calls == [("without-sample", 7), ("unsolicited", 7)]
+    assert rejected["reason_code"] == "unexpected_tool_input"
+    assert "sample_rows" in rejected["error"]
+    assert adapter.fetch_calls == [("without-sample", 7)]
+    assert budget.probes_used == 1
 
 
 def test_runtime_status_cli_help_and_profile_schema_do_not_advertise_crawls(

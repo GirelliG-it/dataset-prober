@@ -12,6 +12,27 @@ to the source. For the latter, read `git log`.
 
 ### Added
 
+- A standalone, pure freshness evaluator produces immutable evaluation records
+  linked to existing observations. It uses caller-supplied IDs and UTC references,
+  exact 100-nanosecond comparisons, explicit claim selection, scoped timezone
+  rules and separate semantic applicability. Invalid, future, sanitized or
+  insufficient evidence remains UNKNOWN; catalog metadata cannot establish
+  dataset-content freshness. Fixed-offset date intervals are supported;
+  named-zone interpretation is deferred. Operational agent checks still use
+  legacy freshness behavior; no history storage or loading authorization is added.
+  See the [evaluator policy](docs/v0.2-freshness-evaluation.md).
+- Fetched CBS and CKAN candidates now include an immutable freshness observation
+  with complete provider timestamp claims, field origins, resource identity, UTC
+  collection time and collection outcome. Missing, null and wrong-type values
+  remain distinguishable; sanitized evidence is marked explicitly. Object keys
+  that collide after sanitization, including nested keys, cause capture to fail
+  without retaining a partial claim or changing the provider payload. Collected
+  metadata survives later sample failures, including fetch deadlines handled by
+  the agent: the original observation is saved with a failed, non-loadable
+  candidate while existing timeout handling is preserved. Existing summary dates
+  and operational freshness verdicts are unchanged. The separate evaluator above
+  is not integrated; durable freshness history remains unimplemented. See the
+  [freshness evidence contract](docs/v0.2-freshness-evidence.md).
 - The bounded CBS metadata experiment accepts `--database PATH` to compare against
   persisted observations across runs. UUID-based observation IDs remain unchanged
   on save retries. Failed and blocked checks remain in history, while save errors
@@ -54,6 +75,15 @@ to the source. For the latter, read `git log`.
 
 ### Fixed
 
+- Malformed agent tool arguments now return structured errors before searching,
+  probing, or requesting load consent, allowing earlier candidates and completed
+  model-call usage to remain available when the run ends. All four tools validate
+  object shape, required and permitted fields, and field values. Identifiers are
+  nonempty strings and are matched without trimming or coercion; freshness age
+  limits must be nonnegative integers (zero is valid; booleans are rejected).
+  Freshness shape errors retain `unexpected_tool_input`; invalid field values use
+  `invalid_tool_input`. Search result caps and the disabled-loading guard remain
+  in force, and valid load requests still require exact resource consent.
 - Profile interpretation now explicitly requests the field types accepted by its
   validator, including `high`, `medium`, or `low` confidence strings, and supplies
   a matching JSON example. Malformed responses still stop before profile execution;

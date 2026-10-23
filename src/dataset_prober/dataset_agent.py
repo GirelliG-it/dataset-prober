@@ -47,6 +47,7 @@ from dataset_prober.config_loader import (  # noqa: E402
     Profile,
     get_anthropic_api_key,
 )
+from dataset_prober.freshness_observation import FreshnessObservation  # noqa: E402
 from dataset_prober.loading_policy import (  # noqa: E402
     InspectedResourceError,
     LoaderKind,
@@ -251,6 +252,15 @@ class Budget:
 
 # ─── Dynamic tool definitions for Claude ────────────────────────────────────
 
+_TOOL_REQUIRED_FIELDS = {
+    "search_catalog": ("keyword", "source", "max_results"),
+    "fetch_dataset": ("dataset_id", "source"),
+    "check_freshness": ("source", "dataset_id", "max_days_old"),
+    "download_dataset": ("dataset_id", "title", "source"),
+}
+_TOOL_OPTIONAL_FIELDS = {"download_dataset": ("table_id", "download_url")}
+_TOOL_INTEGER_MINIMA = {"max_results": 1, "max_days_old": 0}
+
 
 def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) -> list[dict]:
     """
@@ -301,12 +311,10 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
                     },
                     "max_results": {
                         "type": "integer",
-                        "minimum": 1,
                         "maximum": budget.max_results,
                         "description": "Number of results to return within the configured cap",
                     },
                 },
-                "required": ["keyword", "source", "max_results"],
             },
         }
     )
@@ -333,7 +341,6 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
                         "description": "Which tool to use for fetching",
                     },
                 },
-                "required": ["dataset_id", "source"],
             },
         }
     )
@@ -365,8 +372,6 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
                         "description": "Maximum allowed age in days",
                     },
                 },
-                "required": ["source", "dataset_id", "max_days_old"],
-                "additionalProperties": False,
             },
         }
     )
@@ -376,26 +381,26 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
         "dataset_id": {"type": "string", "description": "Dataset identifier"},
         "title": {
             "type": "string",
-            "description": "Human-readable dataset title (used as DuckDB table name)",
+            "description": "Human-readable title hint; loading uses the inspected identity",
         },
         "source": {
             "type": "string",
             "enum": catalog_types,
             "description": "Which active catalog tool should request loading",
         },
+        "table_id": {
+            "type": "string",
+            "description": "Optional CBS table identifier; must match the inspected dataset",
+        },
+        "download_url": {
+            "type": "string",
+            "description": "Optional URL hint; loading uses the inspected resource URL",
+        },
     }
     download_guidance: list[str] = []
     if has_cbs:
-        download_properties["table_id"] = {
-            "type": "string",
-            "description": "CBS table identifier",
-        }
         download_guidance.append("For CBS, provide the table_id.")
     if has_ckan:
-        download_properties["download_url"] = {
-            "type": "string",
-            "description": "Inspected direct resource URL",
-        }
         download_guidance.append("For CKAN resources, provide the inspected download_url.")
 
     tools.append(
@@ -411,22 +416,62 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
             "input_schema": {
                 "type": "object",
                 "properties": download_properties,
-                "required": ["dataset_id", "title", "source"],
             },
         }
     )
 
+    for tool in tools:
+        schema = tool["input_schema"]
+        schema["required"] = list(_TOOL_REQUIRED_FIELDS[tool["name"]])
+        schema["additionalProperties"] = False
+        for name, property_schema in schema["properties"].items():
+            if name in _TOOL_INTEGER_MINIMA:
+                property_schema["minimum"] = _TOOL_INTEGER_MINIMA[name]
+            else:
+                property_schema.update(minLength=1, pattern=r"\S")
     return tools
 
 
 # ─── Tool executor ───────────────────────────────────────────────────────────
 
-_FRESHNESS_INPUT_KEYS = frozenset({"source", "dataset_id", "max_days_old"})
+
+def _validate_tool_input(tool_name: str, tool_input: object) -> dict | None:
+    """Reject malformed model arguments before budgets, adapters or consent are touched."""
+    required = _TOOL_REQUIRED_FIELDS[tool_name]
+    permitted = set(required) | set(_TOOL_OPTIONAL_FIELDS.get(tool_name, ()))
+    problems = []
+    reason_code = "unexpected_tool_input"
+    if not isinstance(tool_input, dict):
+        problems.append("input must be an object")
+    else:
+        missing = sorted(set(required) - tool_input.keys())
+        unexpected = sorted(str(key) for key in tool_input.keys() - permitted)
+        if missing:
+            problems.append(f"missing: {', '.join(missing)}")
+        if unexpected:
+            problems.append(f"unexpected: {sanitize_url_text(', '.join(unexpected))}")
+        if not problems:
+            reason_code = "invalid_tool_input"
+            for name, value in tool_input.items():
+                if name in _TOOL_INTEGER_MINIMA:
+                    minimum = _TOOL_INTEGER_MINIMA[name]
+                    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                        constraint = "positive" if minimum == 1 else "nonnegative"
+                        problems.append(f"{name} must be a {constraint} integer (not a boolean)")
+                elif not isinstance(value, str) or not value.strip():
+                    problems.append(f"{name} must be a nonempty string")
+    if not problems:
+        return None
+    message = f"Invalid {tool_name} arguments ({'; '.join(problems)})."
+    error = {"error": message, "reason_code": reason_code}
+    if tool_name == "check_freshness":
+        error.update(passes=None, reason=message)
+    return error
 
 
 def execute_tool(
     tool_name: str,
-    tool_input: dict,
+    tool_input: object,
     tool_map: dict,
     budget: Budget,
     profile: Profile,
@@ -440,14 +485,17 @@ def execute_tool(
     Updates budget and found_datasets in place.
     Returns JSON-serializable result dict.
     """
+    if tool_name == "download_dataset" and not loading_session.download_enabled:
+        console.print("  ⛔ [yellow]Load offer blocked — --download was not set[/yellow]")
+        return {"error": "Download not permitted — --download was not set"}
+
+    if tool_name in _TOOL_REQUIRED_FIELDS:
+        error = _validate_tool_input(tool_name, tool_input)
+        if error is not None:
+            return error
+
     if tool_name == "search_catalog":
-        requested_results = tool_input.get("max_results")
-        if (
-            isinstance(requested_results, bool)
-            or not isinstance(requested_results, int)
-            or requested_results <= 0
-        ):
-            return {"error": "max_results must be a positive integer"}
+        requested_results = tool_input["max_results"]
         effective_results = min(requested_results, budget.max_results)
         source = tool_input["source"]
         keyword = tool_input["keyword"]
@@ -504,10 +552,22 @@ def execute_tool(
                 budget.sample_rows,
                 remaining_time=budget.time_remaining,
             )
-        except RunDeadlineExceeded:
+        except RunDeadlineExceeded as exc:
             deadline_error = sanitize_url_text(
                 "Profile-agent run deadline exhausted before source operation completed"
             )
+            observation = getattr(exc, "freshness_observation", None)
+            if isinstance(observation, FreshnessObservation):
+                # Retain collected evidence without claiming inspection or authorizing loading.
+                failed = DatasetResult.failed(
+                    id=dataset_id,
+                    title=dataset_id,
+                    source=source,
+                    source_name=tool.source_name,
+                    error=deadline_error,
+                )
+                failed.freshness_observation = observation
+                found_datasets.append(failed)
             console.print(f"    → ⏰ [yellow]{deadline_error}[/yellow]")
             return {"error": deadline_error}
 
@@ -532,26 +592,6 @@ def execute_tool(
         return result.to_dict()
 
     elif tool_name == "check_freshness":
-        supplied = set(tool_input) if isinstance(tool_input, dict) else set()
-        missing = sorted(_FRESHNESS_INPUT_KEYS - supplied)
-        unexpected = sorted(str(key) for key in supplied - _FRESHNESS_INPUT_KEYS)
-        if not isinstance(tool_input, dict) or missing or unexpected:
-            problems = []
-            if missing:
-                problems.append(f"missing: {', '.join(missing)}")
-            if unexpected:
-                problems.append(f"unexpected: {sanitize_url_text(', '.join(unexpected))}")
-            if not problems:
-                problems.append("input must be an object")
-            return {
-                "passes": None,
-                "reason_code": "unexpected_tool_input",
-                "reason": (
-                    "check_freshness accepts exactly source, dataset_id and max_days_old "
-                    f"({'; '.join(problems)})."
-                ),
-            }
-
         source = tool_input["source"]
         dataset_id = tool_input["dataset_id"]
         max_days_old = tool_input["max_days_old"]
@@ -634,10 +674,6 @@ def execute_tool(
         }
 
     elif tool_name == "download_dataset":
-        if not loading_session.download_enabled:
-            console.print("  ⛔ [yellow]Load offer blocked — --download was not set[/yellow]")
-            return {"error": "Download not permitted — --download was not set"}
-
         source = tool_input["source"]
         dataset_id = tool_input["dataset_id"]
         table_id = tool_input.get("table_id")

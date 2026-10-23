@@ -11,10 +11,17 @@ All configuration comes from the profile — no hardcoded values.
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
+from dataset_prober.freshness_observation import (
+    FreshnessObservation,
+    TimestampClaim,
+    TimestampSemantics,
+    utc_now,
+)
 from dataset_prober.loading_policy import (
     AuthorizedLoad,
     canonical_candidate_identity,
     claims_for_dataset,
+    safe_url_identity,
     sanitize_url_text,
 )
 from dataset_prober.resource_classification import (
@@ -163,6 +170,49 @@ class CBSTool(DataSourceTool):
         Uses separately bounded guarded requests for metadata and sample rows.
         """
         source_timeout = self.config.get("timeout_seconds", 30)
+        observation = None
+        completed_at = None
+
+        def observe(status, reason=None, metadata=None):
+            nonlocal completed_at
+            if not isinstance(dataset_id, str) or not dataset_id.strip():
+                return None
+            if completed_at is None:
+                completed_at = utc_now()
+            endpoint = safe_url_identity(f"{_CBS_ODATA_BASE}/{dataset_id}/TableInfos?$format=json")
+            claims = (
+                ()
+                if metadata is None
+                else tuple(
+                    TimestampClaim.capture(
+                        metadata,
+                        name,
+                        resource=endpoint,
+                        field_path=f"/value/0/{name}",
+                        semantics=semantics,
+                    )
+                    for name, semantics in (
+                        ("Modified", TimestampSemantics.UNVERIFIED),
+                        ("MetaDataModified", TimestampSemantics.CATALOG_METADATA_UPDATE),
+                    )
+                )
+            )
+            return FreshnessObservation(
+                source=self.source_type,
+                catalog_identity=sanitize_url_text(self.adapter_identity),
+                dataset_id=sanitize_url_text(dataset_id),
+                resource_id=sanitize_url_text(dataset_id),
+                resource_identity=safe_url_identity(
+                    f"{_CBS_ODATA_BASE}/{dataset_id}/TypedDataSet?$format=json"
+                ),
+                metadata_endpoint=endpoint,
+                observed_at=completed_at,
+                collection_status=status,
+                collector_rule_version="cbs-tableinfos-freshness-v1",
+                claims=claims,
+                reason_code=reason,
+            )
+
         try:
             self._validate_table_id(dataset_id)
             # Step 1: Table metadata
@@ -181,9 +231,12 @@ class CBSTool(DataSourceTool):
                 result.assessment = error_response_assessment(
                     "CBS metadata response contains an explicit error envelope"
                 )
+                result.freshness_observation = observe("FAILED", "metadata_error_response")
                 return result
             meta_values = meta_payload.get("value", [{}])
             meta = meta_values[0] if meta_values else {}
+            if isinstance(meta, dict):
+                observation = observe("SUCCEEDED", metadata=meta)
             title = meta.get("Title", dataset_id)
             modified = meta.get("Modified", "")
             modified_display = modified[:10] if modified else None
@@ -236,13 +289,20 @@ class CBSTool(DataSourceTool):
                 ),
                 error=None if assessment.load_eligible else assessment.explanation,
                 assessment=assessment,
+                freshness_observation=observation,
             )
 
-        except RunDeadlineExceeded:
+        except RunDeadlineExceeded as e:
+            e.freshness_observation = observation or observe("FAILED", "metadata_deadline_exceeded")
             raise
         except Exception as e:
             result = self._error_result(id=dataset_id, title=dataset_id, error=str(e))
             result.assessment = inspection_error_assessment(e)
+            blocked = isinstance(e, (UnsafeURLError, UnsafeResourceError))
+            result.freshness_observation = observation or observe(
+                "BLOCKED" if blocked else "FAILED",
+                "metadata_blocked" if blocked else "metadata_collection_failed",
+            )
             return result
 
     def download(
