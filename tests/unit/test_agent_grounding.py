@@ -10,7 +10,7 @@ from dataset_prober.loading_policy import LoadingPolicySession
 from dataset_prober.paths import AppPaths
 
 
-def test_freshness_uses_fetched_date(
+def test_freshness_never_falls_back_to_legacy_fetched_date(
     sample_dataset_result_ok,
     test_profile,
     tmp_path,
@@ -46,10 +46,10 @@ def test_freshness_uses_fetched_date(
         paths=AppPaths(output_dir=tmp_path),  # Temporary test paths.
     )
 
-    # 4. Assert that fetched metadata wins.
-    assert result["last_updated"] == "2000-01-01"
-    assert result["passes"] is False
-    assert result["reason_code"] == "freshness_fail"
+    # Legacy summary dates cannot substitute for a captured observation.
+    assert result["passes"] is None
+    assert result["grounding_reason"] == "observation_missing"
+    assert result["reason_code"] == "freshness_unknown"
 
     # 5. Assert that freshness does not change verification.
     assert candidate.assessment == original_assessment
@@ -188,11 +188,11 @@ def test_freshness_returns_unknown_when_fetched_date_is_unusable(
     )
 
     assert result["passes"] is None
-    assert result["days_old"] is None
+    assert result["grounding_reason"] == "observation_missing"
     assert result["reason_code"] == "freshness_unknown"
 
 
-def test_freshness_pass_does_not_upgrade_report_only_candidate(
+def test_freshness_without_observation_does_not_upgrade_report_only_candidate(
     sample_dataset_result_failed,
     test_profile,
     tmp_path,
@@ -220,8 +220,9 @@ def test_freshness_pass_does_not_upgrade_report_only_candidate(
         paths=AppPaths(output_dir=tmp_path),
     )
 
-    assert result["passes"] is True
-    assert result["reason_code"] == "freshness_pass"
+    assert result["passes"] is None
+    assert result["reason_code"] == "freshness_unknown"
+    assert result["grounding_reason"] == "observation_missing"
     assert candidate.assessment == original_assessment
     assert candidate.assessment.load_eligible is False
     assert candidate.status == original_status

@@ -12,14 +12,22 @@ to the source. For the latter, read `git log`.
 
 ### Added
 
+- Agent runs write a separate versioned `freshness-<run-UUID>.json` report with
+  original observations, immutable evaluations and request/grounding diagnostics,
+  including unevaluated evidence, handled timeouts and runs without candidates.
+  Existing report paths are never overwritten. Candidate-summary and report
+  writes are attempted independently; handled encoding/I/O failures return CLI
+  status 2 without changing completed decisions. This is a run report, not a
+  history service or a crash-recovery guarantee. See the
+  [run-report contract](docs/v0.2-freshness-run-report.md).
 - A standalone, pure freshness evaluator produces immutable evaluation records
   linked to existing observations. It uses caller-supplied IDs and UTC references,
   exact 100-nanosecond comparisons, explicit claim selection, scoped timezone
   rules and separate semantic applicability. Invalid, future, sanitized or
   insufficient evidence remains UNKNOWN; catalog metadata cannot establish
   dataset-content freshness. Fixed-offset date intervals are supported;
-  named-zone interpretation is deferred. Operational agent checks still use
-  legacy freshness behavior; no history storage or loading authorization is added.
+  named-zone interpretation is deferred. Agent checks now use this evaluator
+  without timezone assumptions; no history storage or loading authorization is added.
   See the [evaluator policy](docs/v0.2-freshness-evaluation.md).
 - Fetched CBS and CKAN candidates now include an immutable freshness observation
   with complete provider timestamp claims, field origins, resource identity, UTC
@@ -30,8 +38,8 @@ to the source. For the latter, read `git log`.
   metadata survives later sample failures, including fetch deadlines handled by
   the agent: the original observation is saved with a failed, non-loadable
   candidate while existing timeout handling is preserved. Existing summary dates
-  and operational freshness verdicts are unchanged. The separate evaluator above
-  is not integrated; durable freshness history remains unimplemented. See the
+  are unchanged; operational freshness checks use the captured observation through
+  the evaluator. Durable freshness history remains unimplemented. See the
   [freshness evidence contract](docs/v0.2-freshness-evidence.md).
 - The bounded CBS metadata experiment accepts `--database PATH` to compare against
   persisted observations across runs. UUID-based observation IDs remain unchanged
@@ -63,8 +71,12 @@ to the source. For the latter, read `git log`.
   requires confirmation; explicit `--profile dutch_government` selection remains
   available. US, EU, Global and Tavily discovery remain disabled. Existing budgets,
   deterministic verification and per-resource loading authorization are unchanged.
-- Agent freshness checks now use metadata from a uniquely matching fetched
-  candidate instead of a model-supplied date. The check accepts exactly
+- Agent freshness checks now evaluate immutable evidence from a uniquely matched
+  fetched candidate, validating its fetch association, source/catalog, resource,
+  collector version and selected field. They never fall back to a legacy summary
+  date. Current CBS unverified and CKAN catalog-metadata claims yield UNKNOWN
+  dataset-content freshness, with detailed evaluation reasons. Each grounded
+  check retains its own evaluation ID, reference time and threshold. The check accepts exactly
   `source`, `dataset_id` and `max_days_old`; any missing or extra field,
   including a supplied `last_updated`, is rejected with
   `unexpected_tool_input`. Missing or ambiguous candidates and unusable dates

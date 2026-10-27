@@ -22,13 +22,16 @@ Flow:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
 from dataset_prober.loading_policy import sanitize_url_text
+
+if TYPE_CHECKING:
+    from dataset_prober.freshness_run import FreshnessRun
 
 console = Console()
 
@@ -81,6 +84,7 @@ class ProfileResult:
     model_calls_timed_out: int = 0
     token_stop_threshold: int = 0
     cost_usd: float = 0.0
+    freshness_run: Optional["FreshnessRun"] = None
 
     @property
     def tokens_used(self) -> int:

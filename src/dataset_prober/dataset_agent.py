@@ -27,8 +27,10 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from rich import box
@@ -47,7 +49,9 @@ from dataset_prober.config_loader import (  # noqa: E402
     Profile,
     get_anthropic_api_key,
 )
+from dataset_prober.freshness_evaluation import evaluate_freshness  # noqa: E402
 from dataset_prober.freshness_observation import FreshnessObservation  # noqa: E402
+from dataset_prober.freshness_run import FreshnessRun  # noqa: E402
 from dataset_prober.loading_policy import (  # noqa: E402
     InspectedResourceError,
     LoaderKind,
@@ -74,6 +78,11 @@ from dataset_prober.tools import TOOL_REGISTRY, DatasetResult  # noqa: E402
 from dataset_prober.tools.base import RunDeadlineExceeded  # noqa: E402
 
 console = Console()
+
+
+def freshness_now():
+    """UTC clock seam at the operational evaluation boundary."""
+    return datetime.now(UTC)
 
 
 def _downgrade_registration_failure(result: DatasetResult, error: InspectedResourceError) -> None:
@@ -352,8 +361,9 @@ def build_tool_definitions(resolved_profile: ResolvedProfile, budget: Budget) ->
             "description": (
                 "Check freshness for a previously fetched dataset. "
                 "Supply its source and dataset identifier. "
-                "The modification date comes from fetched metadata. "
-                "Compare that date against the max_days_old rule."
+                "Evaluate its captured observation for dataset-content freshness. "
+                "Catalog metadata and unverified timestamp semantics return UNKNOWN; "
+                "a legacy summary date cannot substitute for evidence."
             ),
             "input_schema": {
                 "type": "object",
@@ -479,6 +489,7 @@ def execute_tool(
     found_datasets: list,
     session_cost: SessionCost,
     paths: AppPaths,
+    freshness_run: FreshnessRun | None = None,
 ) -> dict:
     """
     Route a Claude tool call to the correct tool implementation.
@@ -568,10 +579,14 @@ def execute_tool(
                 )
                 failed.freshness_observation = observation
                 found_datasets.append(failed)
+                if freshness_run is not None:
+                    freshness_run.capture(failed, source, dataset_id, tool)
             console.print(f"    → ⏰ [yellow]{deadline_error}[/yellow]")
             return {"error": deadline_error}
 
         found_datasets.append(result)
+        if freshness_run is not None:
+            freshness_run.capture(result, source, dataset_id, tool)
         if result.assessment.load_eligible:
             try:
                 loading_session.register_dataset_result(result, tool.adapter_identity)
@@ -596,82 +611,25 @@ def execute_tool(
         dataset_id = tool_input["dataset_id"]
         max_days_old = tool_input["max_days_old"]
 
-        matches = [
-            candidate
-            for candidate in found_datasets
-            if candidate.source == source and candidate.id == dataset_id
-        ]
-
-        if not matches:
-            return {
-                "passes": None,
-                "reason_code": "candidate_not_inspected",
-                "reason": "No inspected candidate matches this source and dataset ID.",
-            }
-
-        if len(matches) > 1:
-            return {
-                "passes": None,
-                "reason_code": "candidate_identity_ambiguous",
-                "reason": "Multiple fetched candidates match this source and dataset ID.",
-            }
-
-        last_updated = matches[0].modified
-
-        console.print(
-            f"  📅 [cyan]Checking freshness:[/cyan] {sanitize_url_text(dataset_id)} "
-            f"(last: {last_updated})"
+        run = freshness_run if freshness_run is not None else FreshnessRun()
+        selection = run.select(found_datasets, source, dataset_id, tool_map)
+        if isinstance(selection, str):
+            return run.record_request(source, dataset_id, max_days_old, grounding_reason=selection)
+        observation, reference, selection_version = selection
+        evaluation = evaluate_freshness(
+            observation,
+            reference,
+            evaluation_id=uuid4(),
+            evaluated_at=freshness_now(),
+            max_days_old=max_days_old,
         )
-
-        # Create a temporary DatasetResult to use its freshness logic
-        temp = DatasetResult(
-            id=dataset_id,
-            title=dataset_id,
-            description="",
-            source="",
-            source_name="",
-            url="",
-            modified=last_updated,
-            download_url=None,
-            format=None,
-            frequency=None,
-            license=None,
-            license_url=None,
-            row_count=None,
-            columns=None,
-            sample=None,
-            language=None,
-            tags=[],
+        return run.record_request(
+            source,
+            dataset_id,
+            max_days_old,
+            evaluation=evaluation,
+            selection_rule_version=selection_version,
         )
-
-        days = temp.freshness_days()
-        passes = temp.passes_freshness(max_days_old)
-
-        if days is None:
-            console.print(f"    → ⚠️  Cannot parse date: {last_updated}")
-            return {
-                "dataset_id": dataset_id,
-                "last_updated": last_updated,
-                "days_old": None,
-                "max_days_old": max_days_old,
-                "passes": None,
-                "reason_code": "freshness_unknown",
-                "reason": f"Cannot parse date format: {last_updated}",
-            }
-
-        icon = "✅" if passes else "⏭️ "
-        status = "passes" if passes else "fails"
-        console.print(f"    → {icon} {days} days old — {status} the {max_days_old}-day rule")
-
-        return {
-            "dataset_id": dataset_id,
-            "last_updated": last_updated,
-            "days_old": days,
-            "max_days_old": max_days_old,
-            "passes": passes,
-            "reason_code": "freshness_pass" if passes else "freshness_fail",
-            "reason": f"Updated {days} days ago - {status} the rule (max {max_days_old} days)",
-        }
 
     elif tool_name == "download_dataset":
         source = tool_input["source"]
@@ -749,6 +707,7 @@ def run_profile(
     session_cost: SessionCost,
     paths: AppPaths,
     initial_message: Optional[str] = None,
+    freshness_run: FreshnessRun | None = None,
 ) -> ProfileResult:
     """
     Run the agent loop for a single already-resolved profile.
@@ -776,10 +735,12 @@ def run_profile(
 
     from dataset_prober.orchestrator import ProfileResult as PR
 
+    freshness_run = freshness_run if freshness_run is not None else FreshnessRun()
     profile_result = PR(
         profile_name=profile.name,
         display_name=profile.name,
         objective=None,  # set by orchestrator
+        freshness_run=freshness_run,
     )
     client = anthropic.Anthropic(api_key=get_anthropic_api_key(), max_retries=0)
 
@@ -956,6 +917,7 @@ REPORTING RULES:
                 loading_session=loading_session,
                 found_datasets=found_datasets,
                 session_cost=session_cost,
+                freshness_run=freshness_run,
             )
 
             tool_results.append(
@@ -1406,6 +1368,7 @@ def main():
 
     # Run profiles sequentially with orchestrator handoffs
     previous_results = []
+    freshness_run = FreshnessRun()
 
     for i, profile_name in enumerate(profile_names, 1):
         if len(profile_names) > 1:
@@ -1449,6 +1412,7 @@ def main():
             session_cost=profile_session_cost,
             paths=paths,
             initial_message=initial_message,
+            freshness_run=freshness_run,
         )
 
         if objective:
@@ -1468,17 +1432,53 @@ def main():
     console.print(aggregated.cost_summary())
     aggregated.print_summary_table()
 
-    # Save results
-    all_datasets = aggregated.all_datasets
-    if all_datasets:
-        output_path = paths.agent_results_path
+    return _save_run_outputs(aggregated.all_datasets, freshness_run, paths)
+
+
+def _write_run_artifact(paths, path, records, *, exclusive, label):
+    # Catch JSON encoding errors only at the encoder; record construction defects
+    # are not suppressed. A bad summary must not block a valid freshness report.
+    try:
+        payload = json.dumps(records, indent=2, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        console.print(f"[red]{label} serialization failed: {sanitize_url_text(str(exc))}[/red]")
+        return False
+    try:
         paths.ensure_output_dir()
-        with open(output_path, "w") as f:
-            json.dump([r.to_dict() for r in all_datasets], f, indent=2, default=str)
-        console.print(f"\n[green]Results saved to {output_path}[/green]")
+        with path.open("x" if exclusive else "w", encoding="utf-8") as stream:
+            stream.write(payload + "\n")
+    except OSError as exc:
+        console.print(f"[red]{label} write failed: {sanitize_url_text(str(exc))}[/red]")
+        return False
+    console.print(f"[green]{label} saved to {path}[/green]")
+    return True
+
+
+def _save_run_outputs(datasets, freshness_run, paths):
+    """Attempt both independent artifacts without erasing completed run records."""
+    status = 0
+    if datasets:
+        if not _write_run_artifact(
+            paths,
+            paths.agent_results_path,
+            [r.to_dict() for r in datasets],
+            exclusive=False,
+            label="Candidate summary",
+        ):
+            status = 2
     else:
-        console.print("\n[yellow]No resource candidates found across all profiles.[/yellow]")
+        console.print("[yellow]No resource candidates found across all profiles.[/yellow]")
+    if freshness_run.has_records:
+        if not _write_run_artifact(
+            paths,
+            paths.output_dir / f"freshness-{freshness_run.run_id}.json",
+            freshness_run.to_dict(),
+            exclusive=True,
+            label="Freshness report",
+        ):
+            status = 2
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

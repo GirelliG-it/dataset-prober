@@ -215,7 +215,11 @@ workflow.
 
 By default, a checkout-based manual workflow writes `output/probe_results.json` and an
 approved load uses `output/datasets.duckdb`. The agentic workflow writes
-`output/agent_results.json` and can use the same DuckDB file. `DATASET_PROBER_OUTPUT` can
+`output/agent_results.json` and can use the same DuckDB file. Runs with freshness
+evidence or requests also write a separate, non-overwriting
+`output/freshness-<run-UUID>.json` [run report](docs/v0.2-freshness-run-report.md).
+Current CBS/CKAN timestamp semantics yield UNKNOWN content freshness; checks do
+not fall back to summary dates or authorize loading. `DATASET_PROBER_OUTPUT` can
 select another output directory, but artifact names are fixed and the console commands do
 not yet expose the existing output-directory setting as a complete installed-runtime
 interface.

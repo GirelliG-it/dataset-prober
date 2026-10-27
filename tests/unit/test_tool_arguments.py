@@ -190,9 +190,11 @@ def test_valid_freshness_integer_including_zero(boundary, threshold):
     result = execute(
         boundary, "check_freshness", {**VALID_INPUTS["check_freshness"], "max_days_old": threshold}
     )
-    assert result["passes"] is True
+    assert result["passes"] is None
     assert result["max_days_old"] == threshold
-    assert result["reason_code"] == "freshness_pass"
+    assert result["reason_code"] == "freshness_unknown"
+    assert result["grounding_reason"] == "observation_missing"
+    assert "error" not in result
     assert boundary.candidate.assessment.load_eligible
 
 

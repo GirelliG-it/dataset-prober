@@ -405,6 +405,11 @@ def test_metadata_deadline_survives_agent_timeout_and_cli_save(
     assert saved[0]["freshness_observation"] == captured_observations[0].to_dict()
     assert saved[0]["freshness_observation"]["collection_status"] == "SUCCEEDED"
     assert saved[0]["freshness_observation"]["claims"][0]["value"] == STAMP
+    run = returned[0].freshness_run
+    report = json.loads(next(tmp_path.glob("freshness-*.json")).read_text())
+    assert report == run.to_dict()
+    assert report["observations"] == [captured_observations[0].to_dict()]
+    assert report["evaluations"] == report["requests"] == []
     json.dumps(candidate.to_dict(), allow_nan=False)
     assert tool_results[0] == {
         "error": "Profile-agent run deadline exhausted before source operation completed"
@@ -500,9 +505,7 @@ def test_existing_positional_constructor_and_summary_are_compatible(sample_datas
     assert rebuilt.to_dict()["freshness_observation"] is None
 
 
-def test_legacy_freshness_and_other_summary_fields_ignore_observation(fetch_case, monkeypatch):
-    from dataset_prober.dataset_agent import execute_tool
-
+def test_legacy_summary_helpers_ignore_observation(fetch_case, monkeypatch):
     result = fetch(fetch_case)
     legacy = replace(result, freshness_observation=None)
     before = result.freshness_observation.to_dict()
@@ -517,20 +520,9 @@ def test_legacy_freshness_and_other_summary_fields_ignore_observation(fetch_case
 
     monkeypatch.setattr("datetime.datetime", FixedDatetime)
 
-    def evaluate(candidate):
-        return execute_tool(
-            "check_freshness",
-            {"source": candidate.source, "dataset_id": candidate.id, "max_days_old": 30},
-            {},
-            None,
-            None,
-            SimpleNamespace(download_enabled=False),
-            [candidate],
-            None,
-            None,
-        )
-
-    assert evaluate(result) == evaluate(legacy)
+    # These legacy summary helpers remain available, but check_freshness no longer uses them.
+    assert result.freshness_days() == legacy.freshness_days()
+    assert result.passes_freshness(30) == legacy.passes_freshness(30)
     assert result.freshness_observation.to_dict() == before
     assert result.assessment is legacy.assessment
 
