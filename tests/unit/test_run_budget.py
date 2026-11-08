@@ -997,7 +997,7 @@ def test_api_timeout_records_one_attempt_and_returns_partial_results_without_ret
     factory.assert_called_once_with(api_key="offline-key", max_retries=0)
 
 
-def test_timeout_choice_one_resets_only_time_and_permits_next_call(
+def test_expired_deadline_stops_before_first_model_call(
     monkeypatch,
     test_profile,
     tmp_path,
@@ -1009,17 +1009,19 @@ def test_timeout_choice_one_resets_only_time_and_permits_next_call(
     budget.probes_used = 1
     budget.tokens_used = 10
     clock.advance(60)
-    monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="1"))
-    client = ScriptedClient([_response()])
+    prompt = Mock(side_effect=AssertionError("Unexpected prompt after deadline"))
+    monkeypatch.setattr(dataset_agent.console, "input", prompt)
+    client = ScriptedClient([])
 
     _run_profile(monkeypatch, tmp_path, resolved, budget, client)
 
-    assert len(client.messages.calls) == 1
-    assert client.messages.calls[0]["timeout"] == 60
+    prompt.assert_not_called()
+    assert client.messages.calls == []
+    assert budget.time_remaining() == 0
+    assert budget.model_calls_used == 0
     assert budget.searches_used == 1
     assert budget.probes_used == 1
     assert budget.tokens_used == 10
-    assert budget.model_calls_used == 1
 
 
 def test_timeout_continuation_cannot_reset_any_non_time_stop_boundary(
@@ -1079,7 +1081,7 @@ def test_timeout_continuation_cannot_reset_any_non_time_stop_boundary(
         ),
     ],
 )
-def test_timeout_continuation_cannot_bypass_exhausted_tool_quota(
+def test_exhausted_tool_quota_blocks_adapter_call(
     monkeypatch,
     test_profile,
     tmp_path,
@@ -1099,7 +1101,6 @@ def test_timeout_continuation_cannot_bypass_exhausted_tool_quota(
         timeout_minutes=1,
     )
     setattr(budget, counter_name, 1)
-    clock.advance(60)
     monkeypatch.setattr(dataset_agent.console, "input", Mock(return_value="1"))
     client = ScriptedClient(
         [
@@ -1111,9 +1112,10 @@ def test_timeout_continuation_cannot_bypass_exhausted_tool_quota(
         ]
     )
 
-    _run_profile(monkeypatch, tmp_path, resolved, budget, client)
+    remaining = budget.time_remaining()
+    _, _, _, output = _run_profile_with_output(monkeypatch, tmp_path, resolved, budget, client)
 
-    assert len(client.messages.calls) == 2
+    assert len(client.messages.calls) == 2, f"Seconds before run: {remaining}\n{output}"
     assert getattr(adapter, calls_name) == []
     assert getattr(budget, counter_name) == 1
 

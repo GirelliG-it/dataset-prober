@@ -87,6 +87,12 @@ to the source. For the latter, read `git log`.
 
 ### Fixed
 
+- Explicit-profile runs now report found candidates and completed downloads
+  instead of incorrectly saying "nothing found", including when a run stops
+  after reaching a time or token limit. Objective evaluation is unchanged.
+- When a profile reaches its elapsed-time limit, it returns the results
+  collected so far without prompting. The profile result records whether
+  elapsed time or the reported-token threshold stopped the run.
 - Malformed agent tool arguments now return structured errors before searching,
   probing, or requesting load consent, allowing earlier candidates and completed
   model-call usage to remain available when the run ends. All four tools validate
