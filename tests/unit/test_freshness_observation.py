@@ -353,7 +353,12 @@ def test_metadata_deadline_survives_agent_timeout_and_cli_save(
     ]
     monkeypatch.setattr(dataset_agent.anthropic, "Anthropic", Mock(return_value=client))
     monkeypatch.setattr(dataset_agent, "get_anthropic_api_key", lambda: "offline-key")
-    prompt = Mock(side_effect=["Inspect fixture", "3"])
+    prompt = Mock(
+        side_effect=[
+            "Inspect fixture",
+            AssertionError("Unexpected input prompt after hard stop"),
+        ]
+    )
     monkeypatch.setattr(dataset_agent.console, "input", prompt)
     paths = AppPaths(output_dir=tmp_path)
     monkeypatch.setattr(dataset_agent.AppPaths, "resolve", Mock(return_value=paths))
@@ -427,8 +432,8 @@ def test_metadata_deadline_survives_agent_timeout_and_cli_save(
     fetch_case["transport"].assert_called_once()
     fetch_case["clock"].assert_called_once_with()
     forbidden.assert_not_called()
-    assert prompt.call_count == 2
-    assert "Your choice (1/2/3)" in prompt.call_args.args[0]
+    prompt.assert_called_once()
+    assert returned[0].termination_reason == "time_limit"
     assert "Time limit reached" in capsys.readouterr().out
 
 

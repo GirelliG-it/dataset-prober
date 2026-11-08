@@ -425,7 +425,7 @@ def cli_setup(boundary, monkeypatch, responses, *options):
 
 @pytest.mark.parametrize("ending", ["normal", "timeout", "budget", "max_tokens", "unexpected"])
 def test_cli_retains_evaluation_and_usage_after_malformed_call_and_stop(
-    boundary, monkeypatch, ending
+    boundary, monkeypatch, ending, capsys
 ):
     blocks = [
         _tool("fetch_dataset", boundary.identity, "fetch"),
@@ -462,13 +462,108 @@ def test_cli_retains_evaluation_and_usage_after_malformed_call_and_stop(
     saved = json.loads(boundary.paths.agent_results_path.read_text())
     assert saved[0]["freshness_observation"] == run.observations[0].to_dict()
     assert saved[0]["assessment"] == result.datasets_found[0].assessment.to_dict()
+    rendered = " ".join(capsys.readouterr().out.split())
+    assert "found 1 resource candidate(s), none downloaded" in rendered
+    assert "nothing found" not in rendered.lower()
     if ending != "budget":
         tool_results = client.messages.create.call_args.kwargs["messages"][2]["content"]
         assert json.loads(tool_results[2]["content"])["reason_code"] == "invalid_tool_input"
     forbidden.assert_not_called()
 
 
-def test_cli_diagnostics_without_candidates_still_writes_report(boundary, monkeypatch):
+@pytest.mark.parametrize("boundary", ["cbs"], indirect=True)
+@pytest.mark.parametrize("ending", ["timeout", "token_budget"])
+def test_explicit_profile_reports_download_completed_before_stop(
+    boundary, monkeypatch, ending, capsys
+):
+    import duckdb
+
+    clock = Mock(return_value=0.0)
+    original_budget_builder = agent.Budget.from_profile.__func__
+
+    def construct_budget(cls, config):
+        return original_budget_builder(cls, config, clock=clock)
+
+    monkeypatch.setattr(agent.Budget, "from_profile", classmethod(construct_budget))
+    probe_responses = list(boundary.transport.side_effect)
+    payload = {"value": [{"Value": 42}]}
+
+    def respond(url, **kwargs):
+        if probe_responses:
+            return probe_responses.pop(0)
+        if ending == "timeout":
+            clock.return_value = 61.0
+        return SimpleNamespace(
+            url=url,
+            content=json.dumps(payload).encode(),
+            json=lambda: payload,
+        )
+
+    boundary.transport.side_effect = respond
+    client, completed = cli_setup(
+        boundary,
+        monkeypatch,
+        [
+            _response(
+                [
+                    _tool("fetch_dataset", boundary.identity, "fetch"),
+                    _tool("check_freshness", {**boundary.identity, "max_days_old": 30}, "fresh"),
+                ]
+            ),
+            _response(
+                [_tool("download_dataset", {**boundary.identity, "title": "Fixture"}, "load")]
+            ),
+        ],
+        "--download",
+        "--timeout",
+        "1",
+        "--max-model-calls",
+        "3",
+        "--max-total-tokens",
+        "30" if ending == "token_budget" else "1000",
+    )
+    consent = Mock(
+        side_effect=[
+            "Inspect fixture",
+            "yes",
+            AssertionError("Unexpected input prompt after hard stop"),
+        ]
+    )
+    monkeypatch.setattr(agent.console, "input", consent)
+
+    assert agent.main() == 0
+
+    result = completed[0]
+    expected_reason = "time_limit" if ending == "timeout" else "reported_token_threshold"
+    assert result.termination_reason == expected_reason
+    assert result.objective is None
+    assert not result.objective_met and not result.partial_success
+    assert len(result.datasets_found) == len(result.datasets_downloaded) == 1
+    assert result.datasets_downloaded[0].row_count == 1
+    assert result.tokens_used == 30
+    assert client.messages.create.call_count == 2
+    assert boundary.transport.call_count == 3
+    assert "Approve this exact one-shot DuckDB load?" in consent.call_args_list[1].args[0]
+    assert consent.call_count == 2
+    with duckdb.connect(str(boundary.paths.duckdb_path), read_only=True) as connection:
+        table = connection.execute("SHOW TABLES").fetchone()[0]
+        assert connection.execute(f'SELECT * FROM "{table}"').fetchall() == [(42,)]
+    saved = json.loads(boundary.paths.agent_results_path.read_text())
+    assert saved[0]["status"] == "downloaded" and saved[0]["row_count"] == 1
+    report = json.loads(next(boundary.paths.output_dir.glob("freshness-*.json")).read_text())
+    assert report["evaluations"][0]["verdict"] == "UNKNOWN"
+
+    rendered = " ".join(capsys.readouterr().out.split())
+    stop_message = (
+        "Time limit reached" if ending == "timeout" else "Reported-token stop threshold reached"
+    )
+    assert stop_message in rendered
+    assert "downloaded 1 dataset(s)" in rendered
+    assert "nothing found" not in rendered.lower()
+    assert "All objectives met" not in rendered
+
+
+def test_cli_diagnostics_without_candidates_still_writes_report(boundary, monkeypatch, capsys):
     _client, completed = cli_setup(
         boundary,
         monkeypatch,
@@ -487,6 +582,7 @@ def test_cli_diagnostics_without_candidates_still_writes_report(boundary, monkey
     assert report["requests"][0]["grounding_reason"] == "candidate_not_inspected"
     assert report["requests"][0]["evaluation_id"] is None
     boundary.transport.assert_not_called()
+    assert "nothing found" in capsys.readouterr().out.lower()
 
 
 @pytest.mark.parametrize("artifact", ["summary", "freshness"])

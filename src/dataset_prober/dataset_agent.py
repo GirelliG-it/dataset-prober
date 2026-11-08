@@ -824,6 +824,7 @@ REPORTING RULES:
             console.print(
                 "[yellow]Reported-token stop threshold reached; returning partial results.[/yellow]"
             )
+            profile_result.termination_reason = "reported_token_threshold"
             break
 
         # Status every 3 iterations, before the fresh request timeout is captured.
@@ -839,8 +840,7 @@ REPORTING RULES:
             console.print(
                 f"[yellow]Found {len(found_datasets)} resource candidate(s) so far.[/yellow]\n"
             )
-            if _handle_timeout(found_datasets, budget, tool_map, loading_session, paths):
-                continue
+            profile_result.termination_reason = "time_limit"
             break
 
         output_allowance = min(budget.max_tokens, budget.remaining_token_allowance())

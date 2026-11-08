@@ -85,6 +85,7 @@ class ProfileResult:
     token_stop_threshold: int = 0
     cost_usd: float = 0.0
     freshness_run: Optional["FreshnessRun"] = None
+    termination_reason: Optional[str] = None
 
     @property
     def tokens_used(self) -> int:
@@ -458,14 +459,16 @@ class Orchestrator:
     def print_progress(
         self, profile_name: str, current: int, total: int, result: Optional[ProfileResult] = None
     ):
-        """Print progress between profile runs."""
+        """Report actual outcomes, including runs without an interpreted objective."""
         if result:
-            if result.objective_met:
+            if result.datasets_downloaded:
                 icon = "✅"
-                status = f"found {len(result.datasets_downloaded)} dataset(s)"
-            elif result.partial_success:
+                status = f"downloaded {len(result.datasets_downloaded)} dataset(s)"
+            elif result.datasets_found:
                 icon = "⚠️ "
-                status = result.failure_reason or "resource candidates remain report-only"
+                status = result.failure_reason or (
+                    f"found {len(result.datasets_found)} resource candidate(s), none downloaded"
+                )
             else:
                 icon = "❌"
                 status = result.failure_reason or "nothing found"
